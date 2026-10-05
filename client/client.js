@@ -1374,13 +1374,18 @@ window.__ModuleLoader__.load({
 
       if (run === null || run === undefined) return null
 
-      // 本页面加载之后新开始 → 自动展开；首屏已存在的运行 → 只显示徽标
+      // 自动策略（§8.5.5 / D12「运行中展开；结束后收成徽标并保留，用户可固定展开」）：
+      //   - 本页面加载之后新开始 **且仍在跑** → 自动展开；
+      //   - 首屏已存在的运行（恢复）→ 只显示徽标，避免首轮请求回来时大幅位移；
+      //   - 结束（done / failed / cancelled / interrupted）→ 收回徽标，不留在展开态。
+      // 手动覆盖（override）优先于自动策略，所以「用户手动展开 = 固定展开」。
       const startedAfterLoad =
         isNumber(state.firstSeenAt) && isNumber(baseline.mountedAt)
           ? state.firstSeenAt >= baseline.mountedAt
           : false
+      const autoExpanded = startedAfterLoad && isActive(run.status) && !escaped
       const expanded =
-        override !== null && override.runId === run.runId ? override.expanded : startedAfterLoad && !escaped
+        override !== null && override.runId === run.runId ? override.expanded : autoExpanded
 
       const setExpanded = (next) => {
         setEscaped(false)
@@ -1552,6 +1557,36 @@ window.__ModuleLoader__.load({
       )
     }
 
-    return { name, inject, apply }
+    /**
+     * 测试入口（jsdom lane 专用）。
+     *
+     * `test/client-dom.test.mjs` 要真的把组件挂进 jsdom、按毫秒推进 mock timer，
+     * 再检查轮询节奏与浮层状态机，因此这里把组件与状态机内部件一并挂出来。
+     * **生产路径只读 `name` / `inject` / `apply` 三个键，永远不会碰这个 `__test__`**，
+     * 所以多挂一个键对宿主是安全的；它不参与任何注册、也不在被测逻辑里被读取。
+     */
+    const __test__ = {
+      // 组件
+      PreviewOverlay,
+      PreviewCard,
+      PreviewBadge,
+      ProvidersSection,
+      WorkbenchPanel,
+      PanelIcon,
+      // 状态机 / 轮询器：jsdom lane 用来读快照、推进一次同步
+      runPoller,
+      previewState,
+      selectedProject,
+      previewEmptyState,
+      // 纯函数与常量
+      fileUrl,
+      relativeUrl,
+      isActive,
+      isTerminal,
+      POLL_ACTIVE_MS,
+      POLL_IDLE_MS,
+    }
+
+    return { name, inject, apply, __test__ }
   },
 })

@@ -5,13 +5,14 @@
  *
  * `client/client.js` 是浏览器 bundle，交互行为住在 React 组件里（`useEffect` 驱动的
  * 轮询、浮层的展开/收起状态机）。**本文件不启动 React 渲染器**，因此以下内容
- * 明确**未覆盖**：
- *   - 轮询节奏与 in-flight guard 的真实时序
- *   - 首屏恢复「只出徽标不自动展开」
- *   - 结束后收徽标、Escape 收起、reduced-motion
- *   - 缩略图实际能否加载
- * 要覆盖这些需要 jsdom + 真实 React 渲染（即 Skill 说的 jsdom lane），
- * 属**已知未补齐项**，见 P3 收尾说明。
+ * 在本文件内明确**未覆盖**：
+ *   - 轮询节奏与 in-flight guard 的真实时序 → 已由 `client-dom.test.mjs` 覆盖
+ *   - 首屏恢复「只出徽标不自动展开」 → 已由 `client-dom.test.mjs` 覆盖
+ *   - 结束后收徽标、Escape 收起 → 已由 `client-dom.test.mjs` 覆盖
+ *   - reduced-motion（纯 CSS 媒体查询）、缩略图实际能否加载 → **两层都覆盖不了**，
+ *     需要真实排版 / CSS 引擎，只能靠 GUI 目视（§13.5）
+ * 要覆盖交互时序需要 jsdom + 真实 React 渲染（即 Skill 说的 jsdom lane）：见
+ * `test/client-dom.test.mjs`（jsdom + React 18 + `act()` + mock timers）。
  *
  * 本文件覆盖的是**不需要渲染就能验证、且退化了会直接坏事**的契约层：
  *   1. bundle 装载协议：`window.__ModuleLoader__.load({ id, factory })`，factory 只吃 require
