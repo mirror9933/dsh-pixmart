@@ -580,3 +580,53 @@ return loaded.then(() => configStore.get())
 `provider.models` 与磁盘 `models`）按新语义改成"**不写配置**"（深比较 + 磁盘字节一致），
 其余断言（探测结果、count、端点拼接、鉴权头、不含密钥）原样保留。
 
+## 16. 作品库批次 A：详情补字段 + 软删 / 回收站 / 导出（2026-10-06）
+
+来源：《作品库优化方案》§2 第 1 批 + 第 2 批的无费用部分（批次 A）。
+**未实现「重新生成」**——它直接花钱，护栏（§6.2 第 2–5 条）未落实前不实现。
+
+### 16.1 `GET /pixmart/api/projects/<id>` 新增 6 个字段（**只新增，不改名不删除**）
+
+每项除原有的 `module/label/status/size/apiMode/images/width/height` 外，新增：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `prompt` | string | 当时用的提示词（本插件最核心的资产） |
+| `model` | string | 该项实际调用的模型 |
+| `ms` | number | 该项耗时（毫秒） |
+| `createdAt` | number | 该项完成时刻 |
+| `degraded` | string[] | 降级链路，**恒定是数组**（空数组 = 没降级） |
+| `error` | string? | 失败原因原文；成功项**不带**这个键 |
+
+`pixmart_projects` 工具的形状**未动**（决定④）——只改 HTTP 层。
+客户端：项目卡片补创建时间，详情项渲染提示词（可复制）/模型/耗时/时间/降级标记/失败原因。
+
+### 16.2 新增 5 条写/读路由（全部走既有 `guard` 环回校验）
+
+| 路由 | body | 成功 | 失败 |
+|---|---|---|---|
+| `POST /pixmart/api/projects/<id>/delete` | `{confirm:true}` | `200 {ok,id,trashId,trashed:true,mode}` | `400 confirm_required` / `404 not_found` / `400 bad_id` |
+| `POST /pixmart/api/projects/<id>/export` | `{dir?}`（绝对路径） | `200 {ok,id,dir,count,files[],warnings[]}` | `400 invalid_export_dir` / `404 not_found` |
+| `GET /pixmart/api/trash` | — | `200 {ok,count,trash[]}` | — |
+| `POST /pixmart/api/trash/<id>/restore` | `{}` | `200 {ok,id,trashId,restored:true,mode}` | `404 not_found` / `409 already_exists` / `400 bad_id` |
+| `POST /pixmart/api/trash/purge` | `{confirm:true}` | `200 {ok,purged}` | `400 confirm_required` |
+
+**删除 = 软删**（决定①）：把 `projects/<id>` **移动**到 `projects/.trash/<id>`——
+同盘走 `renameSync`（一次元数据操作，没有"复制到一半"的中间态）；跨设备
+（`EXDEV`）才回退成「递归复制 + 删原件」，且回退任一步失败都会清掉目标、**保住源目录**。
+`mode` 字段把实际走的分支报出来（`rename` / `copy`）。
+
+**`.trash` 的排除**：`ProjectStore.list()` 显式跳过 `projects/` 下一切以点开头的条目
+（不再依赖"那里恰好没有 project.json"这种巧合）；新增的写路由用更严的 `SAFE_ID`
+（不允许以点开头）——`..`、`.`、`.trash` 都不可能被当成项目或回收站条目操作。
+
+**其余约定**：非 `POST` 打写路由 → `405`；`confirm` 只认布尔 `true`（字符串不算）；
+导出只复制、失败收敛成 `warnings`、**原件不动**；所有响应体不含 apiKey；
+回收站路径同样过 `assertContained`。
+
+**已知取舍**：导出的 `dir` 接受任意**绝对路径**（与设置页「产物保存路径」同一立场：
+落点由用户明确指定），因此它本身不过 `assertContained`；但**每一张图的落点**都过
+（`assertContained(目标目录, 文件名)`），记录里被手改脏的文件名越不出去。
+`<id>` 一律过 `SAFE_ID`，跨目录的 id 在路由层就 400。
+
+

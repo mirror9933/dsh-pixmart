@@ -90,6 +90,15 @@ declare module 'node:fs' {
   export function renameSync(oldPath: string, newPath: string): void
   export function unlinkSync(path: string): void
   export function copyFileSync(source: string, target: string): void
+  /**
+   * 递归复制目录（跨设备软删的回退路径用）。Node 16.7+。
+   * 只声明本项目实际传的选项面。
+   */
+  export function cpSync(
+    source: string,
+    target: string,
+    options?: { readonly recursive?: boolean; readonly force?: boolean; readonly errorOnExist?: boolean },
+  ): void
   export function existsSync(path: string): boolean
   export function readdirSync(path: string): string[]
   export function statSync(path: string): { isDirectory(): boolean; isFile(): boolean; size: number; mtimeMs: number }

@@ -193,6 +193,7 @@ window.__ModuleLoader__.load({
     const isRunDetail = (v) => isObject(v) && v.ok === true && isObject(v.run) && isArray(v.run.items)
     const isProjectList = (v) => isObject(v) && v.ok === true && isArray(v.projects)
     const isProjectDetail = (v) => isObject(v) && v.ok === true && isObject(v.project)
+    const isTrashList = (v) => isObject(v) && v.ok === true && isArray(v.trash)
     const isProviders = (v) => isObject(v) && v.ok === true && isArray(v.providers)
 
     const isActive = (status) => ACTIVE_STATUSES.indexOf(status) >= 0
@@ -532,7 +533,7 @@ window.__ModuleLoader__.load({
         'button',
         {
           type: 'button',
-          className: 'pxm-btn',
+          className: isString(props.className) ? 'pxm-btn ' + props.className : 'pxm-btn',
           onClick: props.onClick,
           disabled,
           title: props.title,
@@ -1610,6 +1611,142 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ── 作品库：时间格式 + 生产记录（第 1 批） + 软删/回收站/导出（第 2 批无费用部分） ──
+
+    function pad2(value) {
+      const text = String(value)
+      return text.length >= 2 ? text : '0' + text
+    }
+
+    /**
+     * 时间戳 → `YYYY-MM-DD HH:mm`（本地时区）。
+     *
+     * 特意不用 `toLocaleString`：它随浏览器语言与时区变，既让用户看到的格式不可预期，
+     * 也让测试写不出稳定断言。取不到就显示 `—`，**绝不显示 "Invalid Date"**。
+     */
+    function formatDateTime(ms) {
+      if (!isNumber(ms) || ms <= 0) return '—'
+      const date = new Date(ms)
+      if (!isNumber(date.getTime())) return '—'
+      return (
+        String(date.getFullYear()) +
+        '-' +
+        pad2(date.getMonth() + 1) +
+        '-' +
+        pad2(date.getDate()) +
+        ' ' +
+        pad2(date.getHours()) +
+        ':' +
+        pad2(date.getMinutes())
+      )
+    }
+
+    /** 耗时：<1s 用毫秒，否则一位小数的秒。 */
+    function formatDuration(ms) {
+      if (!isNumber(ms) || ms < 0) return '—'
+      if (ms < 1000) return String(Math.round(ms)) + ' ms'
+      return (ms / 1000).toFixed(1) + ' s'
+    }
+
+    /**
+     * 「复制提示词」。
+     *
+     * 红线（作品库优化方案 §第 1 批）：复制失败**不能静默**——降级成一段可选中文本，
+     * 并把失败原因显示出来。`navigator.clipboard` 在非安全上下文（非 https / 非 localhost）
+     * 与老浏览器上根本不存在，这不是异常情况，而是必须处理的正常分支。
+     */
+    function CopyPromptButton(props) {
+      const prompt = isString(props.prompt) ? props.prompt : ''
+      const [result, setResult] = React.useState(null)
+
+      if (prompt === '') return null
+
+      const onCopy = () => {
+        const clipboard =
+          typeof navigator === 'undefined' || navigator === null ? null : navigator.clipboard
+        let pending = null
+        try {
+          pending =
+            clipboard !== null && typeof clipboard === 'object' && typeof clipboard.writeText === 'function'
+              ? clipboard.writeText(prompt)
+              : null
+        } catch (err) {
+          setResult({ ok: false, error: err && err.message ? err.message : '剪贴板调用失败' })
+          return
+        }
+        if (pending === null || typeof pending.then !== 'function') {
+          setResult({ ok: false, error: '当前环境不支持剪贴板 API' })
+          return
+        }
+        pending.then(
+          () => setResult({ ok: true, error: null }),
+          (err) => setResult({ ok: false, error: err && err.message ? err.message : '复制被拒绝' }),
+        )
+      }
+
+      const failed = result !== null && result.ok !== true
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+        h(
+          'div',
+          { style: skin.row },
+          h(
+            Btn,
+            { className: 'pxm-copy-btn', onClick: onCopy, title: '复制这条提示词，便于复用同参数' },
+            result !== null && result.ok === true ? '已复制' : '复制提示词',
+          ),
+        ),
+        failed
+          ? h(
+              'div',
+              { role: 'alert', style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+              h(
+                'span',
+                { style: { fontSize: '12px', lineHeight: 1.6, color: '#ef4444', wordBreak: 'break-word' } },
+                '复制失败：' + String(result.error) + '（已展开为可选中文本，请手动复制）',
+              ),
+              h('textarea', {
+                readOnly: true,
+                className: 'pxm-copy-fallback',
+                'aria-label': '提示词（可手动复制）',
+                value: prompt,
+                onFocus: (event) => {
+                  try {
+                    event.target.select()
+                  } catch {
+                    /* 选择失败不影响文本可选 */
+                  }
+                },
+                style: {
+                  width: '100%',
+                  minHeight: '64px',
+                  font: 'inherit',
+                  fontSize: '12px',
+                  lineHeight: 1.6,
+                  padding: '6px 8px',
+                  borderRadius: '6px',
+                  color: 'inherit',
+                  background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                  border: '1px solid color-mix(in srgb, currentColor 24%, transparent)',
+                },
+              }),
+            )
+          : null,
+      )
+    }
+
+    /** 「标签：值」的一行元信息。 */
+    function MetaRow(props) {
+      return h(
+        'div',
+        { style: { display: 'flex', gap: '8px', alignItems: 'baseline', fontSize: '12px' } },
+        h('span', { style: { ...skin.key, minWidth: '60px', flex: '0 0 auto' } }, props.label),
+        h('span', { style: { wordBreak: 'break-word', opacity: 0.86 } }, props.children),
+      )
+    }
+
     function ProjectCard(props) {
       const project = props.project
       const cover = fileUrl(project.id, project.cover)
@@ -1663,13 +1800,71 @@ window.__ModuleLoader__.load({
           { style: { fontSize: '12px', opacity: 0.7 } },
           String(project.imageCount ?? 0) + ' 张 · ' + String(project.provider ?? '—'),
         ),
+        // 创建时间（第 1 批：卡片上补时间）
+        h(
+          'span',
+          { className: 'pxm-tile-time', style: { fontSize: '12px', opacity: 0.6 } },
+          formatDateTime(project.createdAt),
+        ),
       )
     }
 
+    /**
+     * 项目详情 = **生产记录**。
+     *
+     * 每个模块都显示：提示词（可复制）· 模型 · 耗时 · 时间 · 降级标记 · 失败原因。
+     * 这些都是 `project.json` 里一直有、以前被 HTTP 层丢掉的信息（优化方案 §1.2）。
+     *
+     * 破坏性动作（删除）一律**二次确认**；导出只复制、不动原件。
+     */
     function ProjectDetail(props) {
       const state = props.state
       const project = state.data
       const items = isObject(project) && isArray(project.items) ? project.items : []
+      const projectId = isObject(project) && isString(project.id) ? project.id : ''
+      const [action, setAction] = React.useState({ busy: null, error: null, note: null })
+      const [confirming, setConfirming] = React.useState(false)
+
+      const busy = action.busy
+
+      const onExport = () => {
+        if (projectId === '' || busy !== null) return
+        setAction({ busy: 'export', error: null, note: null })
+        apiPost('api/projects/' + encodeURIComponent(projectId) + '/export', {}).then((result) => {
+          if (result.ok !== true) {
+            setAction({ busy: null, error: result.error, note: null })
+            return
+          }
+          const data = isObject(result.data) ? result.data : {}
+          const warnings = isArray(data.warnings) ? data.warnings.length : 0
+          setAction({
+            busy: null,
+            error: null,
+            note:
+              '已导出 ' +
+              String(data.count ?? 0) +
+              ' 个文件到 ' +
+              String(data.dir ?? '') +
+              (warnings > 0 ? '（' + String(warnings) + ' 张失败，原件未受影响）' : ''),
+          })
+        })
+      }
+
+      const onDelete = () => {
+        if (projectId === '' || busy !== null) return
+        setAction({ busy: 'delete', error: null, note: null })
+        apiPost('api/projects/' + encodeURIComponent(projectId) + '/delete', { confirm: true }).then(
+          (result) => {
+            if (result.ok !== true) {
+              setAction({ busy: null, error: result.error, note: null })
+              return
+            }
+            setConfirming(false)
+            setAction({ busy: null, error: null, note: null })
+            if (typeof props.onDeleted === 'function') props.onDeleted(projectId)
+          },
+        )
+      }
 
       return h(
         'div',
@@ -1681,14 +1876,83 @@ window.__ModuleLoader__.load({
           h('h2', { style: skin.title }, String(project?.name ?? project?.id ?? '项目')),
           state.phase === 'ready' ? h(Pill, null, items.length + ' 个模块') : null,
         ),
+        state.phase === 'ready'
+          ? h(
+              'div',
+              { style: { ...skin.row, fontSize: '12px', opacity: 0.72 } },
+              h('span', null, '创建于 ' + formatDateTime(project?.createdAt)),
+              h('span', null, '·'),
+              h('span', null, String(project?.provider ?? '—') + ' / ' + String(project?.model ?? '—')),
+            )
+          : null,
+        state.phase === 'ready'
+          ? h(
+              'div',
+              { style: skin.row },
+              h(
+                Btn,
+                {
+                  className: 'pxm-export-btn',
+                  onClick: onExport,
+                  disabled: busy !== null || projectId === '',
+                  title: '把项目图片复制到数据目录的 exports/ 下，原件不动',
+                },
+                busy === 'export' ? '导出中…' : '导出图片',
+              ),
+              h(
+                Btn,
+                {
+                  className: 'pxm-delete-btn',
+                  onClick: () => setConfirming(true),
+                  disabled: busy !== null || projectId === '' || confirming,
+                  title: '移入回收站，可恢复',
+                },
+                '删除项目',
+              ),
+            )
+          : null,
+        state.phase === 'ready' && confirming
+          ? h(
+              Notice,
+              {
+                role: 'alert',
+                title: '确认删除这个项目？',
+                detail: '会移入回收站（projects/.trash），之后仍可恢复；清空回收站才会真正删除。',
+              },
+              h(
+                'div',
+                { style: skin.row },
+                h(
+                  Btn,
+                  {
+                    className: 'pxm-confirm-delete',
+                    onClick: onDelete,
+                    disabled: busy !== null,
+                  },
+                  busy === 'delete' ? '删除中…' : '确认删除',
+                ),
+                h(Btn, { onClick: () => setConfirming(false), disabled: busy !== null }, '取消'),
+              ),
+            )
+          : null,
+        action.error !== null && action.error !== undefined
+          ? h(Notice, { role: 'alert', title: '操作失败', detail: action.error })
+          : null,
+        action.note !== null && action.note !== undefined
+          ? h(Notice, { role: 'status', title: '已完成', detail: action.note })
+          : null,
         state.phase === 'loading' ? h(LoadingRow, { text: '正在读取项目…' }) : null,
         state.phase === 'error' ? h(Notice, { role: 'alert', title: '读取失败', detail: state.error }) : null,
         state.phase === 'ready' && items.length === 0
           ? h(Notice, { title: '这个项目还没有产出', detail: '生图完成后图片会出现在这里。' })
           : null,
         state.phase === 'ready'
-          ? items.map((item, index) =>
-              h(
+          ? items.map((item, index) => {
+              const prompt = isString(item?.prompt) ? item.prompt : ''
+              const degraded = isArray(item?.degraded) ? item.degraded.filter(isString) : []
+              const error = isString(item?.error) && item.error !== '' ? item.error : null
+              const images = isArray(item?.images) ? item.images.filter(isString) : []
+              return h(
                 'div',
                 { key: String(item?.module ?? index) + '-' + String(index), style: skin.card },
                 h(
@@ -1701,8 +1965,67 @@ window.__ModuleLoader__.load({
                   ),
                   h(Pill, null, String(ITEM_STATUS_LABEL[item?.status] ?? item?.status ?? '—')),
                   isString(item?.size) ? h('code', { style: skin.code }, item.size) : null,
+                  isString(item?.apiMode) && item.apiMode !== ''
+                    ? h(Pill, { key: 'api' }, item.apiMode)
+                    : null,
                 ),
-                isArray(item?.images) && item.images.length > 0
+                // 失败原因放在最前面：这是用户最需要知道、以前完全看不到的东西。
+                error === null
+                  ? null
+                  : h(
+                      'p',
+                      {
+                        role: 'alert',
+                        className: 'pxm-item-error',
+                        style: { margin: 0, fontSize: '12px', lineHeight: 1.6, color: '#ef4444', wordBreak: 'break-word' },
+                      },
+                      '失败原因：' + error,
+                    ),
+                degraded.length > 0
+                  ? h(
+                      'div',
+                      { className: 'pxm-item-degraded', style: skin.row },
+                      h(Pill, null, '降级'),
+                      h(
+                        'span',
+                        { style: { fontSize: '12px', opacity: 0.86, wordBreak: 'break-word' } },
+                        degraded.join(' · '),
+                      ),
+                    )
+                  : null,
+                h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                    h('span', { style: skin.key }, '提示词'),
+                    prompt === ''
+                      ? h('p', { style: skin.muted }, '这个模块没有留下提示词。')
+                      : h(
+                          'p',
+                          {
+                            className: 'pxm-prompt',
+                            style: {
+                              margin: 0,
+                              fontSize: '12px',
+                              lineHeight: 1.7,
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                            },
+                          },
+                          prompt,
+                        ),
+                    h(CopyPromptButton, { prompt }),
+                  ),
+                  h(MetaRow, { label: '模型' }, String(item?.model ?? project?.model ?? '—')),
+                  h(MetaRow, { label: '耗时' }, formatDuration(item?.ms)),
+                  h(MetaRow, { label: '时间' }, formatDateTime(item?.createdAt)),
+                ),
+                images.length > 0
                   ? h(
                       'div',
                       {
@@ -1712,8 +2035,8 @@ window.__ModuleLoader__.load({
                           gap: '8px',
                         },
                       },
-                      item.images.map((imageName, ii) => {
-                        const url = fileUrl(project.id, imageName)
+                      images.map((imageName, ii) => {
+                        const url = fileUrl(projectId, imageName)
                         return url === null
                           ? null
                           : h('img', {
@@ -1733,6 +2056,151 @@ window.__ModuleLoader__.load({
                       }),
                     )
                   : h('p', { style: skin.muted }, '这个模块没有产出图片。'),
+              )
+            })
+          : null,
+      )
+    }
+
+    /**
+     * 回收站面板：列出、逐个恢复、整体清空。
+     *
+     * 「清空回收站」不可恢复，所以和删除一样走**二次确认**；
+     * 任何一步失败都只在面板内显示可读原因（不抛异常、不白屏）。
+     */
+    function TrashPanel(props) {
+      const state = props.state
+      const [action, setAction] = React.useState({ busy: null, error: null, note: null })
+      const [confirming, setConfirming] = React.useState(false)
+      const entries =
+        state.phase === 'ready' && isObject(state.data) && isArray(state.data.trash)
+          ? state.data.trash.filter(isObject)
+          : []
+      const busy = action.busy
+
+      const onRestore = (id) => {
+        if (busy !== null) return
+        setAction({ busy: id, error: null, note: null })
+        apiPost('api/trash/' + encodeURIComponent(id) + '/restore', {}).then((result) => {
+          if (result.ok !== true) {
+            setAction({ busy: null, error: result.error, note: null })
+            return
+          }
+          setAction({ busy: null, error: null, note: '已恢复 ' + id })
+          if (typeof props.onChanged === 'function') props.onChanged()
+        })
+      }
+
+      const onPurge = () => {
+        if (busy !== null) return
+        setAction({ busy: 'purge', error: null, note: null })
+        apiPost('api/trash/purge', { confirm: true }).then((result) => {
+          if (result.ok !== true) {
+            setAction({ busy: null, error: result.error, note: null })
+            return
+          }
+          const data = isObject(result.data) ? result.data : {}
+          setConfirming(false)
+          setAction({ busy: null, error: null, note: '已清空 ' + String(data.purged ?? 0) + ' 个项目' })
+          if (typeof props.onChanged === 'function') props.onChanged()
+        })
+      }
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+        h(
+          'div',
+          { style: skin.row },
+          h(Btn, { onClick: props.onBack }, '← 作品库'),
+          h('h2', { style: skin.title }, '回收站'),
+          state.phase === 'ready' ? h(Pill, null, entries.length + ' 个项目') : null,
+        ),
+        h('p', { style: skin.muted }, '删除的项目先移到这里，可随时恢复；清空之后才真正从磁盘删除。'),
+        state.phase === 'loading' ? h(LoadingRow, { text: '正在读取回收站…' }) : null,
+        state.phase === 'error'
+          ? h(
+              Notice,
+              { role: 'alert', title: '读取回收站失败', detail: state.error },
+              h(Btn, { onClick: props.onReload }, '重试'),
+            )
+          : null,
+        state.phase === 'ready' && entries.length === 0
+          ? h(Notice, { title: '回收站是空的', detail: '在项目详情里删除的项目会出现在这里。' })
+          : null,
+        state.phase === 'ready' && entries.length > 0
+          ? h(
+              'div',
+              { style: skin.row },
+              confirming
+                ? h(
+                    'span',
+                    { style: skin.row },
+                    h('span', { style: { fontSize: '12px', color: '#ef4444' } }, '清空后不可恢复，确认？'),
+                    h(
+                      Btn,
+                      {
+                        className: 'pxm-confirm-purge',
+                        onClick: onPurge,
+                        disabled: busy !== null,
+                      },
+                      busy === 'purge' ? '清空中…' : '确认清空',
+                    ),
+                    h(Btn, { onClick: () => setConfirming(false), disabled: busy !== null }, '取消'),
+                  )
+                : h(
+                    Btn,
+                    {
+                      className: 'pxm-purge-btn',
+                      onClick: () => setConfirming(true),
+                      disabled: busy !== null,
+                    },
+                    '清空回收站',
+                  ),
+            )
+          : null,
+        action.error !== null && action.error !== undefined
+          ? h(Notice, { role: 'alert', title: '操作失败', detail: action.error })
+          : null,
+        action.note !== null && action.note !== undefined
+          ? h(Notice, { role: 'status', title: '已完成', detail: action.note })
+          : null,
+        state.phase === 'ready'
+          ? entries.map((entry, index) =>
+              h(
+                'div',
+                {
+                  key: String(entry?.id ?? index),
+                  className: 'pxm-trash-item',
+                  style: { ...skin.card, gap: '6px' },
+                },
+                h(
+                  'div',
+                  { style: { ...skin.row, justifyContent: 'space-between' } },
+                  h(
+                    'strong',
+                    { style: { fontSize: '13px' } },
+                    String(entry?.name ?? entry?.id ?? '未命名项目'),
+                  ),
+                  h(
+                    Btn,
+                    {
+                      className: 'pxm-restore-btn',
+                      onClick: () => onRestore(String(entry?.id ?? '')),
+                      disabled: busy !== null || !isString(entry?.id),
+                    },
+                    busy === entry?.id ? '恢复中…' : '恢复',
+                  ),
+                ),
+                h(
+                  'span',
+                  { style: { fontSize: '12px', opacity: 0.72 } },
+                  String(entry?.imageCount ?? 0) +
+                    ' 张 · ' +
+                    String(entry?.provider ?? '—') +
+                    ' · 删除于 ' +
+                    formatDateTime(entry?.deletedAt),
+                ),
               ),
             )
           : null,
@@ -1743,12 +2211,24 @@ window.__ModuleLoader__.load({
       const selected = useStore(selectedProject)
       const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
       const [detail, setDetail] = React.useState({ phase: 'idle', data: null, error: null })
+      const [trash, setTrash] = React.useState({ phase: 'idle', data: null, error: null })
+      const [showTrash, setShowTrash] = React.useState(false)
+      const [notice, setNotice] = React.useState(null)
 
       const loadList = React.useCallback(
         () =>
           apiGet('api/projects?limit=' + String(PROJECT_LIST_LIMIT), isProjectList).then((result) => {
             if (result.ok) setState({ phase: 'ready', data: result.data, error: null })
             else setState({ phase: 'error', data: null, error: result.error })
+          }),
+        [],
+      )
+
+      const loadTrash = React.useCallback(
+        () =>
+          apiGet('api/trash', isTrashList).then((result) => {
+            if (result.ok) setTrash({ phase: 'ready', data: result.data, error: null })
+            else setTrash({ phase: 'error', data: null, error: result.error })
           }),
         [],
       )
@@ -1777,16 +2257,77 @@ window.__ModuleLoader__.load({
       const header = h(
         'div',
         { style: { ...skin.row, justifyContent: 'space-between' } },
-        h('h2', { style: skin.title }, '作品库'),
-        h(Btn, { onClick: () => loadList() }, '刷新'),
+        h('h2', { style: skin.title }, showTrash ? '回收站' : '作品库'),
+        h(
+          'div',
+          { style: skin.row },
+          h(
+            Btn,
+            {
+              className: 'pxm-trash-toggle',
+              onClick: () => {
+                setNotice(null)
+                if (showTrash) {
+                  setShowTrash(false)
+                  loadList()
+                } else {
+                  selectedProject.set(null)
+                  setShowTrash(true)
+                  setTrash({ phase: 'loading', data: null, error: null })
+                  loadTrash()
+                }
+              },
+            },
+            showTrash ? '返回作品库' : '回收站',
+          ),
+          h(
+            Btn,
+            {
+              onClick: () => {
+                setNotice(null)
+                if (showTrash) loadTrash()
+                else loadList()
+              },
+            },
+            '刷新',
+          ),
+        ),
       )
+
+      if (showTrash) {
+        return h(
+          'div',
+          { style: skin.wrap },
+          header,
+          h(TrashPanel, {
+            state: trash,
+            onBack: () => {
+              setShowTrash(false)
+              loadList()
+            },
+            onReload: loadTrash,
+            onChanged: () => {
+              loadTrash()
+              loadList()
+            },
+          }),
+        )
+      }
 
       if (selected !== null) {
         return h(
           'div',
           { style: skin.wrap },
           header,
-          h(ProjectDetail, { state: detail, onBack: () => selectedProject.set(null) }),
+          h(ProjectDetail, {
+            state: detail,
+            onBack: () => selectedProject.set(null),
+            onDeleted: (id) => {
+              selectedProject.set(null)
+              setNotice('已把「' + id + '」移入回收站，可在「回收站」里恢复。')
+              loadList()
+            },
+          }),
         )
       }
 
@@ -1796,6 +2337,7 @@ window.__ModuleLoader__.load({
         'div',
         { style: skin.wrap },
         header,
+        notice === null ? null : h(Notice, { role: 'status', title: '已删除', detail: notice }),
         state.phase === 'loading' ? h(LoadingRow, { text: '正在读取项目列表…' }) : null,
         state.phase === 'error'
           ? h(
@@ -1824,7 +2366,10 @@ window.__ModuleLoader__.load({
                 h(ProjectCard, {
                   key: String(project.id),
                   project,
-                  onOpen: (id) => selectedProject.set(id),
+                  onOpen: (id) => {
+                    setNotice(null)
+                    selectedProject.set(id)
+                  },
                 }),
               ),
             )
@@ -2463,6 +3008,10 @@ window.__ModuleLoader__.load({
       DefaultsCard,
       OutputDirCard,
       WorkbenchPanel,
+      ProjectCard,
+      ProjectDetail,
+      TrashPanel,
+      CopyPromptButton,
       PanelIcon,
       // 状态机 / 轮询器：jsdom lane 用来读快照、推进一次同步
       runPoller,
@@ -2475,6 +3024,8 @@ window.__ModuleLoader__.load({
       isActive,
       isTerminal,
       explainHostError,
+      formatDateTime,
+      formatDuration,
       HOST_STALE_HINT,
       POLL_ACTIVE_MS,
       POLL_IDLE_MS,

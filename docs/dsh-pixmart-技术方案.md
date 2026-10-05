@@ -728,6 +728,16 @@ GET /pixmart/file/<projectId>/<name>
 > model 不在该厂商列表里则 400 `unknown_model`）。请求体上限 64KB，`GET` 命中写路由一律 405。
 > > 为什么 `refresh-models` 改成只读：实测 Ofox 一次返回 150 个模型、绝大多数是纯文本模型，
 > > 自动全量写回会把筛选负担和淹没的下拉框推给用户（详见 contract-notes §15.1）。
+>
+> **作品库批次 A（2026-10-06）**：上表里 `deleteProjects` / `exportProject` 落地为
+> `POST /pixmart/api/projects/<id>/delete`（**软删进回收站**，需 `confirm:true`）与
+> `POST /pixmart/api/projects/<id>/export`；回收站另有
+> `GET /pixmart/api/trash`、`POST /pixmart/api/trash/<id>/restore`、
+> `POST /pixmart/api/trash/purge`（需 `confirm:true`）。
+> 详情响应同时补齐了 6 个"磁盘上有、HTTP 层以前丢掉"的字段
+> （`prompt/model/ms/createdAt/degraded/error`）。形状见
+> [contract-notes §16](./contract-notes.md)。
+> 「同参数重新生成」**未实现**——它是唯一不经 Agent 就花钱的路径，护栏见优化方案 §6.2。
 
 
 ---

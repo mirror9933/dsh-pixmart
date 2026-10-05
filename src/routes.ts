@@ -15,10 +15,12 @@
  *   5. **任何响应体都不含 apiKey**：厂商一律回脱敏后的 `ProviderView`。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { findProvider, toProviderView, type PixmartConfig, type ProviderConfig } from './config.js'
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
+import { TrashError } from './store/project-store.js'
+import { exportImages, type ExportSource } from './tools/export-output.js'
 import { fetchProviderModels, type ModelProbeCode } from './vendor/models.js'
 import type { HostContext, HttpResponseLike, HttpRequestLike, WebServerLike } from './host-types.js'
 import type { ToolRuntime } from './tools/runtime.js'
@@ -181,10 +183,35 @@ function contentTypeFor(name: string): string {
 /** 安全的字符白名单：项目 id 与文件名都来自我们自己的命名规则。 */
 const SAFE_SEGMENT = /^[\p{L}\p{N}._-]+$/u
 
+/**
+ * 项目 / 回收站条目的 id 白名单（新增的写路由用）。
+ *
+ * 比 `SAFE_SEGMENT` 多一条：**不得以点开头**。理由是回收站目录叫 `.trash`，
+ * 它自己绝不能当"项目"或"回收站条目"被删/恢复；`..` 也在这一条里被挡住。
+ */
+const SAFE_ID = /^[\p{L}\p{N}_-][\p{L}\p{N}._-]*$/u
+
+function isSafeId(value: string): boolean {
+  return SAFE_ID.test(value) && !value.startsWith('.')
+}
+
 function readLimit(query: URLSearchParams, fallback: number, max = 200): number {
   const raw = Number(query.get('limit'))
   if (!Number.isFinite(raw) || raw <= 0) return fallback
   return Math.min(Math.floor(raw), max)
+}
+
+/** 破坏性操作的显式确认：只认布尔 `true`（字符串 "true" 不算，避免脚本误传）。 */
+function isConfirmed(body: Record<string, unknown>): boolean {
+  return body.confirm === true
+}
+
+const CONFIRM_REQUIRED = '这是破坏性操作，需要显式 confirm: true'
+
+/** `images/<name>` → `<name>`；只用最后一段，天然挡掉记录里被写脏的路径。 */
+function lastSegment(file: string): string {
+  const parts = file.split(/[\\/]/).filter((part) => part !== '')
+  return parts.length === 0 ? '' : (parts[parts.length - 1] as string)
 }
 
 /** 把 `projects/<id>/project.json` 转成客户端需要的形状（不回传完整提示词）。 */
@@ -298,6 +325,24 @@ async function handleApi(
     return
   }
 
+  // POST /pixmart/api/projects/<id>/delete  ·  POST /pixmart/api/projects/<id>/export
+  // （放在详情路由之前：`<id>/delete` 这类路径不该落到"项目不存在"的 404 上）
+  const projectActionMatch = /^\/projects\/([^/]+)\/(delete|export)$/.exec(route)
+  if (projectActionMatch !== null) {
+    if (requirePost()) return
+    const projectId = decodeURIComponent(projectActionMatch[1] as string)
+    if (!isSafeId(projectId)) {
+      fail(response, 400, 'bad_id', '非法的项目 id')
+      return
+    }
+    if (projectActionMatch[2] === 'delete') {
+      await handleDeleteProject(runtime, projectId, response, readBody)
+    } else {
+      await handleExportProject(runtime, projectId, response, readBody)
+    }
+    return
+  }
+
   // GET /pixmart/api/projects/<id>
   const projectMatch = /^\/projects\/([^/]+)$/.exec(route)
   if (projectMatch !== null && isGet) {
@@ -323,6 +368,15 @@ async function handleApi(
             size: item.size,
             apiMode: item.apiMode,
             images: item.images.map((image) => image.file),
+            // ── 以下 6 个字段是"把已丢弃的信息显示出来"（作品库优化方案 §1.2）：
+            //    磁盘上一直有、HTTP 层以前丢掉，纯读、无副作用，且**只新增不改名**。
+            prompt: item.prompt,
+            model: item.model,
+            ms: item.ms,
+            createdAt: item.createdAt,
+            // 降级链路恒定给数组：客户端不必再判 null；空数组就是"没降级"。
+            degraded: [...(item.degraded ?? [])],
+            ...(item.error === undefined || item.error === '' ? {} : { error: item.error }),
             ...(item.images[0] === undefined
               ? {}
               : { width: item.images[0].width, height: item.images[0].height }),
@@ -332,6 +386,32 @@ async function handleApi(
     } catch (error) {
       fail(response, 404, 'not_found', error instanceof Error ? error.message : String(error))
     }
+    return
+  }
+
+  // GET /pixmart/api/trash —— 回收站列表（只读）
+  if (route === '/trash' || route === '/trash/') {
+    if (!isGet) {
+      fail(response, 405, 'method_not_allowed', `${method} 不允许：该路由只接受 GET`)
+      return
+    }
+    const trash = runtime.projectStore.listTrash()
+    sendJson(response, 200, { ok: true, count: trash.length, trash })
+    return
+  }
+
+  // POST /pixmart/api/trash/purge —— 清空回收站（不可恢复，必须确认）
+  if (route === '/trash/purge' || route === '/trash/purge/') {
+    if (requirePost()) return
+    await handlePurgeTrash(runtime, response, readBody)
+    return
+  }
+
+  // POST /pixmart/api/trash/<id>/restore
+  const restoreMatch = /^\/trash\/([^/]+)\/restore$/.exec(route)
+  if (restoreMatch !== null) {
+    if (requirePost()) return
+    await handleRestore(runtime, decodeURIComponent(restoreMatch[1] as string), response)
     return
   }
 
@@ -776,6 +856,187 @@ function resolveKeyForProbe(provider: ProviderConfig): string {
     if (fromEnv !== undefined && fromEnv !== '') return fromEnv
   }
   return provider.apiKey.trim()
+}
+
+// ───────────────────────────────────────────────── 作品库写路由（软删 / 回收站 / 导出）
+
+/** 默认导出落点（与 `pixmart_projects.export` 的口径一致）：`<dataDir>/exports/<id>`。 */
+const EXPORTS_DIR = 'exports'
+
+/** 把 store 抛出的软删类错误映射成 HTTP 状态码；其余算 500。 */
+function failTrash(response: HttpResponseLike, error: unknown, what: string): void {
+  if (error instanceof TrashError) {
+    if (error.code === 'not_found') {
+      fail(response, 404, 'not_found', error.message)
+      return
+    }
+    if (error.code === 'conflict') {
+      fail(response, 409, 'already_exists', error.message)
+      return
+    }
+    fail(response, 400, 'bad_id', error.message)
+    return
+  }
+  fail(
+    response,
+    500,
+    'trash_failed',
+    `${what}：${error instanceof Error ? error.message : String(error)}`,
+  )
+}
+
+/**
+ * `POST /pixmart/api/projects/<id>/delete` —— **软删**。
+ *
+ * 删除 = 把 `projects/<id>` 移到 `projects/.trash/<id>`（可恢复），
+ * 因此列表立刻少一项、`GET /pixmart/file/<id>/<name>` 立刻 404，
+ * 但磁盘上的字节一个都没丢。清空回收站才是真删（见 `handlePurgeTrash`）。
+ *
+ * 缺 `confirm: true` → 400，**先判确认再碰磁盘**。
+ */
+async function handleDeleteProject(
+  runtime: ToolRuntime,
+  projectId: string,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+  if (!isConfirmed(body)) {
+    fail(response, 400, 'confirm_required', `删除会移入回收站（可恢复），${CONFIRM_REQUIRED}`)
+    return
+  }
+  if (!runtime.projectStore.has(projectId)) {
+    fail(response, 404, 'not_found', `项目不存在：${projectId}`)
+    return
+  }
+
+  try {
+    const result = await runtime.projectStore.moveToTrash(projectId)
+    sendJson(response, 200, {
+      ok: true,
+      id: result.id,
+      trashId: result.trashId,
+      trashed: true,
+      // rename = 同盘改名；copy = 跨设备回退成了复制 + 删。
+      mode: result.mode,
+    })
+  } catch (error) {
+    failTrash(response, error, '删除失败')
+  }
+}
+
+/**
+ * `GET /pixmart/api/trash` 用不到写体；`restore` / `purge` 各自处理。
+ *
+ * `POST /pixmart/api/trash/<id>/restore` —— 移回 `projects/<原 id>`。
+ */
+async function handleRestore(
+  runtime: ToolRuntime,
+  trashId: string,
+  response: HttpResponseLike,
+): Promise<void> {
+  if (!isSafeId(trashId)) {
+    fail(response, 400, 'bad_id', '非法的回收站 id')
+    return
+  }
+  try {
+    const result = await runtime.projectStore.restoreFromTrash(trashId)
+    sendJson(response, 200, {
+      ok: true,
+      id: result.id,
+      trashId: result.trashId,
+      restored: true,
+      mode: result.mode,
+    })
+  } catch (error) {
+    failTrash(response, error, '恢复失败')
+  }
+}
+
+/**
+ * `POST /pixmart/api/trash/purge` —— 真删，不可恢复，因此**必须** `confirm: true`。
+ */
+async function handlePurgeTrash(
+  runtime: ToolRuntime,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+  if (!isConfirmed(body)) {
+    fail(response, 400, 'confirm_required', `清空回收站不可恢复，${CONFIRM_REQUIRED}`)
+    return
+  }
+  try {
+    const purged = runtime.projectStore.purgeTrash()
+    sendJson(response, 200, { ok: true, purged })
+  } catch (error) {
+    failTrash(response, error, '清空回收站失败')
+  }
+}
+
+/**
+ * `POST /pixmart/api/projects/<id>/export` —— 把项目图片**复制**到目标目录。
+ *
+ * 复用 `tools/export-output.ts` 的三条不变量：只复制（原件是数据源，绝不移动）、
+ * 失败不上抛（收敛成 `warnings`）、文件名内容寻址（不会互相覆盖）。
+ *
+ * `dir` 可省略（默认 `<dataDir>/exports/<id>`）；给了就必须是绝对路径。
+ * 每一张图的落点都过 `assertContained`，因此记录里被写脏的文件名也越不出去。
+ */
+async function handleExportProject(
+  runtime: ToolRuntime,
+  projectId: string,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+  const dir = pickStringField(body, 'dir')
+
+  let target: string
+  if (dir.present && dir.value !== '') {
+    if (!isAbsolute(dir.value)) {
+      fail(response, 400, 'invalid_export_dir', `导出目录必须是绝对路径："${dir.value}"`)
+      return
+    }
+    target = resolve(dir.value)
+  } else {
+    target = assertContained(runtime.dataDir, join(runtime.dataDir, EXPORTS_DIR, projectId))
+  }
+
+  let record
+  try {
+    record = runtime.projectStore.read(projectId)
+  } catch (error) {
+    fail(response, 404, 'not_found', error instanceof Error ? error.message : String(error))
+    return
+  }
+
+  const imagesDir = runtime.projectStore.imagesDir(projectId)
+  const sources: ExportSource[] = []
+  for (const item of record.items) {
+    for (const image of item.images) {
+      const name = lastSegment(image.file)
+      if (name === '') continue
+      try {
+        sources.push({
+          absolutePath: assertContained(imagesDir, join(imagesDir, name)),
+          sha256: image.sha256,
+        })
+      } catch {
+        // 记录里的文件名越界（被手改脏）→ 跳过这一张，不让整个导出失败。
+      }
+    }
+  }
+
+  const outcome = exportImages(target, sources)
+  sendJson(response, 200, {
+    ok: true,
+    id: projectId,
+    dir: target,
+    count: outcome.exported.length,
+    files: outcome.exported,
+    warnings: outcome.warnings,
+  })
 }
 
 function handleFile(
