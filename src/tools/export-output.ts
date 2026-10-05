@@ -1,13 +1,17 @@
 /**
- * 产物「另存」：把已落盘的图**复制**一份到用户配置的 `outputDir`。
+ * 产物**复制**助手：把已落盘的图复制一份到调用方指定的目标目录。
  *
- * 三条不变量（对应实测反馈：用户跑测试时是**会话里的 agent 用 pwsh 手动**把产物
- * 拷进仓库目录的，那既不稳定也没必要）：
+ * 语义变更（本次）：本文件以前是「生成时自动另存」的助手——每张成功的图都会
+ * 被自动复制到用户配置的 `outputDir`。那条路径已**取消**：生成不该有未经请求的
+ * 副作用，图片只落插件数据目录。现在它只服务于**用户显式触发的作品库导出**
+ * （`POST /pixmart/api/projects/<id>/export`）。
+ *
+ * 三条不变量（与自动另存时期一致，仍然成立）：
  *   1. **只复制**，绝不移动/删除原件——数据目录里的项目文件是作品库的数据源。
- *   2. **失败不上抛**：图已经在数据目录里了，少一份便利副本不该把一次成功的生图
- *      变成失败；失败只收敛成一句可读 warning。
+ *   2. **失败不上抛**：失败只收敛成一句可读 warning（路由把它回给界面），
+ *      且不得破坏原项目。
  *   3. **文件名内容寻址**（`<sha8>-<原名>`）：不同内容绝不同名，同内容天然复用，
- *      因此重复生成、并发批量、跨项目都不会互相覆盖。
+ *      因此重复导出、并发导出、跨项目都不会互相覆盖。
  */
 import { copyFileSync, mkdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -41,15 +45,15 @@ export function exportFileName(sha256: string, sourcePath: string): string {
 }
 
 /**
- * 把一组图复制到 `outputDir`。
- * @param outputDir - 目标目录（绝对路径）；空串表示不导出，直接返回空结果。
+ * 把一组图复制到 `targetDir`。
+ * @param targetDir - 目标目录（绝对路径）；空串表示不导出，直接返回空结果。
  * @param sources - 待复制的原件（绝对路径 + 内容哈希）。
  */
 export function exportImages(
-  outputDir: string,
+  targetDir: string,
   sources: readonly ExportSource[],
 ): ExportOutcome {
-  const dir = outputDir.trim()
+  const dir = targetDir.trim()
   if (dir === '' || sources.length === 0) return { exported: [], warnings: [] }
 
   const exported: string[] = []
@@ -71,7 +75,7 @@ export function exportImages(
       continue
     }
     try {
-      // 同内容同名字的副本已经在（`outputDir` 恰好就是数据目录时也是这一支）→ 不再写。
+      // 同内容同名字的副本已经在（目标目录恰好就是数据目录时也是这一支）→ 不再写。
       // 只有"存在但字节数不对"（半截副本）才重写一次，把坏副本修好。
       if (!isCompleteCopy(target, source.absolutePath)) {
         copyFileSync(source.absolutePath, target)

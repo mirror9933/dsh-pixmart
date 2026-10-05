@@ -47,8 +47,13 @@ function makeFakeWebServer() {
   }
 }
 
-/** 只提供路由需要的那几个面的假运行时；projectStore 是**真的**。 */
-function makeFakeRuntime(dataDir) {
+/**
+ * 只提供路由需要的那几个面的假运行时；projectStore 是**真的**。
+ *
+ * `exportDir` 默认给空串（未配置）——导出路由因此必须回 400 `no_export_dir`。
+ * 需要导出成功的用例用 `makeFakeRuntime(dir, { exportDir })` 显式配一个绝对路径。
+ */
+function makeFakeRuntime(dataDir, options = {}) {
   return {
     ctx: undefined,
     dataDir,
@@ -58,6 +63,7 @@ function makeFakeRuntime(dataDir) {
     runStore: new RunStore(dataDir),
     usage: new UsageLog(dataDir),
     config: async () => ({
+      exportDir: options.exportDir ?? '',
       providers: [
         {
           id: 'ofox',
@@ -451,41 +457,70 @@ describe('软删 + 回收站', () => {
 // ── ③ 导出 ──────────────────────────────────────────────────────────────────
 
 describe('导出项目', () => {
-  it('默认导出到 <dataDir>/exports/<id>：文件真的落盘，原件仍在', async () => {
+  it('未配置导出路径且未带 dir → 400 no_export_dir，且磁盘上什么都没多出来', async () => {
     const { id, absolutePath } = await seedProject()
     const bytesBefore = readFileSync(absolutePath)
 
     const { status, json } = await call(webServer, runtime, `/pixmart/api/projects/${id}/export`, {
       method: 'POST',
     })
-    assert.equal(status, 200)
-    assert.equal(json.count, 1)
-    assert.equal(json.files.length, 1)
-    assert.equal(json.warnings.length, 0)
-    assert.equal(json.dir, join(dataDir, 'exports', id))
-    assert.equal(existsSync(json.files[0]), true)
-    assert.equal(readFileSync(json.files[0]).equals(bytesBefore), true, '导出的是同一份字节')
-
-    // **原件仍在**：导出是复制，不是移动
+    assert.equal(status, 400)
+    assert.equal(json.error.code, 'no_export_dir')
+    assert.match(json.error.message, /设置/)
+    // 语义变更：不再有"默认落到 <dataDir>/exports/<id>"这条兜底
+    assert.equal(existsSync(join(dataDir, 'exports')), false)
     assert.equal(existsSync(absolutePath), true)
     assert.equal(readFileSync(absolutePath).equals(bytesBefore), true)
-    assert.equal(runtime.projectStore.list().length, 1)
   })
 
-  it('指定绝对目录时落到指定位置', async () => {
-    const { id } = await seedProject()
-    const target = mkdtempSync(join(tmpdir(), 'pixmart-export-'))
+  it('配了 exportDir → 落到 <exportDir>/<id>/：文件真的落盘，原件仍在', async () => {
+    const { id, absolutePath } = await seedProject()
+    const bytesBefore = readFileSync(absolutePath)
+    const exportDir = mkdtempSync(join(tmpdir(), 'pixmart-export-dir-'))
     try {
-      const { status, json } = await call(webServer, runtime, `/pixmart/api/projects/${id}/export`, {
-        method: 'POST',
-        body: { dir: target },
-      })
+      const configured = makeFakeRuntime(dataDir, { exportDir })
+      const { status, json } = await call(
+        makeFakeWebServer(),
+        configured,
+        `/pixmart/api/projects/${id}/export`,
+        { method: 'POST' },
+      )
       assert.equal(status, 200)
-      assert.equal(json.dir, target)
+      assert.equal(json.count, 1)
+      assert.equal(json.files.length, 1)
+      assert.equal(json.warnings.length, 0)
+      assert.equal(json.dir, join(exportDir, id))
       assert.equal(existsSync(json.files[0]), true)
-      assert.equal(json.files[0].startsWith(target), true)
+      assert.equal(readFileSync(json.files[0]).equals(bytesBefore), true, '导出的是同一份字节')
+
+      // **原件仍在**：导出是复制，不是移动
+      assert.equal(existsSync(absolutePath), true)
+      assert.equal(readFileSync(absolutePath).equals(bytesBefore), true)
+      assert.equal(configured.projectStore.list().length, 1)
     } finally {
-      rmSync(target, { recursive: true, force: true })
+      rmSync(exportDir, { recursive: true, force: true })
+    }
+  })
+
+  it('带 dir 时覆盖配置：落点仍是 <dir>/<id>，配置目录不被创建', async () => {
+    const { id } = await seedProject()
+    const configured = mkdtempSync(join(tmpdir(), 'pixmart-export-cfg-'))
+    const override = mkdtempSync(join(tmpdir(), 'pixmart-export-override-'))
+    try {
+      const { status, json } = await call(
+        makeFakeWebServer(),
+        makeFakeRuntime(dataDir, { exportDir: configured }),
+        `/pixmart/api/projects/${id}/export`,
+        { method: 'POST', body: { dir: override } },
+      )
+      assert.equal(status, 200)
+      assert.equal(json.dir, join(override, id))
+      assert.equal(existsSync(json.files[0]), true)
+      assert.equal(json.files[0].startsWith(join(override, id)), true)
+      assert.equal(readdirSync(configured).length, 0, '被覆盖的配置目录不该被写入')
+    } finally {
+      rmSync(configured, { recursive: true, force: true })
+      rmSync(override, { recursive: true, force: true })
     }
   })
 
@@ -500,12 +535,20 @@ describe('导出项目', () => {
   })
 
   it('不存在的项目 → 404（不会凭空造目录）', async () => {
-    const { status, json } = await call(webServer, runtime, '/pixmart/api/projects/nope/export', {
-      method: 'POST',
-    })
-    assert.equal(status, 404)
-    assert.equal(json.error.code, 'not_found')
-    assert.equal(existsSync(join(dataDir, 'exports', 'nope')), false)
+    const configured = mkdtempSync(join(tmpdir(), 'pixmart-export-none-'))
+    try {
+      const { status, json } = await call(
+        makeFakeWebServer(),
+        makeFakeRuntime(dataDir, { exportDir: configured }),
+        '/pixmart/api/projects/nope/export',
+        { method: 'POST' },
+      )
+      assert.equal(status, 404)
+      assert.equal(json.error.code, 'not_found')
+      assert.equal(existsSync(join(configured, 'nope')), false)
+    } finally {
+      rmSync(configured, { recursive: true, force: true })
+    }
   })
 })
 
@@ -660,7 +703,7 @@ describe('真实 runtime：删除 → 回收站 → 恢复 / 导出', () => {
     on: () => () => {},
   }
 
-  function realRuntime() {
+  function realRuntime(options = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'pixmart-workbench-real-'))
     writeFileSync(
       join(dir, 'config.json'),
@@ -672,6 +715,7 @@ describe('真实 runtime：删除 → 回收站 → 恢复 / 导出', () => {
         promptOverrides: {},
         exportToWorkspace: false,
         attachmentInConversation: false,
+        ...(options.exportDir === undefined ? {} : { exportDir: options.exportDir }),
       }),
       'utf8',
     )
@@ -679,15 +723,17 @@ describe('真实 runtime：删除 → 回收站 → 恢复 / 导出', () => {
   }
 
   it('真实 runtime 下：软删后可从回收站恢复，导出只复制', async () => {
-    const { dir, runtime } = realRuntime()
+    const exportDir = mkdtempSync(join(tmpdir(), 'pixmart-workbench-export-'))
+    const { dir, runtime } = realRuntime({ exportDir })
     try {
       const web = makeFakeWebServer()
       const { id, absolutePath, fileName } = await seedProject(runtime.projectStore)
 
-      // 导出（默认落点由 runtime.dataDir 推导）
+      // 导出落点由配置里的 exportDir 决定：<exportDir>/<项目 id>/
       const exported = await call(web, runtime, `/pixmart/api/projects/${id}/export`, { method: 'POST' })
       assert.equal(exported.status, 200)
       assert.equal(exported.json.count, 1)
+      assert.equal(exported.json.dir, join(exportDir, id))
       assert.equal(existsSync(exported.json.files[0]), true)
       assert.equal(existsSync(absolutePath), true, '导出不得动原件')
 
@@ -712,6 +758,7 @@ describe('真实 runtime：删除 → 回收站 → 恢复 / 导出', () => {
       assert.equal(back.json.projects[0].id, id)
     } finally {
       rmSync(dir, { recursive: true, force: true })
+      rmSync(exportDir, { recursive: true, force: true })
     }
   })
 })

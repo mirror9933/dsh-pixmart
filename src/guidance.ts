@@ -52,8 +52,9 @@ export const GUIDANCE_TEXT = [
   '产物会落盘到插件数据目录，并出现在侧边栏「PixMart → 作品库」中；',
   '历史记录与累计用量用 `pixmart_projects` 查询。',
   '',
-  '若用户配置了「产物保存路径」，每张成功的图会**另行复制**一份到那里；',
-  '**直接用该路径 `present`，不要用 `pwsh` 把图片拷进当前工作区**。',
+  '生成的图**只**落在插件数据目录（作品库可浏览）；**如需文件形式的副本，用作品库的「导出」**',
+  '（导出前要在「设置 → PixMart → 作品库导出路径」里配好绝对路径），',
+  '**不要用 `pwsh` 手动把图片拷进当前工作区**。',
 ].join('\n')
 
 function isSystemPromptLike(value: unknown): value is SystemPromptLike {

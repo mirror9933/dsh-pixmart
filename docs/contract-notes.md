@@ -477,8 +477,10 @@ F1 取证共发出 **25 次付费调用**，其中**必要 9 次、可避免 16 
 - `baseUrl` 只做形状校验（`http(s)://` + 非空主机 + 不内嵌用户名密码），
   不做联通性判断——那是「测试连接」的事。
 
-**§14 的历史语义已被 §15 取代**：`refresh-models` 从"拉取即全量写回"改成**只读**，
-写入拆到新的 `POST /providers/<id>/models`。原因与契约见下一节。
+**§14 的历史语义已被 §15 / §16.3 取代**：`refresh-models` 从"拉取即全量写回"改成**只读**，
+写入拆到新的 `POST /providers/<id>/models`（原因与契约见 §15）；
+原先在这里的 `POST /settings/output-dir`（产物保存路径）已被 `POST /settings/export-dir`
+取代，自动复制取消——见 §16.3。
 
 ## 15. 拉取 = 只读，选择 = 显式写入（2026-10-06）
 
@@ -606,7 +608,7 @@ return loaded.then(() => configStore.get())
 | 路由 | body | 成功 | 失败 |
 |---|---|---|---|
 | `POST /pixmart/api/projects/<id>/delete` | `{confirm:true}` | `200 {ok,id,trashId,trashed:true,mode}` | `400 confirm_required` / `404 not_found` / `400 bad_id` |
-| `POST /pixmart/api/projects/<id>/export` | `{dir?}`（绝对路径） | `200 {ok,id,dir,count,files[],warnings[]}` | `400 invalid_export_dir` / `404 not_found` |
+| `POST /pixmart/api/projects/<id>/export` | `{dir?}`（绝对路径，**见 §16.3**） | `200 {ok,id,dir,count,files[],warnings[]}` | `400 no_export_dir` / `400 invalid_export_dir` / `404 not_found` |
 | `GET /pixmart/api/trash` | — | `200 {ok,count,trash[]}` | — |
 | `POST /pixmart/api/trash/<id>/restore` | `{}` | `200 {ok,id,trashId,restored:true,mode}` | `404 not_found` / `409 already_exists` / `400 bad_id` |
 | `POST /pixmart/api/trash/purge` | `{confirm:true}` | `200 {ok,purged}` | `400 confirm_required` |
@@ -624,9 +626,57 @@ return loaded.then(() => configStore.get())
 导出只复制、失败收敛成 `warnings`、**原件不动**；所有响应体不含 apiKey；
 回收站路径同样过 `assertContained`。
 
-**已知取舍**：导出的 `dir` 接受任意**绝对路径**（与设置页「产物保存路径」同一立场：
+**已知取舍**：导出的 `dir` 接受任意**绝对路径**（与设置页「作品库导出路径」同一立场：
 落点由用户明确指定），因此它本身不过 `assertContained`；但**每一张图的落点**都过
 （`assertContained(目标目录, 文件名)`），记录里被手改脏的文件名越不出去。
+
+### 16.3 语义变更（2026-10-06）：取消「产物保存路径」的自动复制 → 「作品库导出路径」
+
+一句话：**生成不再往数据目录之外的任何地方写文件**；要文件形式的副本，由用户在
+作品库显式点「导出」。
+
+变更前的三条落点，变更后只剩两条：
+
+| 落点 | 变更前 | 变更后 |
+|---|---|---|
+| ① 插件数据目录 `projects/<id>/` | 总是写（唯一真相） | **总是写**（不变） |
+| ② `outputDir`（每张成功的图自动复制一份） | 生成时自动复制 | **取消**。改为「作品库导出路径」`exportDir`，**只在导出时**用 |
+| ③ 会话内嵌附件（DSH 用来在对话卡片显示图片） | 生成时创建 | **不变**（它是显示机制，不是用户的保存路径） |
+
+**为什么取消自动复制**：生成不该有未经请求的副作用。用户没说要副本，插件却在他的
+磁盘上多写一份——而且那份副本还有自己的生命周期问题（谁清理？改了原件怎么办？）。
+现在图片只落数据目录（作品库浏览），要不要副本、副本放哪，全由用户在导出时决定。
+
+**配置字段**：`outputDir` → `exportDir`（默认 `''`，非空必须是绝对路径，否则记 warning
+当未设置）。`outputDir` 仍留在 schema 里兼容旧 `config.json`，但**不再被读、不再有任何行为**。
+
+**迁移**：读配置时若 `exportDir` **缺键**而旧 `outputDir` 有可用的绝对路径，把旧值搬到
+`exportDir`，并记一条 warning 说明"已从 outputDir 迁移"（用户已填好的路径不能凭空消失）。
+`exportDir` 显式写了空串或写坏了（相对路径/非字符串）则**不回填**——那是用户已经表过态或
+需要他自己修，静默改用另一个路径更糟。
+
+**HTTP**：
+
+| 路由 | 变化 |
+|---|---|
+| `POST /pixmart/api/settings/output-dir` | **删除**（不再存在，命中即 `404 unknown_route`） |
+| `POST /pixmart/api/settings/export-dir` | **新增**：body `{exportDir}`；空串 = 清除；非绝对路径 → `400 invalid_export_dir`；缺字段/非字符串 → `400 bad_field`；GET → `405`。写盘时顺手把废弃的 `outputDir` 清成 `''` |
+| `GET /pixmart/api/providers` | 回 `exportDir`，**不再回** `outputDir` |
+
+**`POST /projects/<id>/export` 的新语义**（目标目录优先级即顺序）：
+
+1. 请求体里的 `dir`（绝对路径，覆盖配置）；
+2. 配置里的 `exportDir`；
+3. 都没有 → **`400 no_export_dir`**，message 直接指向设置页（"请先在设置里配置作品库导出路径"）。
+
+落点固定是 `<目标目录>/<projectId>/`（不同项目各占一格）。**只复制、不移动**；
+目标不可写时仍是 `200` + `warnings[]`，**原项目一个字节都不受影响**。
+项目不存在 → `404`（不会凭空造目录）；`dir` 相对路径 → `400 invalid_export_dir`。
+
+**边界**：`pixmart_projects` 工具的 `export` action 行为**未动**（仍默认导出到
+`<dataDir>/exports/<id>`）——它是 Agent 侧的独立口径，本次只改 HTTP/界面那条用户路径。
+`pixmart_projects` 工具回传的字段由 `outputDir` 改成 `exportDir`（文本里明确写"生成时不复制"）。
+
 `<id>` 一律过 `SAFE_ID`，跨目录的 id 在路由层就 400。
 
 

@@ -83,7 +83,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           defaultProvider: { type: 'string' },
           defaultModel: { type: 'string' },
           defaultSize: { type: 'string' },
-          outputDir: { type: 'string' },
+          exportDir: { type: 'string' },
           providerIds: { type: 'array', items: { type: 'string' } },
           warnings: { type: 'array', items: { type: 'string' } },
         },
@@ -101,12 +101,13 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         lines.push(
           `默认：${String(value.defaultProvider)} / ${String(value.defaultModel)} / ${String(value.defaultSize)}`,
         )
-        // 产物保存路径：Agent 要靠它决定 present 哪个路径，而不是自己往工作区里拷。
-        const outputDir = typeof value.outputDir === 'string' ? value.outputDir : ''
+        // 作品库导出路径：Agent 可以据此告诉用户"导出的文件会落在哪"。
+        // 生成**不会**往这里写任何东西（语义变更），所以措辞里必须说清"导出时"。
+        const exportDir = typeof value.exportDir === 'string' ? value.exportDir : ''
         lines.push(
-          outputDir === ''
-            ? '产物保存路径：未设置（产物只写数据目录，经作品库查看）'
-            : `产物保存路径：${outputDir}（每张成功的图会另存一份到这里，原件仍在数据目录）`,
+          exportDir === ''
+            ? '作品库导出路径：未配置（图片只在数据目录，经作品库浏览；要文件形式的副本，请让用户在作品库点「导出」并先配置该路径）'
+            : `作品库导出路径：${exportDir}（仅当用户在作品库点「导出」时才把项目图片复制到 ${exportDir}/<项目 id>/；生成时不复制）`,
         )
         if (Array.isArray(value.warnings) && value.warnings.length > 0) {
           lines.push(`注意：${value.warnings.join('；')}`)
@@ -130,7 +131,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           defaultProvider: config.defaults.provider,
           defaultModel: config.defaults.model,
           defaultSize: config.defaults.size,
-          outputDir: config.outputDir,
+          exportDir: config.exportDir,
           limits: { ...config.limits },
           providerIds: selected.map((p) => p.id),
         }

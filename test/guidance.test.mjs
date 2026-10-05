@@ -80,10 +80,12 @@ describe('installGuidance', () => {
     // 6) 耗时预期：单张实测达分钟级，避免被误判为卡死而重复调用（重复计费）
     assert.match(GUIDANCE_TEXT, /1–3 分钟/)
     assert.match(GUIDANCE_TEXT, /不要重复调用/)
-    // 7) 产物保存路径：配了就直接 present 那个路径，别再手动往工作区里拷
-    assert.match(GUIDANCE_TEXT, /产物保存路径/)
-    assert.match(GUIDANCE_TEXT, /另行复制/)
+    // 7) 产物落点：只落数据目录；要文件副本走作品库「导出」，别再手动往工作区里拷
+    assert.match(GUIDANCE_TEXT, /只\*\*落在插件数据目录/)
+    assert.match(GUIDANCE_TEXT, /作品库的「导出」/)
     assert.match(GUIDANCE_TEXT, /不要用 `pwsh`/)
+    // 语义变更：不得再宣称"配了路径就自动另存一份"
+    assert.equal(/另行复制/.test(GUIDANCE_TEXT), false, '不得再宣称生成时会自动复制')
   })
 
   it('文本保持精简（系统提示预算要留给高信号内容）', () => {

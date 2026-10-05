@@ -145,11 +145,33 @@ const jsonResponse = (body, status = 200) => ({
   json: async () => body,
 })
 
-/** 默认路由：列表 + 详情 + 回收站，写操作按需覆盖。 */
+/**
+ * 默认路由：列表 + 详情 + 回收站 + 配置（导出路径），写操作按需覆盖。
+ *
+ * `exportDir` 给一个绝对路径：导出按钮把它当作 `dir` 发出去（未配置时界面不猜路径，
+ * 由宿主回 `no_export_dir`）。
+ */
+const EXPORT_DIR = 'D:/PixMartExport'
+
+function providersPayload(over = {}) {
+  return {
+    ok: true,
+    dataDir: 'D:/pixmart',
+    dataDirNotes: [],
+    warnings: [],
+    defaults: { provider: 'ofox', model: 'gpt-image-1', size: '1:1', n: 1 },
+    limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 3, retentionDays: 0 },
+    exportDir: EXPORT_DIR,
+    providers: [],
+    ...over,
+  }
+}
+
 function defaultRespond(url, init = {}) {
   const method = String(init.method ?? 'GET').toUpperCase()
   if (method === 'GET') {
     if (url.includes('/api/trash')) return jsonResponse(trashPayload)
+    if (url.includes('/api/providers')) return jsonResponse(providersPayload())
     if (url.includes('/api/projects?limit=')) {
       return jsonResponse({ ok: true, count: 1, projects: [projectSummary] })
     }
@@ -448,8 +470,8 @@ describe('jsdom lane：导出', () => {
           return jsonResponse({
             ok: true,
             count: 1,
-            dir: 'D:/pixmart/exports/' + PROJECT_ID,
-            files: ['D:/pixmart/exports/x.png'],
+            dir: EXPORT_DIR + '/' + PROJECT_ID,
+            files: [EXPORT_DIR + '/x.png'],
             warnings: [],
           })
         }
@@ -460,9 +482,46 @@ describe('jsdom lane：导出', () => {
     await openDetail(lane)
     await lane.click('导出图片')
 
-    assert.equal(lane.posts('/export').length, 1)
+    const posts = lane.posts('/export')
+    assert.equal(posts.length, 1)
+    // 语义变更：导出目录来自设置里的「作品库导出路径」，客户端把它作为 dir 传上去
+    assert.deepEqual(JSON.parse(String(posts[0].body)), { dir: EXPORT_DIR })
     assert.ok(lane.text().includes('已导出 1 个文件到'), '要给用户导出落点')
-    assert.ok(lane.text().includes('D:/pixmart/exports/'))
+    assert.ok(lane.text().includes(EXPORT_DIR))
+  })
+
+  it('未配置导出路径 → 400 no_export_dir：界面给出可读提示并引导去设置（不静默失败）', async () => {
+    const lane = await createLane({
+      respond(url, init = {}) {
+        const method = String(init.method ?? 'GET').toUpperCase()
+        if (method === 'GET' && url.includes('/api/providers')) {
+          return jsonResponse(providersPayload({ exportDir: '' }))
+        }
+        if (method === 'POST' && url.endsWith('/export')) {
+          return jsonResponse(
+            {
+              ok: false,
+              error: {
+                code: 'no_export_dir',
+                message: '没有可用的导出目录：请先在设置里配置作品库导出路径',
+              },
+            },
+            400,
+          )
+        }
+        return defaultRespond(url, init)
+      },
+    })
+    await lane.render()
+    await openDetail(lane)
+    await lane.click('导出图片')
+
+    // 未配置时不该猜任何默认路径
+    assert.deepEqual(JSON.parse(String(lane.posts('/export')[0].body)), {})
+    assert.ok(lane.text().includes('还没有配置「作品库导出路径」'), '必须给出可读提示')
+    assert.ok(lane.text().includes('设置'), '必须引导用户去设置页')
+    assert.ok(lane.text().includes('no_export_dir') || lane.text().includes('导出路径'), '要能看出原因')
+    assert.equal(lane.container.querySelectorAll('*').length > 0, true, '不得白屏')
   })
 })
 

@@ -20,7 +20,7 @@ import { findProvider, toProviderView, type PixmartConfig, type ProviderConfig }
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
 import { TrashError } from './store/project-store.js'
-import { exportImages, type ExportSource } from './tools/export-output.js'
+import { exportFileName, exportImages, type ExportSource } from './tools/export-output.js'
 import { fetchProviderModels, type ModelProbeCode } from './vendor/models.js'
 import type { HostContext, HttpResponseLike, HttpRequestLike, WebServerLike } from './host-types.js'
 import type { ToolRuntime } from './tools/runtime.js'
@@ -438,8 +438,9 @@ async function handleApi(
       warnings: runtime.configWarnings(),
       defaults: config.defaults,
       limits: config.limits,
-      // 设置页「产物保存」卡片的数据源：空串 = 不导出。
-      outputDir: config.outputDir,
+      // 设置页「作品库导出路径」卡片 + 作品库「导出」按钮的数据源：空串 = 未配置。
+      // 注意**不再**回传已废弃的 `outputDir`（它已无任何行为）。
+      exportDir: config.exportDir,
       providers: config.providers.map((provider) => toProviderView(provider)),
       usage: runtime.usage.summary(),
       historical: historicalTotals(runtime.projectStore.list()),
@@ -486,10 +487,10 @@ async function handleApi(
     return
   }
 
-  // POST /pixmart/api/settings/output-dir
-  if (route === '/settings/output-dir' || route === '/settings/output-dir/') {
+  // POST /pixmart/api/settings/export-dir
+  if (route === '/settings/export-dir' || route === '/settings/export-dir/') {
     if (requirePost()) return
-    await handleOutputDir(runtime, response, readBody)
+    await handleExportDir(runtime, response, readBody)
     return
   }
 
@@ -812,35 +813,41 @@ async function handleDefaults(
 }
 
 /**
- * 写「产物保存路径」。
+ * 写「作品库导出路径」（`exportDir`）。
  *
- * 语义：空串 = **清除**（回到"不导出"，产物只在数据目录、经「作品库」查看）；
+ * 语义：空串 = **清除**（回到"未配置"，导出按钮会提示先去设置里填）；
  * 非空时**必须是绝对路径**——相对路径的落点取决于宿主进程的工作目录
  * （GUI 启动时那还是 profile 目录），用户无法预期，所以宁可 400 也不静默接受。
  *
+ * 与语义变更前的一个重要差别：这里**不再**有任何"生成时自动复制"的含义。
+ * 该路径只在用户点作品库的「导出」时才被使用。
+ *
  * 走 `ConfigStore.update()`：原子写 + 按 configPath 串行读改写（与其余写路由一致）。
  */
-async function handleOutputDir(
+async function handleExportDir(
   runtime: ToolRuntime,
   response: HttpResponseLike,
   readBody: BodyReader,
 ): Promise<void> {
   const body = await readBody()
-  const field = pickStringField(body, 'outputDir')
+  const field = pickStringField(body, 'exportDir')
   if (!field.present) {
-    fail(response, 400, 'bad_field', 'outputDir 缺失')
+    fail(response, 400, 'bad_field', 'exportDir 缺失')
     return
   }
   if (field.value !== '' && !isAbsolute(field.value)) {
-    fail(response, 400, 'invalid_output_dir', `产物保存路径必须是绝对路径："${field.value}"`)
+    fail(response, 400, 'invalid_export_dir', `作品库导出路径必须是绝对路径："${field.value}"`)
     return
   }
 
   const updated = await runtime.configStore.update((current) => ({
     ...current,
-    outputDir: field.value,
+    exportDir: field.value,
+    // 顺手把已废弃的旧字段从盘上抹掉：`outputDir` 已无任何行为，
+    // 留着只会让后来的人以为它还有用（也不会再触发迁移 warning 刷屏）。
+    outputDir: '',
   }))
-  sendJson(response, 200, { ok: true, outputDir: updated.outputDir })
+  sendJson(response, 200, { ok: true, exportDir: updated.exportDir })
 }
 
 /**
@@ -859,9 +866,6 @@ function resolveKeyForProbe(provider: ProviderConfig): string {
 }
 
 // ───────────────────────────────────────────────── 作品库写路由（软删 / 回收站 / 导出）
-
-/** 默认导出落点（与 `pixmart_projects.export` 的口径一致）：`<dataDir>/exports/<id>`。 */
-const EXPORTS_DIR = 'exports'
 
 /** 把 store 抛出的软删类错误映射成 HTTP 状态码；其余算 500。 */
 function failTrash(response: HttpResponseLike, error: unknown, what: string): void {
@@ -977,10 +981,18 @@ async function handlePurgeTrash(
 /**
  * `POST /pixmart/api/projects/<id>/export` —— 把项目图片**复制**到目标目录。
  *
- * 复用 `tools/export-output.ts` 的三条不变量：只复制（原件是数据源，绝不移动）、
- * 失败不上抛（收敛成 `warnings`）、文件名内容寻址（不会互相覆盖）。
+ * 这是**唯一**会往数据目录之外写用户文件的路径，且必须由用户/界面显式触发：
+ * 生成（generate / edit / batch）不再自动复制任何东西。
  *
- * `dir` 可省略（默认 `<dataDir>/exports/<id>`）；给了就必须是绝对路径。
+ * 目标目录的优先级（顺序即优先级）：
+ *   1. 请求体里的 `dir`（绝对路径，覆盖配置）；
+ *   2. 配置里的 `exportDir`（设置页「作品库导出路径」）；
+ *   3. 都没有 → **400 `no_export_dir`**，message 直接告诉用户去哪儿配。
+ *
+ * 实际落点是 `<目标目录>/<projectId>/`：不同项目各占一格，重复导出不会互相覆盖。
+ *
+ * 复用 `tools/export-output.ts` 的三条不变量：只复制（原件是数据源，绝不移动）、
+ * 失败不上抛（收敛成 `warnings`，原项目不受影响）、文件名内容寻址。
  * 每一张图的落点都过 `assertContained`，因此记录里被写脏的文件名也越不出去。
  */
 async function handleExportProject(
@@ -990,24 +1002,50 @@ async function handleExportProject(
   readBody: BodyReader,
 ): Promise<void> {
   const body = await readBody()
-  const dir = pickStringField(body, 'dir')
+  const override = pickStringField(body, 'dir')
+  const config = await runtime.config()
 
-  let target: string
-  if (dir.present && dir.value !== '') {
-    if (!isAbsolute(dir.value)) {
-      fail(response, 400, 'invalid_export_dir', `导出目录必须是绝对路径："${dir.value}"`)
+  // 目标根：请求体覆盖 > 配置 > 未配置（400）。
+  let root: string
+  if (override.present && override.value !== '') {
+    if (!isAbsolute(override.value)) {
+      fail(response, 400, 'invalid_export_dir', `导出目录必须是绝对路径："${override.value}"`)
       return
     }
-    target = resolve(dir.value)
+    root = resolve(override.value)
   } else {
-    target = assertContained(runtime.dataDir, join(runtime.dataDir, EXPORTS_DIR, projectId))
+    const configured = typeof config.exportDir === 'string' ? config.exportDir.trim() : ''
+    if (configured === '') {
+      fail(
+        response,
+        400,
+        'no_export_dir',
+        '没有可用的导出目录：请先在设置里配置作品库导出路径（设置 → Pixmart → 作品库导出路径），或在请求里带 dir（绝对路径）',
+      )
+      return
+    }
+    if (!isAbsolute(configured)) {
+      fail(response, 400, 'invalid_export_dir', `配置里的作品库导出路径不是绝对路径："${configured}"`)
+      return
+    }
+    root = resolve(configured)
   }
 
+  // 项目必须先存在：否则"不存在的项目"会在盘上凭空造出一个空目录。
   let record
   try {
     record = runtime.projectStore.read(projectId)
   } catch (error) {
     fail(response, 404, 'not_found', error instanceof Error ? error.message : String(error))
+    return
+  }
+
+  // 落点固定在目标根之下的项目子目录里；越界（例如被喂了 `..`）直接 400。
+  let target: string
+  try {
+    target = assertContained(root, join(root, projectId))
+  } catch {
+    fail(response, 400, 'bad_export_dir', `导出落点越界：${join(root, projectId)}`)
     return
   }
 
@@ -1018,12 +1056,13 @@ async function handleExportProject(
       const name = lastSegment(image.file)
       if (name === '') continue
       try {
-        sources.push({
-          absolutePath: assertContained(imagesDir, join(imagesDir, name)),
-          sha256: image.sha256,
-        })
+        // 源与目标**两条**路径都过包含校验：文件名来自 project.json，
+        // 不能假设它一定干净（记录被手改脏时越不出去）。
+        const absolutePath = assertContained(imagesDir, join(imagesDir, name))
+        assertContained(target, join(target, exportFileName(image.sha256, name)))
+        sources.push({ absolutePath, sha256: image.sha256 })
       } catch {
-        // 记录里的文件名越界（被手改脏）→ 跳过这一张，不让整个导出失败。
+        // 记录里的文件名越界 → **跳过这一张**，不让整个导出失败（与复制失败的收敛口径一致）。
       }
     }
   }

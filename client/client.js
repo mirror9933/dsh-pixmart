@@ -120,6 +120,26 @@ window.__ModuleLoader__.load({
       return message
     }
 
+    /**
+     * 作品库写动作（导出 / 删除）失败时的**可行动**提示。
+     *
+     * 入参直接用 `apiPost` 返回的 `{ error, code }`（error 已经是可读文案）。
+     *
+     * `no_export_dir` 是语义变更后新增的一条：生图不再自动复制，导出必须由用户
+     * 显式触发，因此"没配导出路径"是**正常分支**而不是异常。这里把它翻成一句
+     * 指向设置页的话——**绝不静默失败**（方案里对复制提示词按钮的同一条红线）。
+     */
+    function explainProjectActionError(code, message) {
+      const text = isString(message) ? message : ''
+      if (code === 'no_export_dir') {
+        return (
+          '还没有配置「作品库导出路径」：请到 设置 → PixMart → 作品库导出路径 填一个绝对路径，再回来点「导出图片」。' +
+          (text === '' ? '' : '（宿主原话：' + text + '）')
+        )
+      }
+      return text === '' ? '操作失败' : text
+    }
+
     /** 取数助手：no-store + 形状校验 + 不抛异常。 */
     async function apiGet(path, validate) {
       if (BASE === null) return { ok: false, error: '无法解析插件基址' }
@@ -1302,18 +1322,19 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 「产物保存」卡片：配置 `outputDir`。
+     * 「作品库导出路径」卡片：配置 `exportDir`。
      *
-     * 动机（实测）：用户跑测试时，产物与参考图是被**会话里的 agent 用 pwsh 手动**
-     * 拷进工作区的（插件从 P0 起就是 `exportToWorkspace: false`，只写数据目录）。
-     * 配好这个目录后插件自己复制一份过去，Agent 就有稳定路径可以 `present`，
-     * 不必再往工作区里拷。
+     * 语义变更：这里以前是「产物保存」——配好后每张成功的图都会被**自动复制**一份过去。
+     * 那条自动复制已经**取消**（生成不该有未经请求的副作用：图片只落数据目录）。
+     * 现在这个路径唯一的用途是：用户在作品库点「导出」时，把该项目的图片复制到
+     * `<该路径>/<项目 id>/`。
      *
-     * 语义：**留空 = 不导出**；非空必须是绝对路径（宿主侧也会校验并回
-     * `invalid_output_dir`）。失焦与点「保存」等价，成功后重取 `api/providers`。
+     * 语义：**留空 = 未配置**（导出按钮会提示先去这里填）；非空必须是绝对路径
+     * （宿主侧也会校验并回 `invalid_export_dir`）。失焦与点「保存」等价，
+     * 成功后重取 `api/providers`。
      */
-    function OutputDirCard(props) {
-      const current = isString(props.outputDir) ? props.outputDir : ''
+    function ExportDirCard(props) {
+      const current = isString(props.exportDir) ? props.exportDir : ''
       const [value, setValue] = React.useState(current)
       const save = useMutation()
       /**
@@ -1332,11 +1353,11 @@ window.__ModuleLoader__.load({
 
       const submit = (next) =>
         save.run(async () => {
-          const outcome = await apiPost('api/settings/output-dir', { outputDir: next }, (payload) =>
-            isString(payload.outputDir),
+          const outcome = await apiPost('api/settings/export-dir', { exportDir: next }, (payload) =>
+            isString(payload.exportDir),
           )
           if (outcome.ok !== true) return postResult(outcome, '')
-          return postResult(outcome, next === '' ? '已清除，产物只写数据目录' : '已保存')
+          return postResult(outcome, next === '' ? '已清除，导出前需要重新配置' : '已保存')
         }).then((outcome) => {
           if (isObject(outcome) && outcome.ok === true && typeof props.reload === 'function') {
             props.reload()
@@ -1353,15 +1374,15 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: skin.row },
-          h('strong', { style: { fontSize: '13px' } }, '产物保存'),
+          h('strong', { style: { fontSize: '13px' } }, '作品库导出路径'),
           h(Pill, null, current === '' ? '未设置' : '已设置'),
         ),
         h(
           'p',
           { style: skin.muted },
-          '留空 = 不导出：产物只写在插件数据目录，从侧边栏「PixMart → 作品库」查看。' +
-            '设置后每张成功的图会「另行复制」一份到该目录，方便直接用该路径引用；' +
-            '数据目录里的原件始终保留。',
+          '生成时不再自动复制任何文件：图片只写在插件数据目录，从侧边栏「PixMart → 作品库」查看。' +
+            '只有你在作品库点「导出」时，才会把该项目的图片复制到 该路径/<项目 id>/（原件始终保留）。' +
+            '留空 = 未配置，导出按钮会提示你先来这里填。',
         ),
         h(
           'div',
@@ -1369,11 +1390,11 @@ window.__ModuleLoader__.load({
           h(
             Field,
             // 路径可能很长：独占一行，别让「标签 + 值」被 flex 拆散。
-            { label: '产物保存路径（须为绝对路径）', style: { flex: '1 0 100%' } },
+            { label: '作品库导出路径（须为绝对路径）', style: { flex: '1 0 100%' } },
             h(TextInput, {
               value,
               disabled: save.busy,
-              placeholder: '绝对路径，如 D:/PixMartOut（留空 = 不导出）',
+              placeholder: '绝对路径，如 D:/PixMartExport（留空 = 未配置）',
               onChange: (event) => setValue(event.target.value),
               onBlur: () => {
                 if (skipBlur.current) {
@@ -1393,7 +1414,7 @@ window.__ModuleLoader__.load({
             {
               disabled: save.busy || !dirty,
               onClick: () => submit(trimmed),
-              title: '写入 config.json 的 outputDir；每次成功的图会另存一份到这里',
+              title: '写入 config.json 的 exportDir；只在作品库点「导出」时使用',
             },
             save.busy ? '保存中…' : '保存',
           ),
@@ -1411,7 +1432,7 @@ window.__ModuleLoader__.load({
               {
                 disabled: save.busy || current === '',
                 onClick: () => submit(''),
-                title: '清空该设置：回到"不导出"，产物只写数据目录',
+                title: '清空该设置：回到"未配置"，导出前需要重新填写',
               },
               '清除',
             ),
@@ -1579,7 +1600,7 @@ window.__ModuleLoader__.load({
 
         // 放在最后：厂商卡片里已有按钮文案为「保存」，这里再出现一个「保存」
         // 不该改变既有卡片在 DOM 中的先后（设置页的自动化测试按文案取按钮）。
-        h(OutputDirCard, { outputDir: data.outputDir, reload }),
+        h(ExportDirCard, { exportDir: data.exportDir, reload }),
 
         h('p', { style: skin.muted }, '插件 ' + PLUGIN + '@' + VERSION + ' · 设置页插槽 settings.section'),
       )
@@ -1826,13 +1847,21 @@ window.__ModuleLoader__.load({
       const [confirming, setConfirming] = React.useState(false)
 
       const busy = action.busy
+      const exportDir = isString(props.exportDir) ? props.exportDir : ''
 
       const onExport = () => {
         if (projectId === '' || busy !== null) return
         setAction({ busy: 'export', error: null, note: null })
-        apiPost('api/projects/' + encodeURIComponent(projectId) + '/export', {}).then((result) => {
+        // 导出目录由配置决定（宿主侧也会回退到配置里再校验一遍）；
+        // 界面**不**猜任何路径，未配置时把宿主给出的可读原因原样显示出来。
+        const body = exportDir === '' ? {} : { dir: exportDir }
+        apiPost('api/projects/' + encodeURIComponent(projectId) + '/export', body).then((result) => {
           if (result.ok !== true) {
-            setAction({ busy: null, error: result.error, note: null })
+            setAction({
+              busy: null,
+              error: explainProjectActionError(result.code, result.error),
+              note: null,
+            })
             return
           }
           const data = isObject(result.data) ? result.data : {}
@@ -1895,7 +1924,10 @@ window.__ModuleLoader__.load({
                   className: 'pxm-export-btn',
                   onClick: onExport,
                   disabled: busy !== null || projectId === '',
-                  title: '把项目图片复制到数据目录的 exports/ 下，原件不动',
+                  title:
+                    exportDir === ''
+                      ? '把项目图片复制到「作品库导出路径」（尚未配置，请先到设置里填）'
+                      : '把项目图片复制到 ' + exportDir + '/<项目 id>/，原件不动',
                 },
                 busy === 'export' ? '导出中…' : '导出图片',
               ),
@@ -2214,6 +2246,8 @@ window.__ModuleLoader__.load({
       const [trash, setTrash] = React.useState({ phase: 'idle', data: null, error: null })
       const [showTrash, setShowTrash] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
+      /** 配置里的作品库导出路径；空串 = 未配置（导出时宿主会回 400 并给出指引）。 */
+      const [exportDir, setExportDir] = React.useState('')
 
       const loadList = React.useCallback(
         () =>
@@ -2236,6 +2270,23 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         loadList()
       }, [loadList])
+
+      /**
+       * 详情里要显示"导出会落到哪"，因此顺手把配置里的「作品库导出路径」取回来。
+       *
+       * 取不到不是错误：导出请求照样会发出去，由宿主给出**可读的** 400 提示
+       * （`no_export_dir`），界面再把它翻成"先去设置里配"。界面**不猜**任何默认路径。
+       */
+      React.useEffect(() => {
+        let alive = true
+        apiGet('api/providers', isProviders).then((result) => {
+          if (!alive || !result.ok) return
+          setExportDir(isString(result.data.exportDir) ? result.data.exportDir : '')
+        })
+        return () => {
+          alive = false
+        }
+      }, [])
 
       React.useEffect(() => {
         if (selected === null) {
@@ -2321,6 +2372,7 @@ window.__ModuleLoader__.load({
           header,
           h(ProjectDetail, {
             state: detail,
+            exportDir,
             onBack: () => selectedProject.set(null),
             onDeleted: (id) => {
               selectedProject.set(null)
@@ -3006,7 +3058,10 @@ window.__ModuleLoader__.load({
       ProvidersSection,
       ProviderCard,
       DefaultsCard,
-      OutputDirCard,
+      OutputDirCard: ExportDirCard,
+      // 语义变更后仍在 `__test__` 里保留旧键（指向同一个组件），
+      // 免得只为改名而动无关的测试。
+      ExportDirCard,
       WorkbenchPanel,
       ProjectCard,
       ProjectDetail,
@@ -3024,6 +3079,7 @@ window.__ModuleLoader__.load({
       isActive,
       isTerminal,
       explainHostError,
+      explainProjectActionError,
       formatDateTime,
       formatDuration,
       HOST_STALE_HINT,

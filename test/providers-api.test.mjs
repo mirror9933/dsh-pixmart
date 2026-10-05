@@ -961,7 +961,7 @@ describe('写路由的方法与请求体约束', () => {
     '/pixmart/api/providers/ofox/models',
     '/pixmart/api/providers/ofox/test',
     '/pixmart/api/defaults',
-    '/pixmart/api/settings/output-dir',
+    '/pixmart/api/settings/export-dir',
   ]
 
   for (const path of writeRoutes) {

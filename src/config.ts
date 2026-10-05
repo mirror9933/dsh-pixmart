@@ -63,12 +63,23 @@ export interface PixmartConfig {
   readonly exportToWorkspace: boolean
   readonly attachmentInConversation: boolean
   /**
-   * 产物「另存」目录：每张**成功落盘**的图会再**复制**一份到这里，
-   * 便于 Agent / 用户拿到一个稳定的路径（原件始终留在数据目录）。
+   * **作品库导出路径**：用户在作品库点「导出」时，项目图片被**复制**到
+   * `<exportDir>/<projectId>/`（原件始终留在数据目录）。
    *
-   * 空串 = 不导出（P0 起的默认行为）；非空时必须是绝对路径。
+   * 语义变更（本次）：生图**不再**往这里自动复制任何文件。生成只有一处副作用——
+   * 写插件数据目录；要不要副本、副本放哪，由用户在作品库显式导出时决定。
+   *
+   * 空串 = 未配置（导出按钮会提示先去设置里填）；非空时必须是绝对路径。
    */
-  readonly outputDir: string
+  readonly exportDir: string
+  /**
+   * **已废弃**：旧的「产物保存路径」。字段保留只为兼容磁盘上已有的 config.json，
+   * **解析后不再有任何行为**（不读、不写、不生效）。
+   *
+   * 迁移见 `pickExportDir`：只在 `exportDir` 无可用值时把旧值搬过去一次，
+   * 以免用户已经填好的路径凭空消失。
+   */
+  readonly outputDir?: string
 }
 
 export const CONFIG_VERSION = 1
@@ -113,7 +124,7 @@ export function defaultConfig(): PixmartConfig {
     promptOverrides: {},
     exportToWorkspace: false,
     attachmentInConversation: true,
-    outputDir: '',
+    exportDir: '',
   }
 }
 
@@ -223,24 +234,78 @@ function pickStringRecord(
 }
 
 /**
- * 解析 `outputDir`：空串表示不导出；非空时**必须是绝对路径**。
+ * 从原始配置里读一个路径字段：返回**可用的绝对路径**，并说明为什么为空。
  *
  * 相对路径的落点取决于宿主进程的工作目录（GUI 启动时那还是 profile 目录），
  * 用户根本无法预期，因此宁可记一条 warning 当作「未设置」——**不能抛**：
  * 配置脏不该让插件拒绝启动，用户总得能进设置页改回来。
  */
-function pickOutputDir(
+function readPathField(
+  source: Record<string, unknown>,
+  key: string,
+  warnings: string[],
+  trail: string,
+):
+  | { readonly value: string; readonly reason?: undefined }
+  | { readonly value: ''; readonly reason: 'missing' | 'empty' | 'relative' | 'invalid-type' } {
+  const raw = source[key]
+  if (raw === undefined) return { value: '', reason: 'missing' }
+  if (typeof raw !== 'string') {
+    warnings.push(`${trail}.${key} 应为字符串路径（收到 ${typeof raw}），已按未设置处理`)
+    return { value: '', reason: 'invalid-type' }
+  }
+
+  const text = raw.trim()
+  if (text === '') return { value: '', reason: 'empty' }
+  if (!isAbsolute(text)) {
+    warnings.push(`${trail}.${key} "${text}" 不是绝对路径，已按未设置处理`)
+    return { value: '', reason: 'relative' }
+  }
+  return { value: text }
+}
+
+/**
+ * 解析 `exportDir`（作品库导出路径），并把旧的 `outputDir` **迁移**过来。
+ *
+ * 迁移规则（顺序即优先级）：
+ *   1. `exportDir` 有可用的绝对路径 → 用它，`outputDir` 彻底不再被读；
+ *   2. `exportDir` 写坏了（非字符串 / 相对路径）→ 当作「需要用户自己修」，
+ *      **不从旧字段回填**（静默改用另一个路径比"未设置"更让人意外）；
+ *   3. `exportDir` **缺键**（升级上来的旧配置，或写回时已被规范化）且旧 `outputDir`
+ *      有可用的绝对路径 → 搬到 `exportDir`，并记一条 warning 说明"已从 outputDir
+ *      迁移"（**不能静默丢**：用户已经填好的路径必须跟过来）；
+ *   4. 其余（含显式空串 = 用户清除过）→ 空串（未配置）。
+ *
+ * 只有"缺键"才会迁移，因此写回配置时可以放心把 `exportDir: ''` 落盘——
+ * 用户显式清除过的值绝不会被旧 `outputDir` 复活。
+ */
+function pickExportDir(
   source: Record<string, unknown>,
   fallback: string,
   warnings: string[],
 ): string {
-  const raw = pickString(source, 'outputDir', fallback, warnings, 'config').trim()
-  if (raw === '') return ''
-  if (!isAbsolute(raw)) {
-    warnings.push(`config.outputDir "${raw}" 不是绝对路径，已按未设置处理（不导出）`)
+  const current = readPathField(source, 'exportDir', warnings, 'config')
+  if (current.value !== '') return current.value
+  // 只有"缺键"才迁移。显式空串（用户清除过）与写坏的值都**不**回填旧值：
+  // 前者会让"清除"永远清不掉，后者会让用户当前填错的值被另一个路径顶替——
+  // 两者都比"未设置"更让人意外（设置页会以"未设置"如实显示）。
+  if (
+    current.reason === 'empty' ||
+    current.reason === 'relative' ||
+    current.reason === 'invalid-type'
+  ) {
     return ''
   }
-  return raw
+
+  const legacy = readPathField(source, 'outputDir', warnings, 'config')
+  if (legacy.value !== '') {
+    warnings.push(
+      `config.outputDir 已废弃（不再有任何行为），其值 "${legacy.value}" 已从 outputDir 迁移到 config.exportDir（作品库导出路径）`,
+    )
+    return legacy.value
+  }
+
+  return fallback
 }
 
 const API_MODES: readonly ApiMode[] = [
@@ -373,7 +438,7 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
       promptOverrides: pickStringRecord(raw, 'promptOverrides', {}, warnings, 'config'),
       exportToWorkspace: pickBool(raw, 'exportToWorkspace', false, warnings, 'config'),
       attachmentInConversation: pickBool(raw, 'attachmentInConversation', true, warnings, 'config'),
-      outputDir: pickOutputDir(raw, fallback.outputDir, warnings),
+      exportDir: pickExportDir(raw, fallback.exportDir, warnings),
     },
     warnings,
   }
