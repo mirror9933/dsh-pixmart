@@ -557,6 +557,9 @@ window.__ModuleLoader__.load({
       const data = state.data
       const defaults = isObject(data.defaults) ? data.defaults : {}
       const usage = isObject(data.usage) ? data.usage : {}
+      // 历史产出：账本（usage.jsonl）自 P2 起才有，此前的产出由项目记录汇总。
+      // 不单列的话，"累计用量 0"会和用户可见的项目并排出现、数字对不上。
+      const historical = isObject(data.historical) ? data.historical : {}
       const providers = data.providers.filter(isObject)
 
       return h(
@@ -603,6 +606,18 @@ window.__ModuleLoader__.load({
             h(Pill, null, '失败 ' + String(usage.failed ?? 0)),
             h(Pill, null, '出图 ' + String(usage.images ?? 0)),
           ),
+          Number(historical.images ?? 0) > 0
+            ? h(
+                'div',
+                { style: { fontSize: '12px', opacity: 0.7, lineHeight: 1.6 } },
+                '历史产出（账本之前）：' +
+                  String(historical.images) +
+                  ' 张 / ' +
+                  String(historical.projects ?? 0) +
+                  ' 个项目 —— ' +
+                  String(historical.note ?? ''),
+              )
+            : null,
         ),
 
         h(

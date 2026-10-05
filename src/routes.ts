@@ -13,6 +13,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { toProviderView } from './config.js'
+import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
 import type { HostContext, HttpResponseLike, HttpRequestLike, WebServerLike } from './host-types.js'
 import type { ToolRuntime } from './tools/runtime.js'
@@ -182,6 +183,9 @@ async function handleApi(
     sendJson(response, 200, {
       ok: true,
       summary: runtime.usage.summary(),
+      // 账本（usage.jsonl）自 P2 起才有；此前的产出自项目记录汇总，**分开报**。
+      // 否则"累计用量 0"会和用户看到的项目并排出现、数字对不上（见 store/historical.ts）。
+      historical: historicalTotals(runtime.projectStore.list()),
       recent: runtime.usage.read(readLimit(query, 50)),
     })
     return
@@ -199,6 +203,7 @@ async function handleApi(
       limits: config.limits,
       providers: config.providers.map((provider) => toProviderView(provider)),
       usage: runtime.usage.summary(),
+      historical: historicalTotals(runtime.projectStore.list()),
     })
     return
   }

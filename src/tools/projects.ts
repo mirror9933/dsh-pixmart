@@ -6,6 +6,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { historicalTotals } from '../store/historical.js'
 import type { ToolContentBlock, ToolDefinitionLike } from '../host-types.js'
 import { TOOL_FOOTER, failure, fromException, type ToolRuntime } from './runtime.js'
 
@@ -78,6 +79,8 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
             dataDir: runtime.dataDir,
             usageFile: runtime.usage.file,
             summary,
+            // 账本自 P2 起才有；此前的产出自项目记录汇总，分开报（见 store/historical.ts）。
+            historical: historicalTotals(runtime.projectStore.list()),
             recent: records.map((record) => ({
               ts: record.ts,
               provider: record.provider,
@@ -203,10 +206,17 @@ function renderProjects(value: Record<string, unknown>): ToolContentBlock[] {
   if (action === 'usage') {
     const summary = (value.summary ?? {}) as Record<string, unknown>
     lines.push(
-      `用量（累计）：${String(summary.requests)} 次厂商请求，成功 ${String(summary.ok)}，失败 ${String(summary.failed)}，产出 ${String(summary.images)} 张`,
+      `用量（账本，自 P2 起）：${String(summary.requests)} 次厂商请求，成功 ${String(summary.ok)}，失败 ${String(summary.failed)}，产出 ${String(summary.images)} 张`,
     )
     const byModel = (summary.byModel ?? {}) as Record<string, number>
     for (const [key, count] of Object.entries(byModel)) lines.push(`  ${key}: ${count} 次`)
+    // 历史产出另列：否则"账本 0"会和用户可见的项目并对不上。
+    const historical = (value.historical ?? {}) as Record<string, unknown>
+    if (Number(historical.images) > 0) {
+      lines.push(
+        `历史产出（账本之前）：${String(historical.images)} 张 / ${String(historical.projects)} 个项目 —— ${String(historical.note ?? '')}`,
+      )
+    }
     lines.push(`明细文件：${String(value.usageFile)}`)
     return [{ type: 'text', text: lines.join('\n') }]
   }
