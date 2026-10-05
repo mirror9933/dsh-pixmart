@@ -335,7 +335,7 @@ describe('pixmart_projects', () => {
       assert.equal(refused.error.code, 'confirm_required')
       assert.equal(runtime.projectStore.has(made.projectId), true)
 
-      // 确认后删除
+      // 确认后删除（默认 = **软删**）
       const deleted = await tool.execute(
         { action: 'delete', ids: [made.projectId], confirm: true },
         stubExec,
@@ -343,6 +343,11 @@ describe('pixmart_projects', () => {
       assert.equal(deleted.ok, true)
       assert.deepEqual([...deleted.deleted], [made.projectId])
       assert.equal(runtime.projectStore.has(made.projectId), false)
+      // 软删的判据：它必须躺在回收站里（可恢复），而不是被 rmSync 永久销毁。
+      // 删除语义的完整覆盖见 test/projects-tool.test.mjs。
+      const trash = runtime.projectStore.listTrash()
+      assert.equal(trash.length, 1, '默认删除必须进回收站')
+      assert.equal(trash[0].projectId, made.projectId)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

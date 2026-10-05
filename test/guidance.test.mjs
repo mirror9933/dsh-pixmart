@@ -84,6 +84,9 @@ describe('installGuidance', () => {
     assert.match(GUIDANCE_TEXT, /只\*\*落在插件数据目录/)
     assert.match(GUIDANCE_TEXT, /作品库的「导出」/)
     assert.match(GUIDANCE_TEXT, /不要用 `pwsh`/)
+    // 删除语义：默认是软删（可恢复），永久删必须由用户明确要求——这是防"顺手 permanent"的一句话。
+    assert.match(GUIDANCE_TEXT, /软删/)
+    assert.match(GUIDANCE_TEXT, /permanent: true/)
     // 语义变更：不得再宣称"配了路径就自动另存一份"
     assert.equal(/另行复制/.test(GUIDANCE_TEXT), false, '不得再宣称生成时会自动复制')
   })

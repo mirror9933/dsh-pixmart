@@ -2,7 +2,15 @@
  * `pixmart_projects` —— 项目库与用量审计的统一入口。
  *
  * 设计原则：**破坏性操作必须显式确认**。`delete` 要求 `confirm: true`，
- * 且只删自己 projects 目录下解析得到的路径（经 `assertContained` 校验）。
+ * 且只操作自己 projects 目录下解析得到的路径（经 `assertContained` 校验）。
+ *
+ * `delete` 的语义与 HTTP 路径（`POST /pixmart/api/projects/<id>/delete`）**一致**：
+ * 默认是**软删**（`moveToTrash` → `projects/.trash/<id>`，可恢复），
+ * 只有显式 `permanent: true` 才是真删。为什么 Agent 这条路也必须能恢复：
+ * 用户一句"把那些测试项目删掉"是最容易触发删除的入口，若这里只能硬删，
+ * 模型一旦理解错，磁盘上的字节就永久没了——而 UI 那条路是能救回来的。
+ * 因此补齐对称的 `restore` action：Agent 删错了可以自己救回来，不必让用户去界面点
+ * （作品库优化方案 §4 决定①、§6.1；contract-notes §16.4）。
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -31,27 +39,36 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
   return {
     name: 'pixmart_projects',
     description: [
-      '访问已生成的项目与用量记录：list / get / export / delete / usage。',
-      '调用时机：想知道"以前生成过什么""用了多少次""把某个项目的图导出来"。',
-      'delete 是破坏性操作，必须显式传 confirm: true。',
-      '副作剧：export 会写文件到数据目录的 exports/ 下；delete 会删除项目目录。',
+      '访问已生成的项目与用量记录：list / get / export / delete / restore / usage。',
+      '调用时机：想知道"以前生成过什么""用了多少次""把某个项目的图导出来""删错了要恢复"。',
+      'delete 默认是**软删**：项目被移入回收站（可恢复、磁盘上的字节一个都没丢），仍需显式传 confirm: true。',
+      '只有再传 permanent: true 才是**永久删除、不可恢复**——用户没明确说要永久删就用默认的软删。',
+      'delete 之后可以用 restore（ids = 被删的 id，或 list 里报出的回收站条目 id）恢复。',
+      '副作剧：export 默认把该项目的图片**复制**到数据目录的 exports/<项目 id>/（原件不动）；',
+      'delete 默认只移入回收站，permanent: true 才真的删除项目目录。',
     ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'get', 'export', 'delete', 'usage'],
+          enum: ['list', 'get', 'export', 'delete', 'restore', 'usage'],
           description: '要执行的操作。',
         },
         id: { type: 'string', description: '项目 id（get / export 用）。' },
         ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '项目 id 列表（delete 用）。',
+          description:
+            '项目 id 列表（delete 用）；restore 也用它，元素可以是回收站条目 id 或原项目 id。',
         },
         limit: { type: 'integer', minimum: 1, maximum: 200, description: 'list / usage 的条数上限。' },
-        confirm: { type: 'boolean', description: 'delete 必须为 true 才执行。' },
+        confirm: { type: 'boolean', description: 'delete 必须为 true 才执行（软删与永久删都要求）。' },
+        permanent: {
+          type: 'boolean',
+          description:
+            'delete 用：默认 false = 软删（移入回收站，可用 restore 恢复）；true = 永久删除，不可恢复。',
+        },
       },
       required: ['action'],
     },
@@ -95,7 +112,24 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
 
         if (action === 'list') {
           const projects = runtime.projectStore.list().slice(0, limit)
-          return { ok: true, action, count: projects.length, projects }
+          // 回收站**单独报**（`trashCount` / `trash`），绝不混进 `projects`：
+          // 混进去会让 Agent 把已删除的项目当成还在的项目，进而对不存在的 id 调用 get。
+          const trash = runtime.projectStore.listTrash()
+          return {
+            ok: true,
+            action,
+            count: projects.length,
+            projects,
+            trashCount: trash.length,
+            trash: trash.map((entry) => ({
+              // id 是**回收站条目 id**（restore 直接吃它）；projectId 是记录里的原 id。
+              id: entry.id,
+              projectId: entry.projectId,
+              name: entry.name,
+              deletedAt: entry.deletedAt,
+              imageCount: entry.imageCount,
+            })),
+          }
         }
 
         if (action === 'get') {
@@ -148,15 +182,23 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
               copied.push(to)
             }
           }
-          return { ok: true, action, id, count: copied.length, exportDir: targetDir, files: copied }
+          // 字段名是 `targetDir` 而**不是** `exportDir`：后者已经是设置里的
+          // 「作品库导出路径」配置项，两者同名却毫无关系，读代码的人必然误会（决定①的落地）。
+          return { ok: true, action, id, count: copied.length, targetDir, files: copied }
         }
 
         if (action === 'delete') {
+          // 先判确认再碰磁盘：缺 confirm 时不得有任何副作用（软删与永久删同一口径）。
+          const permanent = pickBool(args, 'permanent')
           if (!pickBool(args, 'confirm')) {
             return failure(
               'confirm_required',
-              'delete 是破坏性操作，需要 confirm: true',
-              '先用 action=get 确认要删的项目，再带 confirm: true 调用',
+              permanent
+                ? 'delete permanent: true 会永久删除、不可恢复，需要 confirm: true'
+                : 'delete 会把项目移入回收站（可恢复），需要 confirm: true',
+              permanent
+                ? '如果只是想清理列表，去掉 permanent 用默认的软删；真要永久删再带 confirm: true'
+                : '先用 action=get 确认要删的项目，再带 confirm: true 调用；误删可用 action=restore 恢复',
             )
           }
           const ids = pickStringArray(args, 'ids')
@@ -164,20 +206,64 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
 
           const deleted: string[] = []
           const skipped: { id: string; reason: string }[] = []
+          // 软删成功时把「原 id → 回收站条目 id」一并报出来，方便紧接着 restore。
+          const trashed: { id: string; trashId: string }[] = []
           for (const id of ids) {
             try {
               if (!runtime.projectStore.has(id)) {
                 skipped.push({ id, reason: '项目不存在' })
                 continue
               }
-              // 路径已由 ProjectStore 内部的 assertContained 校验，这里只按 id 删除。
-              rmSync(join(runtime.projectStore.projectsRoot, id), { recursive: true, force: true })
+              if (permanent) {
+                // 路径已由 has() 内部的 assertContained 校验过（越界 id 在上一步就抛了），
+                // 这里只按 id 删。**唯一**的真删路径。
+                rmSync(join(runtime.projectStore.projectsRoot, id), { recursive: true, force: true })
+              } else {
+                // 软删：与 HTTP 路径同一个 store 方法（同名语义、同一套失败不变量）。
+                // moveToTrash 失败时原目录仍在原位（见 moveDir 的三条不变量）。
+                const outcome = await runtime.projectStore.moveToTrash(id)
+                trashed.push({ id: outcome.id, trashId: outcome.trashId })
+              }
               deleted.push(id)
             } catch (error) {
               skipped.push({ id, reason: error instanceof Error ? error.message : String(error) })
             }
           }
-          return { ok: true, action, deleted, skipped }
+          return {
+            ok: true,
+            action,
+            deleted,
+            skipped,
+            permanent,
+            ...(permanent ? {} : { trashed }),
+          }
+        }
+
+        if (action === 'restore') {
+          const ids = pickStringArray(args, 'ids')
+          if (ids.length === 0) {
+            return failure('invalid_args', 'restore 需要 ids（回收站条目 id 或原项目 id）')
+          }
+          // 恢复是**非破坏性**的（冲突时 store 会拒绝而不是覆盖），所以不要求 confirm。
+          const trash = runtime.projectStore.listTrash()
+          const restored: string[] = []
+          const skipped: { id: string; reason: string }[] = []
+          for (const id of ids) {
+            // 两种写法都收：回收站条目 id（list 报出的）与原项目 id（Agent 手上通常只有它）。
+            const entry =
+              trash.find((item) => item.id === id) ?? trash.find((item) => item.projectId === id)
+            if (entry === undefined) {
+              skipped.push({ id, reason: '回收站里没有这个项目（可能已被恢复或永久删除）' })
+              continue
+            }
+            try {
+              const outcome = await runtime.projectStore.restoreFromTrash(entry.id)
+              restored.push(outcome.id)
+            } catch (error) {
+              skipped.push({ id, reason: error instanceof Error ? error.message : String(error) })
+            }
+          }
+          return { ok: true, action, restored, skipped }
         }
 
         return failure('invalid_args', `未知 action "${action}"`)
@@ -230,18 +316,53 @@ function renderProjects(value: Record<string, unknown>): ToolContentBlock[] {
         `- ${String(record.id)}（${String(record.imageCount)} 张，${String(record.provider)}/${String(record.model)}）`,
       )
     }
+    // 回收站的存在必须被说出来（否则"列表里没有"会被读成"从来没生成过"），
+    // 但它**不在**上面的项目列表里——分开列，且直接给出 restore 要用的 id。
+    const trash = Array.isArray(value.trash) ? value.trash : []
+    if (trash.length > 0) {
+      lines.push(`回收站另有 ${String(value.trashCount ?? trash.length)} 个项目（不在上面的列表里）：`)
+      for (const entry of trash) {
+        const record = entry as Record<string, unknown>
+        lines.push(`- ${String(record.id)}（原名 ${String(record.name)}）`)
+      }
+      lines.push('用 action=restore + ids 可以把它们恢复到项目列表里')
+    }
     return [{ type: 'text', text: lines.join('\n') }]
   }
 
   if (action === 'export') {
-    lines.push(`已导出 ${String(value.count)} 个文件到 ${String(value.exportDir)}`)
+    lines.push(`已导出 ${String(value.count)} 个文件到 ${String(value.targetDir)}`)
     return [{ type: 'text', text: lines.join('\n') }]
   }
 
   if (action === 'delete') {
     const deleted = Array.isArray(value.deleted) ? value.deleted : []
     const skipped = Array.isArray(value.skipped) ? value.skipped : []
-    lines.push(`已删除 ${deleted.length} 个项目`)
+    const ids = deleted.map((entry) => String(entry)).join('、')
+    if (deleted.length === 0) {
+      lines.push('没有项目被删除')
+    } else if (value.permanent === true) {
+      lines.push(`已永久删除 ${deleted.length} 个项目：${ids}（不可恢复）`)
+    } else {
+      lines.push(
+        `已移入回收站 ${deleted.length} 个项目：${ids}（可用 pixmart_projects action=restore 恢复；permanent: true 才是永久删除）`,
+      )
+    }
+    for (const entry of skipped) {
+      const record = entry as Record<string, unknown>
+      lines.push(`跳过 ${String(record.id)}：${String(record.reason)}`)
+    }
+    return [{ type: 'text', text: lines.join('\n') }]
+  }
+
+  if (action === 'restore') {
+    const restored = Array.isArray(value.restored) ? value.restored : []
+    const skipped = Array.isArray(value.skipped) ? value.skipped : []
+    if (restored.length === 0) {
+      lines.push('没有项目被恢复')
+    } else {
+      lines.push(`已从回收站恢复 ${restored.length} 个项目：${restored.map((entry) => String(entry)).join('、')}`)
+    }
     for (const entry of skipped) {
       const record = entry as Record<string, unknown>
       lines.push(`跳过 ${String(record.id)}：${String(record.reason)}`)

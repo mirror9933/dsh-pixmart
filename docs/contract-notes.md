@@ -676,7 +676,59 @@ return loaded.then(() => configStore.get())
 **边界**：`pixmart_projects` 工具的 `export` action 行为**未动**（仍默认导出到
 `<dataDir>/exports/<id>`）——它是 Agent 侧的独立口径，本次只改 HTTP/界面那条用户路径。
 `pixmart_projects` 工具回传的字段由 `outputDir` 改成 `exportDir`（文本里明确写"生成时不复制"）。
+**（2026-10-06 修正）**：该字段随后又改名为 **`targetDir`**——`exportDir` 已经是配置项
+「作品库导出路径」的名字，工具里再用同一个词指"数据目录内的导出落点"是必然的误读源，
+见 §16.4。
 
 `<id>` 一律过 `SAFE_ID`，跨目录的 id 在路由层就 400。
+
+### 16.4 `pixmart_projects` 的 delete 与 HTTP 对齐（2026-10-06，批次 A 收口）
+
+**问题**：批次 A 只把 **HTTP/UI** 那条路改成了软删；`pixmart_projects` 工具的 `delete`
+仍然是 `rmSync` 硬删。两个入口语义相反（界面里可恢复、Agent 一删就没），而 Agent 恰恰是
+最容易被触发删除的入口——用户说一句"把那些测试项目删掉"，模型就会调它。这属于**同一能力
+两个语义**，必须收口。
+
+**决定：Agent 路径也必须能恢复。** 理由不是"对称好看"，而是**误删的自救路径**：
+如果工具只能软删、不能恢复，Agent 一旦删错（理解错范围、id 张冠李戴），它自己没有任何
+补救手段，只能停下让用户去界面点——而用户此时多半并不知道该点哪里。可恢复 = 这条路的
+错误代价从"永久丢数据"降到"多一次调用"。因此 `delete`（软删）与 `restore` **必须成对**
+提供；只给软删不给恢复，等于把不可逆性从"磁盘"搬到了"操作流程"里。
+
+| 变化 | 之前 | 之后 |
+|---|---|---|
+| `delete` 默认语义 | `rmSync` 硬删（永久销毁） | **软删**：`projectStore.moveToTrash(id)`，与 HTTP 路径同一个 store 方法 |
+| `delete` 新增入参 | — | `permanent?: boolean`（默认 `false`）。`true` 才真删（保留原 `rmSync` 行为） |
+| `confirm: true` | 必须 | **两种模式都仍然必须**，缺失即拒绝且不碰磁盘 |
+| 返回形状 | `{ok,action,deleted[],skipped[]}` | `deleted` / `skipped` **不变**；**新增** `permanent` 与软删时的 `trashed: [{id, trashId}]` |
+| 渲染文本 | 「已删除 N 个项目」 | 软删：「已移入回收站 N 个项目：…（可用 `pixmart_projects action=restore` 恢复；`permanent: true` 才是永久删除）」；真删：「已永久删除 N 个项目：…（不可恢复）」 |
+| `restore` | **不存在** | 新增 action：入参 `ids: string[]`，走 `restoreFromTrash`，返回 `restored[]` / `skipped[]` |
+| `list` | 只报项目 | **新增** `trashCount` 与 `trash[]`（回收站条目 id / projectId / name / deletedAt / imageCount），**绝不混进 `projects`** |
+| `export` 落点字段 | `exportDir` | **`targetDir`**（行为不变：默认仍是 `<dataDir>/exports/<id>`） |
+
+**为什么 `restore` 不要求 `confirm`**：它是**非破坏性**的（原 id 被占用时 store 抛 `conflict`
+拒绝，绝不覆盖），加一道确认只会让"删错了赶紧救回来"变慢。与 HTTP 的
+`POST /trash/<id>/restore` 同一立场（那里也不要求 `confirm`）。
+
+**`restore` 收两种 id**：`list` 报出的**回收站条目 id**（`trash[].id`）与原**项目 id**
+（`trash[].projectId`）都能用。原因是 Agent 删完之后手上通常只有自己刚传进去的那个 id，
+要求它先去 list 里查回收站条目 id 是多余的一步（而条目 id 在同名项目删两次时会带 `-2` 后缀）。
+
+**`list` 为什么要报回收站**：不报的话，「项目 0 个」会被读成"从来没生成过"，
+而实际上东西都还在回收站里；报了才能让"删了能找回来"对 Agent 也成立。
+
+**没有削弱任何既有断言**：原 `test/p2.test.mjs` 里
+`delete（confirm: true）→ deleted == [id] 且 has(id) === false` 在软删下**同样成立**
+（`has()` 看的是 `projects/<id>/project.json`，软删后它确实不在了）。
+该用例另**新增**一条断言：删除后 `listTrash().length === 1` 且 `projectId` 对得上——
+把"默认必须是软删"钉死。新增覆盖见 `test/projects-tool.test.mjs`（11 条：
+默认软删 / 软删失败原项目仍在 / 恢复后内容逐字节一致 / `permanent` 真删且不进回收站 /
+两种模式缺 `confirm` 都被拒 / `confirm` 只认布尔 / `export` 回 `targetDir` 且无 `exportDir` /
+`list` 不混回收站 / schema 里 `permanent` 为可选 boolean 且 action 含 `restore`）。
+
+**未改**：HTTP 路径的任何语义（路由、错误码、`GET /trash`、`purge`）都没动；
+客户端本次零改动（`client/client.js` 不涉及 `pixmart_projects` 工具）。
+`purgeTrash`（清空回收站）**没有**暴露给 Agent 工具：那是真正的不可逆批量销毁，
+让它只留在用户显式点按钮的界面里。
 
 
