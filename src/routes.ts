@@ -10,6 +10,8 @@
  *   2. **路径严格限定在数据目录内**：图片路由只服务 `projects/<id>/images/`。
  *   3. **任何异常都转成明确的 4xx/5xx**：不留未处理的 rejection。
  *   4. **只有 POST 能写**：GET 一律只读，命中写路由直接 405。
+ *      注意"写路由"是按**语义**分的：`POST /providers/<id>/refresh-models` 虽然
+ *      是 POST（要带密钥去探测），但**不写配置**——拉取与选择是两件事，见该函数的注释。
  *   5. **任何响应体都不含 apiKey**：厂商一律回脱敏后的 `ProviderView`。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -379,6 +381,14 @@ async function handleApi(
     return
   }
 
+  // POST /pixmart/api/providers/<id>/models —— 显式保存用户**选中的**模型子集
+  const modelsMatch = /^\/providers\/([^/]+)\/models$/.exec(route)
+  if (modelsMatch !== null) {
+    if (requirePost()) return
+    await handleSaveModels(runtime, modelsMatch[1] as string, response, readBody)
+    return
+  }
+
   // POST /pixmart/api/providers/<id>/test
   const testMatch = /^\/providers\/([^/]+)\/test$/.exec(route)
   if (testMatch !== null) {
@@ -497,13 +507,26 @@ async function handleCredentials(
   sendJson(response, 200, { ok: true, provider: toProviderView(provider) })
 }
 
-/** 拉取模型列表并写回 `config.json` 的 `provider.models`。 */
+/** 单个厂商可保存的模型数上限：聚合商（Ofox 等）量级在百，500 是宽松的上限。 */
+const MAX_MODELS = 500
+
+/**
+ * 拉取模型列表 —— **纯读，不写配置**。
+ *
+ * 为什么把写回拆出去（实测驱动的契约变更）：厂商返回的是**全量**模型目录，
+ * 实测 Ofox 一次返回 150 个，其中绝大多数是纯文本模型。自动全量写回等于把筛选
+ * 负担推给用户——默认模型下拉框会被 150 项淹没，而这 150 项里可能只有个位数能生图。
+ * 因此语义拆成两步：**拉取 = 只读**（本路由，只回结果）；**选择 = 显式写入**
+ * （`POST /providers/<id>/models`，见 `handleSaveModels`）。
+ *
+ * 副作用：只对厂商发一次 `GET {baseUrl}/models`；`config.json` 不被触碰
+ * （测试用写前后深比较 + 磁盘字节比较钉住）。
+ */
 async function handleRefreshModels(
   runtime: ToolRuntime,
   rawId: string,
   response: HttpResponseLike,
 ): Promise<void> {
-  const id = decodeProviderId(rawId)
   const found = await requireProvider(runtime, rawId, response)
   if (found === undefined) return
 
@@ -520,19 +543,98 @@ async function handleRefreshModels(
     return
   }
 
-  const updated = await runtime.configStore.update((current) => ({
-    ...current,
-    providers: current.providers.map((provider) =>
-      provider.id === id ? { ...provider, models: [...probe.models] } : provider,
-    ),
-  }))
-  const provider = updated.providers.find((item) => item.id === id) ?? found.provider
   const models = [...probe.models]
   sendJson(response, 200, {
     ok: true,
     models,
     count: models.length,
+    provider: toProviderView(found.provider),
+  })
+}
+
+/** 校验结果：要么给出干净的模型列表，要么给出契约里的错误码。 */
+type ModelsFieldResult =
+  | { readonly ok: true; readonly models: string[] }
+  | { readonly ok: false; readonly code: string; readonly message: string }
+
+/**
+ * 校验 `body.models`。
+ *
+ * 规则（逐条对应契约）：
+ *   1. 必须是数组，且元素都是**非空字符串**（只含空白的也拒）→ 否则 `invalid_models`；
+ *   2. 数量上限 500（按请求体**原始长度**判定，先挡再干活）→ 否则 `too_many_models`；
+ *   3. 去重**保持首次出现的顺序** → 去重后为空 → `empty_models`。
+ *
+ * 判空与去重键都用 trim 后的值（模型 id 不该带首尾空白），落盘同理。
+ */
+function pickModelsField(body: Record<string, unknown>): ModelsFieldResult {
+  const raw = body.models
+  if (!Array.isArray(raw)) {
+    return { ok: false, code: 'invalid_models', message: 'models 应为字符串数组' }
+  }
+  if (raw.some((item) => typeof item !== 'string' || item.trim() === '')) {
+    return { ok: false, code: 'invalid_models', message: 'models 的每个元素都必须是非空字符串' }
+  }
+  if (raw.length > MAX_MODELS) {
+    return {
+      ok: false,
+      code: 'too_many_models',
+      message: `模型数量超过上限 ${String(MAX_MODELS)}（收到 ${String(raw.length)} 个）`,
+    }
+  }
+
+  const seen = new Set<string>()
+  const models: string[] = []
+  for (const item of raw as string[]) {
+    const id = item.trim()
+    if (seen.has(id)) continue
+    seen.add(id)
+    models.push(id)
+  }
+  if (models.length === 0) {
+    return { ok: false, code: 'empty_models', message: 'models 去重后为空，至少要保留一个模型' }
+  }
+  return { ok: true, models }
+}
+
+/**
+ * 保存用户选中的模型子集（拉取面板的「保存选择」走这里）。
+ *
+ * 与 `credentials` 同一套写法：走 `ConfigStore.update()` 原子写 + 串行读改写，
+ * 响应只回脱敏的 `ProviderView`（**不含 apiKey**）。
+ */
+async function handleSaveModels(
+  runtime: ToolRuntime,
+  rawId: string,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const id = decodeProviderId(rawId)
+  const found = await requireProvider(runtime, rawId, response)
+  if (found === undefined) return
+
+  const body = await readBody()
+  const picked = pickModelsField(body)
+  if (!picked.ok) {
+    fail(response, 400, picked.code, picked.message)
+    return
+  }
+
+  const updated = await runtime.configStore.update((current) => ({
+    ...current,
+    providers: current.providers.map((provider) =>
+      provider.id === id ? { ...provider, models: [...picked.models] } : provider,
+    ),
+  }))
+  const provider = updated.providers.find((item) => item.id === id)
+  if (provider === undefined) {
+    fail(response, 404, 'unknown_provider', `没有 id 为 "${id}" 的厂商`)
+    return
+  }
+  sendJson(response, 200, {
+    ok: true,
     provider: toProviderView(provider),
+    count: provider.models.length,
   })
 }
 

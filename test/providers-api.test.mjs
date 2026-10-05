@@ -1,15 +1,19 @@
 /**
- * 设置页可写 —— 4 个写路由的契约测试（走**真实** `registerRoutes` 分发）。
+ * 设置页可写 —— 5 个 POST 路由的契约测试（走**真实** `registerRoutes` 分发）。
  *
  * 覆盖范围与判据：
  *   1. `POST /providers/<id>/credentials`：只写出现的字段 / 空串清除 /
  *      **响应体字符串里不含密钥**；
- *   2. `POST /providers/<id>/refresh-models`：三种响应形状都能解析、写回 config.json、
- *      无密钥 → `no_api_key`、401 → `auth`；
- *   3. `POST /providers/<id>/test`：成功（含 latencyMs / modelCount）与失败，**不写配置**；
- *   4. `POST /defaults`：只写出现的字段、n 限 1–4、未知模型被拒（不静默接受拼错的名字）；
- *   5. 安全/健壮性：GET 打写路由 → 405、非法 JSON → 400、超 64KB → 413、
- *      非环回来源 → 403。
+ *   2. `POST /providers/<id>/refresh-models`：三种响应形状都能解析、
+ *      **不写配置**（写前后深比较 + 磁盘字节一致）、无密钥 → `no_api_key`、401 → `auth`；
+ *   3. `POST /providers/<id>/models`：保存选中子集 → 落盘、去重保序、
+ *      `invalid_models` / `empty_models` / `too_many_models` / `unknown_provider`、**不含密钥**；
+ *   4. `POST /providers/<id>/test`：成功（含 latencyMs / modelCount）与失败，**不写配置**；
+ *   5. `POST /defaults`：只写出现的字段、n 限 1–4、未知模型被拒（不静默接受拼错的名字）；
+ *   6. 安全/健壮性：GET 打写路由 → 405、非法 JSON → 400、超 64KB → 413、
+ *      非环回来源 → 403；
+ *   7. **写后重取**：`GET api/providers` 必须立刻反映刚写入的值（用真实 runtime，
+ *      钉住"config() 吃首次读盘快照"这个实测缺陷）。
  *
  * **零真实网络**：探测用的 `fetch` 全部是本地 stub（见 `stubFetch`），
  * 且每个用例后还原 `globalThis.fetch`。假 runtime 沿用 `historical.test.mjs` 的写法，
@@ -23,6 +27,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { ConfigStore } from '../lib/store/config-store.js'
+import { createRuntime } from '../lib/tools/runtime.js'
 import { registerRoutes } from '../lib/routes.js'
 
 const SECRET = 'sk-super-secret-value-987654321'
@@ -380,12 +385,14 @@ describe('POST /pixmart/api/providers/<id>/refresh-models', () => {
   ]
 
   for (const item of cases) {
-    it(`能解析 ${item.name}，并把模型写回 config.json`, async () => {
-      const { dir, store } = makeStore({ apiKey: SECRET })
+    it(`能解析 ${item.name}，且**不修改配置**`, async () => {
+      const { dir, store } = makeStore({ apiKey: SECRET, models: ['keep-me'] })
       try {
         const calls = stubFetch(() => jsonResponse(item.payload))
         const webServer = makeFakeWebServer()
         const runtime = makeFakeRuntime(store)
+        const snapshot = structuredClone(store.get())
+        const before = readFileSync(join(dir, 'config.json'), 'utf8')
 
         const result = await call(
           webServer,
@@ -398,7 +405,8 @@ describe('POST /pixmart/api/providers/<id>/refresh-models', () => {
         assert.equal(result.json.ok, true)
         assert.deepEqual(result.json.models, item.expected)
         assert.equal(result.json.count, item.expected.length)
-        assert.deepEqual(result.json.provider.models, item.expected)
+        // 拉取是**只读**：回的是探测结果，而 provider 视图仍是配置里的旧值
+        assert.deepEqual(result.json.provider.models, ['keep-me'])
         assert.equal(result.body.includes(SECRET), false, '响应体泄露了密钥')
 
         // 端点拼接：baseUrl 末尾斜杠先去掉再拼 /models
@@ -407,13 +415,47 @@ describe('POST /pixmart/api/providers/<id>/refresh-models', () => {
         // OpenAI 兼容路径用 Bearer
         assert.equal(calls[0].init.headers.Authorization, `Bearer ${SECRET}`)
 
-        const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
-        assert.deepEqual(onDisk.providers[0].models, item.expected)
+        // 配置确实没被碰：内存深比较 + 磁盘字节一致
+        assert.deepEqual(store.get(), snapshot)
+        assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+        assert.deepEqual(store.get().providers[0].models, ['keep-me'])
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
     })
   }
+
+  it('不写配置：写前后深比较相等（内存与磁盘都不动）', async () => {
+    const { dir, store } = makeStore({ apiKey: SECRET, models: ['before'] })
+    try {
+      stubFetch(() => jsonResponse({ data: [{ id: 'pulled-a' }, { id: 'pulled-b' }] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const snapshot = structuredClone(store.get())
+      const onDiskBefore = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const result = await call(
+        webServer,
+        runtime,
+        'POST',
+        '/pixmart/api/providers/ofox/refresh-models',
+      )
+      assert.equal(result.status, 200)
+      assert.deepEqual(result.json.models, ['pulled-a', 'pulled-b'])
+
+      assert.deepEqual(store.get(), snapshot, 'refresh-models 不该改内存配置')
+      assert.equal(
+        readFileSync(join(dir, 'config.json'), 'utf8'),
+        onDiskBefore,
+        'refresh-models 不该改 config.json',
+      )
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(reloaded.get().providers[0].models, ['before'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   it('gemini-native 用 x-goog-api-key 与原生 baseUrl，不发 Bearer', async () => {
     const { dir, store } = makeStore({
@@ -561,6 +603,200 @@ describe('POST /pixmart/api/providers/<id>/refresh-models', () => {
       assert.equal(aborting, true, '探测没有触发 abort（超时机制没生效）')
       assert.equal(result.status, 504)
       assert.equal(result.json.error.code, 'timeout')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── models（保存选中子集） ───────────────────────────────────────────────────
+
+describe('POST /pixmart/api/providers/<id>/models', () => {
+  it('写入选中子集：落盘、count 与视图一致，且响应体不含密钥', async () => {
+    const { dir, store } = makeStore({ apiKey: SECRET, models: ['old-a', 'old-b', 'old-c'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/models', {
+        body: { models: ['google/gemini-3.1-flash-image', 'openai/gpt-image-1'] },
+      })
+
+      assert.equal(result.status, 200)
+      assert.equal(result.json.ok, true)
+      assert.equal(result.json.count, 2)
+      assert.deepEqual(result.json.provider.models, [
+        'google/gemini-3.1-flash-image',
+        'openai/gpt-image-1',
+      ])
+      // 红线：响应体字符串里既没有密钥本体，也没有 apiKey 字段
+      assert.equal(result.body.includes(SECRET), false, '响应体泄露了密钥')
+      assert.equal(/"apiKey"\s*:/.test(result.body), false, '响应体出现了 apiKey 字段')
+
+      // 磁盘确实变了（不只是内存副本）：直接读文件 + 重新读盘
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(onDisk.providers[0].models, [
+        'google/gemini-3.1-flash-image',
+        'openai/gpt-image-1',
+      ])
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(reloaded.get().providers[0].models, [
+        'google/gemini-3.1-flash-image',
+        'openai/gpt-image-1',
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('去重且保持首次出现的顺序', async () => {
+    const { dir, store } = makeStore({ models: ['old'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/models', {
+        body: { models: ['b', 'a', 'b', 'c', 'a', 'b'] },
+      })
+
+      assert.equal(result.status, 200)
+      assert.deepEqual(result.json.provider.models, ['b', 'a', 'c'])
+      assert.equal(result.json.count, 3)
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(onDisk.providers[0].models, ['b', 'a', 'c'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('空数组 → 400 empty_models，且不落盘', async () => {
+    const { dir, store } = makeStore({ models: ['keep'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/models', {
+        body: { models: [] },
+      })
+
+      assert.equal(result.status, 400)
+      assert.equal(result.json.ok, false)
+      assert.equal(result.json.error.code, 'empty_models')
+      assert.deepEqual(store.get().providers[0].models, ['keep'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('非数组 / 元素不是非空字符串 → 400 invalid_models', async () => {
+    const { dir, store } = makeStore({ models: ['keep'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const badBodies = [
+        { models: 'm-a' },
+        { models: 42 },
+        { models: null },
+        {},
+        { models: [1, 2] },
+        { models: ['ok', null] },
+        { models: [{ id: 'm-a' }] },
+        { models: [''] },
+        { models: ['   '] },
+      ]
+      for (const body of badBodies) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/models', {
+          body,
+        })
+        assert.equal(result.status, 400, `${JSON.stringify(body)} 应被拒`)
+        assert.equal(result.json.error.code, 'invalid_models')
+      }
+      assert.deepEqual(store.get().providers[0].models, ['keep'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('超过 500 → 400 too_many_models，且不落盘', async () => {
+    const { dir, store } = makeStore({ models: ['keep'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const many = Array.from({ length: 501 }, (_, index) => `m-${String(index)}`)
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/models', {
+        body: { models: many },
+      })
+
+      assert.equal(result.status, 400)
+      assert.equal(result.json.error.code, 'too_many_models')
+      assert.deepEqual(store.get().providers[0].models, ['keep'])
+
+      // 500 是允许的（上限本身不能也被拒）
+      const atLimit = await call(
+        webServer,
+        runtime,
+        'POST',
+        '/pixmart/api/providers/ofox/models',
+        { body: { models: many.slice(0, 500) } },
+      )
+      assert.equal(atLimit.status, 200)
+      assert.equal(atLimit.json.count, 500)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('未知厂商 → 404 unknown_provider，且不落盘', async () => {
+    const { dir, store } = makeStore({ models: ['keep'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ghost/models', {
+        body: { models: ['m-a'] },
+      })
+
+      assert.equal(result.status, 404)
+      assert.equal(result.json.error.code, 'unknown_provider')
+      assert.deepEqual(store.get().providers[0].models, ['keep'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('写后重取 api/providers 必须看到新值（真实 runtime 不吃首次读盘快照）', async () => {
+    const { dir, store } = makeStore({ apiKey: SECRET, models: ['stale-default'] })
+    try {
+      stubFetch(() => jsonResponse({ data: [{ id: 'pulled-a' }, { id: 'pulled-b' }] }))
+      const webServer = makeFakeWebServer()
+      // 用**真实** createRuntime：它的 config() 之前会永远返回首次读盘的快照，
+      // 于是"写入成功但界面那行还是旧值"。这里就是那条缺陷的回归测试。
+      const real = createRuntime({ get: () => undefined }, { dataDir: dir })
+      const runtime = {
+        ...makeFakeRuntime(store),
+        configStore: real.configStore,
+        config: () => real.config(),
+        configWarnings: () => real.configWarnings(),
+      }
+
+      const before = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.deepEqual(before.json.providers[0].models, ['stale-default'])
+
+      const saved = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/models', {
+        body: { models: ['picked-image-model'] },
+      })
+      assert.equal(saved.status, 200)
+
+      const after = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.deepEqual(
+        after.json.providers[0].models,
+        ['picked-image-model'],
+        '写成功后 GET api/providers 必须反映最新配置',
+      )
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(onDisk.providers[0].models, ['picked-image-model'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -722,6 +958,7 @@ describe('写路由的方法与请求体约束', () => {
   const writeRoutes = [
     '/pixmart/api/providers/ofox/credentials',
     '/pixmart/api/providers/ofox/refresh-models',
+    '/pixmart/api/providers/ofox/models',
     '/pixmart/api/providers/ofox/test',
     '/pixmart/api/defaults',
   ]

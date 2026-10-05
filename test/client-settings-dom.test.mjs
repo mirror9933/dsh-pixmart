@@ -457,6 +457,390 @@ describe('jsdom lane：设置页可写', () => {
   })
 })
 
+// ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
+
+/**
+ * 拉取回来的"厂商模型目录"：故意混入纯文本模型，用来验证搜索 / 全选的作用域
+ * 与「只选图像模型」的启发式（命中的是 gemini.*image / gpt-image / flux / qwen.*image）。
+ */
+const PULLED_MODELS = [
+  'google/gemini-3.1-flash-image',
+  'openai/gpt-image-1',
+  'openai/gpt-4o-mini',
+  'black-forest-labs/flux-1.1-pro',
+  'anthropic/claude-3-opus',
+  'qwen/qwen-image-edit',
+  'text-embedding-3-large',
+]
+
+const IMAGE_MODELS = [
+  'google/gemini-3.1-flash-image',
+  'openai/gpt-image-1',
+  'black-forest-labs/flux-1.1-pro',
+  'qwen/qwen-image-edit',
+]
+
+/** 名字里含 `image` 子串的三个（`flux` 不含，用来证明搜索与启发式是两件事）。 */
+const IMAGE_BY_NAME = [
+  'google/gemini-3.1-flash-image',
+  'openai/gpt-image-1',
+  'qwen/qwen-image-edit',
+]
+
+/** 面板里某一行（label）的复选框。 */
+function checkboxFor(lane, name) {
+  const rows = [...lane.container.querySelectorAll('label')]
+  const row = rows.find((node) => (node.textContent ?? '').includes(name)) ?? null
+  assert.ok(row, `模型行「${name}」必须存在`)
+  return row.querySelector('input[type="checkbox"]')
+}
+
+const checkboxes = (lane) => [...lane.container.querySelectorAll('input[type="checkbox"]')]
+const checkedNames = (lane) =>
+  checkboxes(lane)
+    .filter((node) => node.checked === true)
+    .map((node) => (node.parentNode?.textContent ?? '').replace('图像', ''))
+
+function buttonContaining(lane, text) {
+  return lane.buttons().find((node) => (node.textContent ?? '').includes(text)) ?? null
+}
+
+/**
+ * 起一个"已拉取过模型"的场景并点掉「拉取模型」按钮。
+ * @param options - `savedModels` 是保存后配置里的模型；`saveError` 让保存失败。
+ */
+async function createPullLane(options = {}) {
+  const saved = { models: options.savedModels ?? [] }
+  const lane = await createLane({
+    respond: (url, init) => {
+      const method = String(init?.method ?? 'GET').toUpperCase()
+      const target = String(url)
+      if (method === 'POST' && /refresh-models$/.test(target)) {
+        return jsonResponse({
+          ok: true,
+          models: PULLED_MODELS,
+          count: PULLED_MODELS.length,
+          provider: providerView({ models: saved.models }),
+        })
+      }
+      if (method === 'POST' && /\/models$/.test(target)) {
+        if (options.saveError) return jsonResponse({ ok: false, error: options.saveError }, 400)
+        saved.models = JSON.parse(String(init?.body ?? '{}')).models ?? []
+        return jsonResponse({
+          ok: true,
+          provider: providerView({ models: saved.models }),
+          count: saved.models.length,
+        })
+      }
+      return jsonResponse(providersPayload({ providers: [providerView({ models: saved.models })] }))
+    },
+  })
+  await lane.render()
+  await lane.click('拉取模型')
+  return lane
+}
+
+describe('jsdom lane：模型选择面板', () => {
+  it('拉取后面板展开：每个模型一行（内部滚动），搜索按子串过滤且大小写不敏感', async () => {
+    const lane = await createPullLane()
+
+    assert.equal(checkboxes(lane).length, PULLED_MODELS.length, '每个模型一行复选框')
+
+    // 150 项不能把卡片撑爆：必须有一个 max-height 240px 的内部滚动容器
+    const scroller = [...lane.container.querySelectorAll('div')].find(
+      (node) => node.style.maxHeight === '240px',
+    )
+    assert.ok(scroller, '列表必须放在 max-height: 240px 的滚动容器里')
+    assert.equal(scroller.style.overflowY, 'auto')
+
+    const search = lane.inputByPlaceholder('搜索模型…')
+    assert.ok(search, '面板必须有搜索框')
+
+    await lane.type(search, 'GEMINI') // 大小写不敏感
+    assert.equal(checkboxes(lane).length, 1, '搜索后只应剩匹配的行')
+    assert.ok(lane.text().includes('google/gemini-3.1-flash-image'))
+
+    await lane.type(search, 'image')
+    assert.equal(checkboxes(lane).length, IMAGE_BY_NAME.length, "'image' 应命中三个模型")
+
+    await lane.type(search, '')
+    assert.equal(checkboxes(lane).length, PULLED_MODELS.length, '清空搜索后应恢复全部行')
+  })
+
+  it('「全选（当前 N 个）」只选中筛选结果；保存 POST 的是已选子集', async () => {
+    const lane = await createPullLane()
+
+    await lane.type(lane.inputByPlaceholder('搜索模型…'), 'image')
+    const selectAll = buttonContaining(lane, '全选（当前')
+    assert.ok(selectAll, '必须有写明"当前 N 个"的全选按钮')
+    assert.ok(
+      selectAll.textContent.includes('全选（当前 3 个）'),
+      `按钮文案要写明作用域，实际「${String(selectAll.textContent)}」`,
+    )
+    await lane.click(selectAll)
+
+    assert.ok(lane.text().includes('已选 3 / 共 7'), '应显示「已选 N / 共 M」')
+    assert.deepEqual(checkedNames(lane).sort(), [...IMAGE_BY_NAME].sort(), '只应选中当前筛选结果')
+    assert.equal(checkedNames(lane).includes('anthropic/claude-3-opus'), false, '未被筛选的行不该被选中')
+
+    // 再选一个不在筛选结果里的行：选择是累积的
+    await lane.type(lane.inputByPlaceholder('搜索模型…'), 'claude')
+    await lane.click(checkboxFor(lane, 'anthropic/claude-3-opus'))
+    await lane.type(lane.inputByPlaceholder('搜索模型…'), '')
+
+    await lane.click('保存选择')
+
+    const posts = lane.postCalls().filter((call) => /\/models$/.test(call.url))
+    assert.equal(posts.length, 1, `应只有 1 次 POST .../models，实际 ${posts.length}`)
+    const sent = JSON.parse(String(posts[0].body))
+    // 只提交**已选子集**，且保持拉取列表的顺序
+    assert.deepEqual(sent.models, [
+      'google/gemini-3.1-flash-image',
+      'openai/gpt-image-1',
+      'anthropic/claude-3-opus',
+      'qwen/qwen-image-edit',
+    ])
+    assert.equal(lane.text().includes('anthropic/claude-3-opus'), true)
+  })
+
+  it('「全不选（当前 N 个）」只取消筛选结果；「只选图像模型」按启发式命中并加「图像」标记', async () => {
+    const lane = await createPullLane()
+
+    // 「图像」标记只出现在命中的行上
+    const marked = [...lane.container.querySelectorAll('label')].filter((node) =>
+      (node.textContent ?? '').includes('图像'),
+    )
+    assert.equal(marked.length, IMAGE_MODELS.length, '命中的行应带「图像」标记')
+
+    await lane.click(buttonContaining(lane, '只选图像模型'))
+    assert.deepEqual(checkedNames(lane).sort(), [...IMAGE_MODELS].sort())
+    assert.ok(lane.text().includes('已选 4 / 共 7'))
+
+    // 全不选只作用于筛选结果：先筛 'openai'（2 行），取消后其余选择应保留
+    await lane.type(lane.inputByPlaceholder('搜索模型…'), 'openai')
+    await lane.click(buttonContaining(lane, '全不选（当前 2 个）'))
+    // 被筛掉的行不渲染，所以要先清空搜索再看剩下的选择
+    await lane.type(lane.inputByPlaceholder('搜索模型…'), '')
+    assert.deepEqual(checkedNames(lane).sort(), [
+      'black-forest-labs/flux-1.1-pro',
+      'google/gemini-3.1-flash-image',
+      'qwen/qwen-image-edit',
+    ])
+    assert.ok(lane.text().includes('已选 3 / 共 7'), '计数要跟得上：被筛掉的选择仍然算数')
+  })
+
+  it('保存成功 → 重取 api/providers、收起面板、给出成功提示，「模型」行反映最新配置', async () => {
+    const lane = await createPullLane()
+
+    await lane.click(checkboxFor(lane, 'openai/gpt-image-1'))
+    await lane.click('保存选择')
+
+    const postIndex = lane.fetches.findIndex(
+      (call) => call.method === 'POST' && /\/models$/.test(call.url),
+    )
+    assert.ok(postIndex >= 0, '必须发出 POST .../models')
+    const refreshed = lane.fetches
+      .slice(postIndex + 1)
+      .filter((call) => call.method === 'GET' && /\/api\/providers$/.test(call.url))
+    assert.ok(refreshed.length >= 1, '写成功后必须重新取 api/providers')
+
+    assert.equal(checkboxes(lane).length, 0, '保存后面板应收起')
+    assert.ok(lane.text().includes('已保存 1 个模型'), '应给出成功提示')
+    assert.ok(lane.text().includes('模型：openai/gpt-image-1'), '「模型」行必须反映最新配置')
+  })
+
+  it('保存失败：错误显示在面板内（只取 code/message），面板不消失、按钮恢复、不白屏', async () => {
+    const lane = await createPullLane({
+      saveError: { code: 'too_many_models', message: '模型数量超过上限 500（收到 501 个）' },
+    })
+
+    await lane.click(checkboxFor(lane, 'openai/gpt-image-1'))
+    await lane.click('保存选择')
+
+    assert.ok(lane.text().includes('模型数量超过上限 500'), '应显示宿主返回的可读原因')
+    assert.ok(lane.text().includes('too_many_models'), '应带上结构化 code')
+    assert.equal(checkboxes(lane).length, PULLED_MODELS.length, '失败后面板仍在（没白屏）')
+    assert.ok(lane.button('保存选择'), '失败后按钮应恢复可用')
+    assert.ok(lane.button('取消'), '失败后仍能取消')
+  })
+
+  it('「取消」收起面板且不写入；之后能重新打开接着选（不必再拉一次）', async () => {
+    const lane = await createPullLane({ savedModels: ['openai/gpt-image-1'] })
+
+    // 初始选择 = 当前配置里仍存在于拉取结果中的模型
+    assert.deepEqual(checkedNames(lane), ['openai/gpt-image-1'])
+    assert.ok(lane.text().includes('已选 1 / 共 7'))
+
+    await lane.click('取消')
+    assert.equal(checkboxes(lane).length, 0, '取消后面板应收起')
+    assert.equal(
+      lane.postCalls().filter((call) => /\/models$/.test(call.url)).length,
+      0,
+      '取消不得写配置',
+    )
+    assert.equal(
+      lane.postCalls().filter((call) => /refresh-models$/.test(call.url)).length,
+      1,
+      '取消不该重新拉取',
+    )
+
+    const reopen = buttonContaining(lane, '选择模型（7 个）')
+    assert.ok(reopen, '收起后应能重新打开面板')
+    await lane.click(reopen)
+    assert.equal(checkboxes(lane).length, PULLED_MODELS.length)
+    assert.deepEqual(checkedNames(lane), ['openai/gpt-image-1'], '重开后仍按当前配置预选')
+  })
+
+  it('保存进行中：按钮禁用并显示「保存中…」', async () => {
+    let release
+    const pending = new Promise((resolve) => {
+      release = () =>
+        resolve(
+          jsonResponse({
+            ok: true,
+            provider: providerView({ models: ['openai/gpt-image-1'] }),
+            count: 1,
+          }),
+        )
+    })
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        const target = String(url)
+        if (method === 'POST' && /refresh-models$/.test(target)) {
+          return jsonResponse({
+            ok: true,
+            models: PULLED_MODELS,
+            count: PULLED_MODELS.length,
+            provider: providerView(),
+          })
+        }
+        if (method === 'POST' && /\/models$/.test(target)) return pending
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    await lane.click('拉取模型')
+    await lane.click(checkboxFor(lane, 'openai/gpt-image-1'))
+
+    // 不 await：让请求停在途中
+    await act(async () => {
+      lane.button('保存选择').click()
+    })
+
+    const during = lane.button('保存中…')
+    assert.ok(during, '请求中按钮文案应变为「保存中…」')
+    assert.equal(during.disabled, true, '请求中「保存选择」必须禁用')
+    assert.equal(lane.button('取消').disabled, true, '请求中「取消」也必须禁用')
+
+    await act(async () => {
+      release()
+    })
+    await settleAll()
+    assert.equal(checkboxes(lane).length, 0, '保存成功后应收起面板')
+    assert.ok(lane.text().includes('已保存 1 个模型'), '保存成功后应给提示')
+  })
+
+  it('卸载后落地的响应不再有副作用：不重取 api/providers、不抛异常、不刷警告', async () => {
+    // 直接挂 `ProviderCard`（而不是整个设置页），这样 `reload` 是可数的 spy：
+    // 卸载后如果还跑 `props.reload()`，就等于对已卸载的父组件 setState。
+    const warnings = []
+    const savedConsoleError = console.error
+    console.error = (...args) => {
+      warnings.push(args.map((item) => String(item)).join(' '))
+    }
+    const dom = new JSDOM(PAGE, JSDOM_OPTIONS)
+    const win = dom.window
+    let restore = () => {}
+    let root = null
+    try {
+      let release
+      const pending = new Promise((resolve) => {
+        release = () =>
+          resolve(
+            jsonResponse({
+              ok: true,
+              models: PULLED_MODELS,
+              count: PULLED_MODELS.length,
+              provider: providerView({ models: PULLED_MODELS }),
+            }),
+          )
+      })
+      const fetchImpl = (input, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /refresh-models$/.test(String(input))) {
+          return Promise.resolve(pending)
+        }
+        return Promise.resolve(jsonResponse(providersPayload()))
+      }
+      restore = installGlobals({ ...domEntries(win), fetch: fetchImpl })
+
+      let loaded = null
+      win.__ModuleLoader__ = { load: (entry) => (loaded = entry) }
+      new Function(SRC)()
+      const exported = loaded.factory((name) => {
+        if (name === 'react') return React
+        throw new Error('未预期的 require("' + String(name) + '")')
+      })
+
+      let reloads = 0
+      const container = win.document.createElement('div')
+      win.document.body.appendChild(container)
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          h(exported.__test__.ProviderCard, {
+            provider: providerView(),
+            index: 0,
+            reload: () => {
+              reloads += 1
+            },
+          }),
+        )
+      })
+      await settleAll()
+
+      const refresh = [...container.querySelectorAll('button')].find(
+        (node) => node.textContent.trim() === '拉取模型',
+      )
+      assert.ok(refresh, '卡片上必须有「拉取模型」按钮')
+
+      // 让请求停在途中，然后卸载
+      await act(async () => {
+        refresh.click()
+      })
+      await act(async () => {
+        root.unmount()
+      })
+      root = null
+      const settled = reloads
+
+      await act(async () => {
+        release()
+      })
+      await settleAll()
+
+      assert.equal(reloads, settled, '卸载后不得再触发重取（那是往已卸载组件 setState）')
+      assert.deepEqual(warnings, [], '卸载后不应有 setState / act 警告')
+    } finally {
+      if (root !== null) {
+        try {
+          await act(async () => root.unmount())
+        } catch {
+          /* 清理失败不改变结论 */
+        }
+      }
+      console.error = savedConsoleError
+      restore()
+      try {
+        win.close()
+      } catch {
+        /* 已关就算了 */
+      }
+    }
+  })
+})
+
 async function settleAll() {
   for (let i = 0; i < 12; i += 1) await new Promise((resolve) => setImmediate(resolve))
 }

@@ -679,7 +679,218 @@ window.__ModuleLoader__.load({
       return { ok: false, text: detail + code }
     }
 
-    /** 单个厂商的凭据表单：baseUrl / apiKey / 拉取模型 / 测试连接。 */
+    /**
+     * 图像模型名的**启发式**判据（纯客户端本地判断，不依赖厂商元数据）。
+     *
+     * 为什么必须靠名字猜：聚合商的模型目录里没有任何"能不能生图"的字段，而实测
+     * Ofox 一次返回 150 个模型、其中绝大多数是纯文本模型。用户真正想要的往往是
+     * 其中个位数的图像模型，所以这里给一个「只选图像模型」的快捷判据。
+     * 覆盖主流命名：gemini.*image / imagen / nano-banana / gpt-image / dall-e /
+     * qwen.*image / seedream / wan.*image / flux / stable-diffusion / kolors。
+     * 它是**启发式**——漏判只让那一行少一个「图像」标记，不会丢模型。
+     */
+    const IMAGE_MODEL_PATTERNS = [
+      /gemini.*image/i,
+      /imagen/i,
+      /nano-?banana/i,
+      /gpt-image/i,
+      /dall-?e/i,
+      /qwen.*image/i,
+      /seedream/i,
+      /wan.*image/i,
+      /flux/i,
+      /stable-?diffusion/i,
+      /kolors/i,
+    ]
+
+    /** 模型名是否像图像模型。 */
+    function isImageModel(name) {
+      const text = String(name)
+      return IMAGE_MODEL_PATTERNS.some((pattern) => pattern.test(text))
+    }
+
+    /** 「模型」行：超过 8 个只列前 8 个（全量在拉取面板里看），避免一行被 150 项撑爆。 */
+    function describeModels(raw) {
+      const list = isArray(raw) ? raw.map(String) : []
+      if (list.length === 0) return '未声明（可点「拉取模型」）'
+      const head = list.slice(0, 8)
+      return (
+        head.join(' / ') +
+        (list.length > head.length ? ' …（共 ' + String(list.length) + ' 个）' : '')
+      )
+    }
+
+    /**
+     * 模型选择面板：拉取结果只读展示 + 复选 + 显式保存。
+     *
+     * 三处「作用域」必须写在界面上，否则 150 行的列表很容易让人以为选的是全部：
+     *   - 搜索框：按**子串**过滤（大小写不敏感）；
+     *   - 「全选 / 全不选」：只作用于**当前筛选结果**，按钮文案带数量；
+     *   - 「只选图像模型」：按上面的启发式**重设**选择（不是追加），命中的行带「图像」标记。
+     *
+     * 列表内部滚动（`max-height: 240px`）：150 项不能把卡片撑爆。
+     * 本组件自己**不发请求**：保存交给父级的 mutation，失败原因也在面板内显示。
+     */
+    function ModelPickerPanel(props) {
+      const list = isArray(props.models) ? props.models.map(String) : []
+      const initial = isArray(props.initial) ? props.initial.map(String) : []
+      const [search, setSearch] = React.useState('')
+      const [selected, setSelected] = React.useState(() =>
+        initial.filter((name) => list.indexOf(name) >= 0),
+      )
+
+      const keyword = search.trim().toLowerCase()
+      const visible =
+        keyword === '' ? list : list.filter((name) => name.toLowerCase().indexOf(keyword) >= 0)
+      const chosen = new Set(selected)
+      const imageCount = list.filter(isImageModel).length
+      const busy = props.busy === true
+
+      const toggle = (name) =>
+        setSelected((prev) =>
+          prev.indexOf(name) >= 0 ? prev.filter((item) => item !== name) : prev.concat([name]),
+        )
+
+      /** 只加不减：不动筛选结果之外的选择。 */
+      const selectAllVisible = () =>
+        setSelected((prev) => {
+          const next = prev.slice()
+          for (const name of visible) if (next.indexOf(name) < 0) next.push(name)
+          return next
+        })
+
+      /** 只减不加：同样只作用于当前筛选结果。 */
+      const clearVisible = () =>
+        setSelected((prev) => prev.filter((name) => visible.indexOf(name) < 0))
+
+      const onlyImage = () => setSelected(list.filter(isImageModel))
+
+      return h(
+        'div',
+        {
+          style: {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            padding: '8px',
+            borderRadius: '8px',
+            border: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
+            background: 'color-mix(in srgb, currentColor 4%, transparent)',
+          },
+        },
+        h(
+          'div',
+          { style: { ...skin.row, gap: '8px' } },
+          h(
+            'span',
+            { style: { fontSize: '12px', fontWeight: 600 } },
+            '选择要保留的模型',
+          ),
+          h(
+            'span',
+            { style: { fontSize: '12px', opacity: 0.8 } },
+            '已选 ' + String(selected.length) + ' / 共 ' + String(list.length) +
+              (keyword === '' ? '' : '（筛选后 ' + String(visible.length) + ' 项）'),
+          ),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' } },
+          h('div', { style: { flex: '1 1 160px', minWidth: 0 } },
+            h(TextInput, {
+              value: search,
+              disabled: busy,
+              placeholder: '搜索模型…',
+              onChange: (event) => setSearch(event.target.value),
+            })),
+          h(
+            Btn,
+            {
+              disabled: busy || visible.length === 0,
+              onClick: selectAllVisible,
+              title: '只选中当前搜索结果里的模型，不影响其他行',
+            },
+            '全选（当前 ' + String(visible.length) + ' 个）',
+          ),
+          h(
+            Btn,
+            {
+              disabled: busy || visible.length === 0,
+              onClick: clearVisible,
+              title: '只取消当前搜索结果里的模型，不影响其他行',
+            },
+            '全不选（当前 ' + String(visible.length) + ' 个）',
+          ),
+          h(
+            Btn,
+            {
+              disabled: busy || imageCount === 0,
+              onClick: onlyImage,
+              title: '按模型名启发式选中全部图像模型（会替换当前选择）',
+            },
+            '只选图像模型（' + String(imageCount) + ' 个）',
+          ),
+        ),
+        h(
+          'div',
+          {
+            style: {
+              maxHeight: '240px',
+              overflowY: 'auto',
+              border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',
+              borderRadius: '6px',
+              padding: '4px 6px',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          },
+          visible.length === 0
+            ? h('span', { style: { fontSize: '12px', opacity: 0.7 } }, '没有匹配的模型')
+            : visible.map((name) =>
+                h(
+                  'label',
+                  {
+                    key: name,
+                    style: {
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      lineHeight: 1.8,
+                      cursor: busy ? 'not-allowed' : 'pointer',
+                    },
+                  },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: chosen.has(name),
+                    disabled: busy,
+                    onChange: () => toggle(name),
+                  }),
+                  h('span', { style: { wordBreak: 'break-all' } }, name),
+                  isImageModel(name) ? h(Pill, null, '图像') : null,
+                ),
+              ),
+        ),
+        h(
+          'div',
+          { style: { ...skin.row, gap: '8px' } },
+          h(
+            Btn,
+            {
+              disabled: busy || selected.length === 0,
+              onClick: () => props.onSave(list.filter((name) => chosen.has(name))),
+              title: '只把已选中的模型写进 config.json（拉取本身不写配置）',
+            },
+            busy ? '保存中…' : '保存选择',
+          ),
+          h(Btn, { disabled: busy, onClick: () => props.onCancel() }, '取消'),
+          busy ? h(Spinner, { label: '保存中' }) : null,
+        ),
+        h(Msg, { result: props.result }),
+      )
+    }
+
+    /** 单个厂商的凭据表单：baseUrl / apiKey / 拉取模型 / 选择模型 / 测试连接。 */
     function ProviderCard(props) {
       const provider = props.provider
       const id = isString(provider.id) ? provider.id : ''
@@ -693,6 +904,24 @@ window.__ModuleLoader__.load({
       const creds = useMutation()
       const models = useMutation()
       const probe = useMutation()
+      const picker = useMutation()
+
+      /**
+       * 拉取结果与面板开合是**两件事**：取消只收起面板，不必再向厂商拉一次。
+       * `seq` 每拉一次 +1，用作面板的 key —— 让面板重新挂载、选择状态从最新配置重算。
+       */
+      const [pull, setPull] = React.useState(null)
+      const [pickerOpen, setPickerOpen] = React.useState(false)
+      const pullSeq = React.useRef(0)
+
+      /** 卸载后不再 setState：await 之后的 `setPull` / `setPickerOpen` 都要过这一关。 */
+      const mounted = React.useRef(true)
+      React.useEffect(() => {
+        mounted.current = true
+        return () => {
+          mounted.current = false
+        }
+      }, [])
 
       // 宿主的视图变了（例如拉取模型后重取成功）→ 同步输入框的初值
       React.useEffect(() => {
@@ -714,14 +943,48 @@ window.__ModuleLoader__.load({
           return outcome
         })
 
+      /**
+       * 拉取模型 —— **只读**。
+       *
+       * 宿主侧 `refresh-models` 已改为纯读（不写配置），所以这里拿到结果后只做两件事：
+       * 展开选择面板、重取 `api/providers` 让「模型」行与配置保持一致。
+       * 真正落盘要等用户点面板里的「保存选择」。
+       */
       const onRefresh = () =>
         models.run(async () => {
           const outcome = await apiPost(endpoint + 'refresh-models', {})
           if (outcome.ok !== true) return postResult(outcome, '')
-          const list = isArray(outcome.data.models) ? outcome.data.models : []
-          return postResult(outcome, '已拉取 ' + String(list.length) + ' 个模型')
+          const list = isArray(outcome.data.models) ? outcome.data.models.map(String) : []
+          return {
+            ok: true,
+            text: '已拉取 ' + String(list.length) + ' 个模型',
+            models: list,
+          }
         }).then((outcome) => {
-          if (outcome.ok === true) props.reload()
+          if (!mounted.current) return outcome
+          if (outcome.ok === true && isArray(outcome.models)) {
+            setPull({ models: outcome.models, seq: (pullSeq.current += 1) })
+            setPickerOpen(true)
+            props.reload()
+          }
+          return outcome
+        })
+
+      /**
+       * 保存选择 —— 唯一会写 `provider.models` 的入口。
+       * 只提交**已选子集**（面板按拉取列表顺序给出），成功后重取、收起面板、给成功提示。
+       */
+      const onSaveModels = (chosen) =>
+        picker.run(async () => {
+          const outcome = await apiPost(endpoint + 'models', { models: chosen })
+          if (outcome.ok !== true) return postResult(outcome, '')
+          return postResult(outcome, '已保存 ' + String(chosen.length) + ' 个模型')
+        }).then((outcome) => {
+          if (!mounted.current) return outcome
+          if (outcome.ok === true) {
+            setPickerOpen(false)
+            props.reload()
+          }
           return outcome
         })
 
@@ -855,10 +1118,18 @@ window.__ModuleLoader__.load({
             {
               disabled: models.busy,
               onClick: onRefresh,
-              title: 'GET {baseUrl}/models 并把模型列表写回配置',
+              title: 'GET {baseUrl}/models：只拉取，不写配置（写入要显式保存选择）',
             },
             models.busy ? '拉取中…' : '拉取模型',
           ),
+          // 取消过面板后还能回来接着选，不必再向厂商拉一次。
+          pull !== null && !pickerOpen
+            ? h(
+                Btn,
+                { disabled: picker.busy, onClick: () => setPickerOpen(true) },
+                '选择模型（' + String(pull.models.length) + ' 个）',
+              )
+            : null,
           h(
             Btn,
             { disabled: probe.busy, onClick: onTest, title: '发一次探测请求，不写配置' },
@@ -875,13 +1146,24 @@ window.__ModuleLoader__.load({
         h(Msg, { result: creds.result }),
         h(Msg, { result: models.result }),
         h(Msg, { result: probe.result }),
+        h(Msg, { result: picker.result }),
+        pull !== null && pickerOpen
+          ? h(ModelPickerPanel, {
+              key: 'pick-' + String(pull.seq),
+              models: pull.models,
+              initial: (isArray(provider.models) ? provider.models.map(String) : []).filter(
+                (name) => pull.models.indexOf(name) >= 0,
+              ),
+              busy: picker.busy,
+              result: picker.result,
+              onSave: onSaveModels,
+              onCancel: () => setPickerOpen(false),
+            })
+          : null,
         h(
           'span',
           { style: { fontSize: '12px', opacity: 0.7, lineHeight: 1.6 } },
-          '模型：' +
-            (isArray(provider.models) && provider.models.length > 0
-              ? provider.models.map(String).join(' / ')
-              : '未声明（可点「拉取模型」）'),
+          '模型：' + describeModels(provider.models),
         ),
       )
     }
@@ -1017,9 +1299,19 @@ window.__ModuleLoader__.load({
     function ProvidersSection(props) {
       const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
 
+      /** 卸载后不再 setState（`reload` 会被卡片在 await 之后调用）。 */
+      const alive = React.useRef(true)
+      React.useEffect(() => {
+        alive.current = true
+        return () => {
+          alive.current = false
+        }
+      }, [])
+
       const reload = React.useCallback(
         () =>
           apiGet('api/providers', isProviders).then((result) => {
+            if (!alive.current) return
             if (result.ok) setState({ phase: 'ready', data: result.data, error: null })
             else setState({ phase: 'error', data: null, error: result.error })
           }),

@@ -474,8 +474,109 @@ F1 取证共发出 **25 次付费调用**，其中**必要 9 次、可避免 16 
 
 - 写成功后 `runtime.configStore` 的内存副本与工具侧共享，但若 `config.json`
   被本进程之外的东西改动，内存不会自动重读（与改动前一致）。
-- `refresh-models` 会把探测回来的**全部** id 写进 `provider.models`（契约即如此），
-  包括该厂商的非图像模型。
 - `baseUrl` 只做形状校验（`http(s)://` + 非空主机 + 不内嵌用户名密码），
   不做联通性判断——那是「测试连接」的事。
+
+**§14 的历史语义已被 §15 取代**：`refresh-models` 从"拉取即全量写回"改成**只读**，
+写入拆到新的 `POST /providers/<id>/models`。原因与契约见下一节。
+
+## 15. 拉取 = 只读，选择 = 显式写入（2026-10-06）
+
+### 15.1 为什么改：150 个模型里绝大多数是纯文本模型
+
+实测 Ofox 的 `GET /v1/models` 一次返回 **150 个** id，其中能生图的只有个位数。
+旧契约（§14）是"拉取即把**全部** id 写进 `provider.models`"，后果有三：
+
+1. 默认模型下拉框被 150 项淹没，用户要自己从里面挑出能生图的那几个；
+2. 用户没有"缩小列表"的手段——想删掉文本模型只能去手改 `config.json`；
+3. 拉取本身**改了配置**，但界面上只看到一句"已拉取 150 个模型"，
+   写操作是隐式的、没有确认步骤。
+
+所以拆成两步语义：**拉取 = 只读**（只看，不写），**选择 = 显式写入**（勾完点保存）。
+
+### 15.2 `POST /pixmart/api/providers/<id>/refresh-models`（改为只读）
+
+```
+200 { ok:true, models:string[], count:number, provider:ProviderView }
+```
+
+- 只对厂商发一次 `GET {baseUrl}/models`；`config.json` **不被触碰**
+  （测试用写前后内存深比较 + 磁盘字节比较钉住）。
+- `provider` 回的是**配置里的当前值**（因为什么都没写），`models` 才是探测结果。
+- 失败码不变：`400 no_api_key` / `401 auth` / `502 bad_response` / `504 timeout`。
+
+### 15.3 `POST /pixmart/api/providers/<id>/models`（新增，唯一写模型列表的入口）
+
+```
+body: { models: string[] }
+200 { ok:true, provider:ProviderView, count:number }
+400 { ok:false, error:{ code:'invalid_models'|'empty_models'|'too_many_models', message } }
+404 { ok:false, error:{ code:'unknown_provider', message } }
+```
+
+判定顺序与规则（`pickModelsField`，有测试逐条钉住）：
+
+1. 不是数组、或存在**非字符串 / 只含空白**的元素 → `invalid_models`；
+2. 原始数组长度 > **500** → `too_many_models`（先挡再干活，500 本身合法）；
+3. 去重**保持首次出现的顺序**（`trim` 后作去重键，落盘 trim 后的 id）；
+4. 去重后为空 → `empty_models`（`[]` 走这一条）；
+5. 写入 `config.json` 的 `providers[i].models`，走 `ConfigStore.update()`
+   （原子写 + 按 configPath 串行读改写，**绝不直接写文件**）；
+6. 响应体沿用 `toProviderView`，**不含 apiKey**。
+
+### 15.4 顺带修掉的实测缺陷：模型行不更新（根因在宿主读缓存）
+
+**现象**：拉取成功、界面提示"已拉取 150 个模型"，但同一卡片的「模型」行仍显示旧的 3 个默认值。
+
+**根因**：**不是没落盘，也不是界面没重取**——是宿主 `runtime.config()` 吃缓存。
+`src/tools/runtime.ts` 里首次读盘的结果被当成 `config()` 的永久返回值：
+
+```ts
+pending = configStore.load().then((result) => { warnings = result.warnings; return result.config })
+return pending            // ← 之后每一个 GET api/providers 都回这份首次快照
+```
+
+写路由走的是 `ConfigStore.update()`，它更新的是 store 的 `current` 与磁盘，
+**但 `config()` 永远不会再读 store**。于是：
+
+- `POST refresh-models` 的 200 响应里 `provider.models` 是新值（它自己算的）→ 提示正确；
+- 随后的 `GET api/providers` 回首次读盘快照 → 「模型」行、默认值下拉框全是旧值。
+
+**修复**：`config()` 只把**读盘动作**共享一次，返回值一律取 store 的当前副本：
+
+```ts
+let loaded: Promise<void> | undefined
+if (loaded === undefined) loaded = configStore.load().then((r) => { warnings = r.warnings })
+return loaded.then(() => configStore.get())
+```
+
+**回归测试**：`test/providers-api.test.mjs` 的"写后重取 api/providers 必须看到新值"用
+**真实 `createRuntime`**（假 runtime 的 `config()` 直接读 store，**测不出这个缺陷**——
+这正是它当初溜过去的原因）。已验证：把 `config()` 改回快照语义，该用例立刻失败
+（`actual: ['stale-default'] / expected: ['picked-image-model']`）。
+
+### 15.5 客户端：拉取后展开模型选择面板
+
+`client/client.js` 的 `ModelPickerPanel`（拉取成功后展开在厂商卡片内）：
+
+- **搜索框**：按**子串**过滤，大小写不敏感；
+- **全选 / 全不选**：只作用于**当前筛选结果**，按钮文案写明作用域
+  （`全选（当前 23 个）`），避免用户以为选的是全部 150 个；
+- **只选图像模型**：按模型名启发式**重设**选择，命中的行加「图像」标记。
+  启发式覆盖 `gemini.*image` / `imagen` / `nano-banana` / `gpt-image` / `dall-e` /
+  `qwen.*image` / `seedream` / `wan.*image` / `flux` / `stable-diffusion` / `kolors`。
+  它是启发式：漏判只少一个标记，不会丢模型；
+- **复选列表**：`max-height: 240px` + `overflow-y: auto`（150 项不撑爆卡片），
+  面板头部显示「已选 N / 共 M」；
+- **保存选择** → `POST .../models` 只提交**已选子集**（按拉取列表顺序）；
+  成功后重取 `api/providers`、收起面板、给成功提示；
+- **取消** → 收起面板且**不写入**；拉取结果留在卡片上，
+  用「选择模型（N 个）」重新打开即可，不必再向厂商拉一次；
+- 请求进行中按钮全部禁用；失败只在面板内显示 `error.message`（+ `code`），
+  不白屏、不抛异常；卸载后落地的响应不再触发任何 `setState`/重取（有测试钉住）。
+
+**契约变更带来的测试改动**：`test/providers-api.test.mjs` 里原有 4 个
+"能解析 X 形状，并**把模型写回 config.json**"用例，其中两条断言（回写后的
+`provider.models` 与磁盘 `models`）按新语义改成"**不写配置**"（深比较 + 磁盘字节一致），
+其余断言（探测结果、count、端点拼接、鉴权头、不含密钥）原样保留。
 

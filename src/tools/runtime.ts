@@ -52,7 +52,15 @@ export function createRuntime(ctx: HostContext, config: DshPixmartConfig): ToolR
   // 上一次进程留下的 running 记录改判为 interrupted：**绝不假装还在跑**（§8.5.3）。
   void runStore.markInterruptedOnBoot().catch(() => undefined)
 
-  let pending: Promise<PixmartConfig> | undefined
+  /**
+   * 首次读盘只做一次（并发调用共享同一次 I/O）。
+   *
+   * 它**不缓存配置内容**——这一点是实测缺陷的修复：早先这里把首次读盘的结果
+   * 当作 `config()` 的永久返回值，于是写路由（`ConfigStore.update()`）虽然更新了
+   * store 的内存副本与 config.json，之后的 `GET api/providers` 仍然回首次读盘的
+   * 快照。用户看到的就是"提示已拉取 150 个模型，可模型那一行还是旧的 3 个默认值"。
+   */
+  let loaded: Promise<void> | undefined
   let warnings: readonly string[] = []
 
   return {
@@ -64,13 +72,14 @@ export function createRuntime(ctx: HostContext, config: DshPixmartConfig): ToolR
     runStore,
     usage,
     config(): Promise<PixmartConfig> {
-      if (pending === undefined) {
-        pending = configStore.load().then((result) => {
+      if (loaded === undefined) {
+        loaded = configStore.load().then((result) => {
           warnings = result.warnings
-          return result.config
         })
       }
-      return pending
+      // 读盘之后一律取 store 的**当前**配置：写路由只经 `ConfigStore.update()`
+      // 改内存副本，这里若回首次读盘的结果就永远看不到写后的值。
+      return loaded.then(() => configStore.get())
     },
     configWarnings(): readonly string[] {
       return warnings

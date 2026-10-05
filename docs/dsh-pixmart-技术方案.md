@@ -718,12 +718,16 @@ GET /pixmart/file/<projectId>/<name>
 
 **通用规则**：入参 JSON 校验 → 业务 → 结构化 `{code, message}` 错误；任何 RPC 都不泄露密钥；长任务（批量导出）带进度事件。
 
-> **已落地的写路由（设置页可写，2026-10-05）**：上表里的 `saveProvider` / `testProvider`
-> 最终以 4 个 POST 路由实现，形状与判据见 [contract-notes §14](./contract-notes.md)：
+> **已落地的写路由（设置页可写，2026-10-05；2026-10-06 修订）**：上表里的 `saveProvider` / `testProvider`
+> 最终以 5 个 POST 路由实现，形状与判据见 [contract-notes §14](./contract-notes.md)
+> 与 [§15（拉取=只读 / 选择=显式写入）](./contract-notes.md)：
 > `POST /pixmart/api/providers/<id>/credentials`（写密钥/端点，空串清除）、
-> `.../refresh-models`（GET {baseUrl}/models 并写回 `provider.models`）、
+> `.../refresh-models`（GET {baseUrl}/models，**只回结果、不写配置**）、
+> `.../models`（保存用户勾选的模型子集，唯一会写 `provider.models` 的入口）、
 > `.../test`（只探测不写，成败都是 200）、`POST /pixmart/api/defaults`（默认 provider/model/size/n，
 > model 不在该厂商列表里则 400 `unknown_model`）。请求体上限 64KB，`GET` 命中写路由一律 405。
+> > 为什么 `refresh-models` 改成只读：实测 Ofox 一次返回 150 个模型、绝大多数是纯文本模型，
+> > 自动全量写回会把筛选负担和淹没的下拉框推给用户（详见 contract-notes §15.1）。
 
 
 ---
