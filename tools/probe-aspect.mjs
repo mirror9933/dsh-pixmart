@@ -10,9 +10,13 @@
  * 用法：node tools/probe-aspect.mjs [config.json 路径]
  */
 import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { imageInfo } from '../lib/image-info.js'
 
-const configPath = process.argv[2] ?? 'C:/Users/30461/.dsh/pixmart/config.json'
+// 与插件同一套数据目录解析规则，不写死本机路径。
+const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
+const configPath = process.argv[2] ?? join(dshHome, 'pixmart', 'config.json')
 const config = JSON.parse(readFileSync(configPath, 'utf8'))
 const provider = config.providers[0]
 const apiKey = (provider.apiKeyEnv && process.env[provider.apiKeyEnv]) || provider.apiKey
