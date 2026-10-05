@@ -282,6 +282,9 @@ describe('jsdom lane：设置页可写', () => {
     assert.match(posts[0].url, /\/providers\/ofox\/credentials$/)
     const sent = JSON.parse(String(posts[0].body))
     assert.equal(sent.apiKey, SECRET, 'POST 应把用户填的密钥发出去')
+    // 保存时必须同时清空 apiKeyEnv：环境变量**优先于**本页填写的密钥，
+    // 只留字段会变成"哪天环境变量被设上，这里的 key 就静默失效且无从察觉"。
+    assert.equal(sent.apiKeyEnv, '', '保存时应显式清空 apiKeyEnv，避免环境变量静默覆盖')
 
     // 写成功后要重新拉 api/providers：GET 至少 2 次（首屏 + 写后 + 手动刷新）
     const gets = lane.fetches.filter((call) => call.method === 'GET' && /\/api\/providers$/.test(call.url))
@@ -419,6 +422,33 @@ describe('jsdom lane：设置页可写', () => {
     assert.ok(options.includes('ofox'), '厂商 select 应含当前厂商')
     assert.ok(options.includes('m-1') && options.includes('m-2'), '模型 select 应含该厂商的模型')
     assert.ok(options.includes('3:4'), '尺寸 select 应含厂商允许的尺寸')
+    // 默认模型在列表里时不得出现警告
+    assert.equal(
+      lane.text().includes('不在当前厂商的模型列表里'),
+      false,
+      '默认模型在列表里时不应出现警告',
+    )
+  })
+
+  it('默认值卡片：默认模型不在厂商列表里时给出显式警告（不只在展开下拉后才可见）', async () => {
+    const lane = await createLane({
+      respond: () =>
+        jsonResponse(
+          providersPayload({
+            // 场景：拉取后把模型列表窄化成 m-1/m-2，而默认值仍指向旧的 m-9
+            providers: [providerView({ models: ['m-1', 'm-2'] })],
+            defaults: { provider: 'ofox', model: 'm-9', size: '1:1', n: 1 },
+          }),
+        ),
+    })
+    await lane.render()
+
+    assert.ok(
+      lane.text().includes('不在当前厂商的模型列表里'),
+      '应给出可读的警告，而不是只把问题藏在展开后的下拉选项里',
+    )
+    // 仍然不抛异常、界面照常可用（这是"提示"不是"阻断"）
+    assert.ok(lane.button('保存默认值'), '警告不应阻断保存')
   })
 
   it('默认值卡片：选模型 + 保存 → POST defaults 带 provider/model/size', async () => {

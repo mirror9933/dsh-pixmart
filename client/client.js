@@ -1255,6 +1255,15 @@ window.__ModuleLoader__.load({
               ],
               onChange: (event) => setModel(event.target.value),
             }),
+            // 光靠下拉里的「（不在列表里）」不够：那要展开才看得到。
+            // 拉取后窄化模型列表就会落到这个状态，所以这里显式提示一句。
+            model !== '' && models.indexOf(model) < 0
+              ? h(
+                  'span',
+                  { style: { fontSize: '11px', color: '#b45309', lineHeight: 1.5 } },
+                  '该模型不在当前厂商的模型列表里（拉取后窄化列表会这样），建议重新选择',
+                )
+              : null,
           ),
           h(
             Field,
