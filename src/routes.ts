@@ -19,7 +19,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { findProvider, toProviderView, type PixmartConfig, type ProviderConfig } from './config.js'
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
-import { TrashError } from './store/project-store.js'
+import { TrashError, type ProjectSummaryWithModules } from './store/project-store.js'
 import { exportFileName, exportImages, type ExportSource } from './tools/export-output.js'
 import { fetchProviderModels, type ModelProbeCode } from './vendor/models.js'
 import type { HostContext, HttpResponseLike, HttpRequestLike, WebServerLike } from './host-types.js'
@@ -201,6 +201,88 @@ function readLimit(query: URLSearchParams, fallback: number, max = 200): number 
   return Math.min(Math.floor(raw), max)
 }
 
+/** 分页起点：非法/缺省/负数一律当 0（不是错误，只是"第一页"）。 */
+function readOffset(query: URLSearchParams): number {
+  const raw = Number(query.get('offset'))
+  if (!Number.isFinite(raw) || raw <= 0) return 0
+  return Math.floor(raw)
+}
+
+/** 项目名排序用的比较器。显式给 locale，避免随进程 locale 变。 */
+const projectNameCollator = new Intl.Collator(['zh-Hans-CN', 'zh', 'en'], {
+  numeric: true,
+  sensitivity: 'base',
+})
+
+/**
+ * 作品库列表的四种排序。
+ *
+ * 每一种都带**并列时的兜底**（先按创建时间倒序，再按 id）：没有兜底的话，
+ * 同分项目的相对顺序取决于 `Array.sort` 的稳定性与目录扫描顺序，
+ * 分页时同一条记录可能在两页里各出现一次、也可能一次都不出现。
+ */
+const PROJECT_SORTS: Record<
+  string,
+  (a: ProjectSummaryWithModules, b: ProjectSummaryWithModules) => number
+> = {
+  'createdAt:desc': (a, b) => b.createdAt - a.createdAt || compareId(a, b),
+  'createdAt:asc': (a, b) => a.createdAt - b.createdAt || compareId(a, b),
+  'name:asc': (a, b) =>
+    projectNameCollator.compare(a.name, b.name) || b.createdAt - a.createdAt || compareId(a, b),
+  'images:desc': (a, b) =>
+    b.imageCount - a.imageCount || b.createdAt - a.createdAt || compareId(a, b),
+}
+
+const DEFAULT_PROJECT_SORT = 'createdAt:desc'
+
+function compareId(a: ProjectSummaryWithModules, b: ProjectSummaryWithModules): number {
+  if (a.id === b.id) return 0
+  return a.id < b.id ? -1 : 1
+}
+
+const PROJECT_SORT_KEYS = Object.keys(PROJECT_SORTS).join(' / ')
+
+/**
+ * 搜索命中：**项目名 或 模块名**，大小写不敏感的子串。
+ *
+ * 模块名同时含标识（`main.white-bg`）与显示名（`白底主图`）——用户的两种说法都要能搜到。
+ */
+function matchesProjectQuery(project: ProjectSummaryWithModules, keyword: string): boolean {
+  if (keyword === '') return true
+  if (project.name.toLowerCase().includes(keyword)) return true
+  return project.modules.some((name) => name.toLowerCase().includes(keyword))
+}
+
+/** 项目显示名上限：60 个字符（中英文同口径，按 UTF-16 码元计）。 */
+const MAX_PROJECT_NAME = 60
+
+type NamePick =
+  | { readonly ok: true; readonly name: string }
+  | { readonly ok: false; readonly message: string }
+
+/**
+ * 校验重命名请求体里的 `name`。
+ *
+ * 三种拒绝理由（都是 400 `invalid_name`）：空（含只含空白）、超长、**含路径分隔符**。
+ * 最后一条不是洁癖：项目名会出现在导出目录名与日志里，允许 `/` 或 `\` 就等于让
+ * 一个"显示名"具备路径含义。至于目录本身——本项目**根本不会因为改名而移动目录**。
+ */
+function pickProjectName(body: Record<string, unknown>): NamePick {
+  const raw = body.name
+  if (typeof raw !== 'string') return { ok: false, message: 'name 应为字符串' }
+  const name = raw.trim()
+  if (name === '') return { ok: false, message: '项目名不能为空' }
+  if (name.length > MAX_PROJECT_NAME) {
+    return {
+      ok: false,
+      message: `项目名最长 ${String(MAX_PROJECT_NAME)} 个字符（收到 ${String(name.length)} 个）`,
+    }
+  }
+  if (/[\\/]/.test(name)) return { ok: false, message: '项目名不能包含路径分隔符（/ 或 \\）' }
+  if (/[\u0000-\u001f]/.test(name)) return { ok: false, message: '项目名不能包含控制字符' }
+  return { ok: true, name }
+}
+
 /** 破坏性操作的显式确认：只认布尔 `true`（字符串 "true" 不算，避免脚本误传）。 */
 function isConfirmed(body: Record<string, unknown>): boolean {
   return body.confirm === true
@@ -318,16 +400,44 @@ async function handleApi(
     return
   }
 
-  // GET /pixmart/api/projects
+  // GET /pixmart/api/projects?q=&sort=&limit=&offset=
   if ((route === '/projects' || route === '/projects/') && isGet) {
-    const projects = runtime.projectStore.list().slice(0, readLimit(query, 50))
-    sendJson(response, 200, { ok: true, count: projects.length, projects })
+    const sortKey = (query.get('sort') ?? '').trim() || DEFAULT_PROJECT_SORT
+    const compare = PROJECT_SORTS[sortKey]
+    if (compare === undefined) {
+      fail(response, 400, 'bad_sort', `不支持的排序 "${sortKey}"，可用：${PROJECT_SORT_KEYS}`)
+      return
+    }
+
+    // 过滤先于分页：`total` 报的必须是**过滤后**的总数，否则搜索框旁边那个分母是假的。
+    const keyword = (query.get('q') ?? '').trim().toLowerCase()
+    const matched = runtime.projectStore
+      .listWithModules()
+      .filter((project) => matchesProjectQuery(project, keyword))
+
+    const ordered = [...matched].sort(compare)
+    const limit = readLimit(query, 50)
+    const offset = readOffset(query)
+    const page = ordered.slice(offset, offset + limit)
+
+    sendJson(response, 200, {
+      ok: true,
+      count: page.length,
+      // 之前这里写的是 `list().slice(0, limit)`：**超过 limit 的项目被静默隐藏**，
+      // 界面上没有任何提示（用户会以为"我只有 50 个项目"）。现在把过滤后的真实总数
+      // 与"还有更多"一并报出来，界面据此显示「显示 N / 共 M」+「加载更多」。
+      total: ordered.length,
+      hasMore: offset + page.length < ordered.length,
+      offset,
+      limit,
+      projects: page,
+    })
     return
   }
 
-  // POST /pixmart/api/projects/<id>/delete  ·  POST /pixmart/api/projects/<id>/export
+  // POST /pixmart/api/projects/<id>/delete  ·  /export  ·  /rename
   // （放在详情路由之前：`<id>/delete` 这类路径不该落到"项目不存在"的 404 上）
-  const projectActionMatch = /^\/projects\/([^/]+)\/(delete|export)$/.exec(route)
+  const projectActionMatch = /^\/projects\/([^/]+)\/(delete|export|rename)$/.exec(route)
   if (projectActionMatch !== null) {
     if (requirePost()) return
     const projectId = decodeURIComponent(projectActionMatch[1] as string)
@@ -337,6 +447,8 @@ async function handleApi(
     }
     if (projectActionMatch[2] === 'delete') {
       await handleDeleteProject(runtime, projectId, response, readBody)
+    } else if (projectActionMatch[2] === 'rename') {
+      await handleRenameProject(runtime, projectId, response, readBody)
     } else {
       await handleExportProject(runtime, projectId, response, readBody)
     }
@@ -887,6 +999,44 @@ function failTrash(response: HttpResponseLike, error: unknown, what: string): vo
     'trash_failed',
     `${what}：${error instanceof Error ? error.message : String(error)}`,
   )
+}
+
+/**
+ * `POST /pixmart/api/projects/<id>/rename` —— 改**显示名**。
+ *
+ * ★ 关键约束：**只改 `project.json` 里的 `name`，绝不移动/重命名项目目录**。
+ * 目录名就是项目 id，`GET /pixmart/file/<id>/<name>`、`cover` 字段、
+ * `pixmart_projects action=get` 全都按它定位；改目录会让已经能看的图立刻 404。
+ * 因此路由层只做三件事：校验名字 → 写记录 → 回更新后的摘要；
+ * 唯一被触碰的字节是 `projects/<id>/project.json`。
+ *
+ * 失败码：`400 invalid_name`（空 / 超长 / 含路径分隔符 / 非字符串）·
+ * `404 not_found`（项目不存在）· `405`（非 POST，见调用点）。
+ */
+async function handleRenameProject(
+  runtime: ToolRuntime,
+  projectId: string,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+  const picked = pickProjectName(body)
+  if (!picked.ok) {
+    fail(response, 400, 'invalid_name', picked.message)
+    return
+  }
+  // 先判存在：否则 store 抛出的 "项目不存在" 会在 catch 里被当成别的失败。
+  if (!runtime.projectStore.has(projectId)) {
+    fail(response, 404, 'not_found', `项目不存在：${projectId}`)
+    return
+  }
+
+  try {
+    const record = await runtime.projectStore.rename(projectId, picked.name)
+    sendJson(response, 200, { ok: true, id: record.id, project: projectSummaryOf(record) })
+  } catch (error) {
+    fail(response, 500, 'rename_failed', error instanceof Error ? error.message : String(error))
+  }
 }
 
 /**

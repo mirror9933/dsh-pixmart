@@ -688,6 +688,331 @@ describe('moveDir：改名优先、跨设备回退复制', () => {
   })
 })
 
+// ── ⑦ 批次 C：搜索 / 排序 / 分页（顺带修掉"超过 limit 被静默隐藏"） ────────
+
+/**
+ * 造一个"名字 / 时间 / 图片数 / 模块名都不同"的项目。
+ *
+ * 与 `seedProject` 的区别：这个按传入规格生成，用来构造可排序、可搜索的多项目场景。
+ * 同一个项目里多次 `saveImage` 会被内容寻址去重成同一个文件——这不影响断言，
+ * 因为 `imageCount` 数的是**条目里引用的图片条数**（每个模块各一条）。
+ */
+async function seedNamedProject(store, spec) {
+  const record = await store.create(spec.name, 'ofox', 'gpt-image-1', spec.createdAt)
+  for (let i = 0; i < (spec.images ?? 0); i += 1) {
+    const saved = await store.saveImage(record.id, new Uint8Array(PNG), 'image/png', 'img' + String(i))
+    const { absolutePath, ...image } = saved
+    await store.appendItem(record.id, {
+      module: spec.module ?? 'main.white-bg',
+      label: spec.label ?? '白底主图',
+      prompt: spec.prompt ?? PROMPT,
+      size: '1:1',
+      provider: 'ofox',
+      model: 'gpt-image-1',
+      apiMode: 'images-generations',
+      status: 'ok',
+      images: [image],
+      ms: 1000,
+      createdAt: spec.createdAt,
+    })
+  }
+  return record
+}
+
+describe('批次 C：GET /pixmart/api/projects 的搜索 / 排序 / 分页', () => {
+  const at = (day) => Date.UTC(2026, 8, day, 12, 0, 0)
+  const idsOf = (json) => json.projects.map((entry) => entry.id)
+
+  /** Alpha(1 张, main.white-bg) · Beta(3 张, detail.hero) · Gamma(5 张, ad.banner) */
+  async function seedThree() {
+    const alpha = await seedNamedProject(runtime.projectStore, {
+      name: 'Alpha 主图',
+      createdAt: at(1),
+      images: 1,
+      module: 'main.white-bg',
+      label: '白底主图',
+    })
+    const beta = await seedNamedProject(runtime.projectStore, {
+      name: 'Beta 详情',
+      createdAt: at(2),
+      images: 3,
+      module: 'detail.hero',
+      label: '详情首屏',
+    })
+    const gamma = await seedNamedProject(runtime.projectStore, {
+      name: 'Gamma 广告',
+      createdAt: at(3),
+      images: 5,
+      module: 'ad.banner',
+      label: '广告横幅',
+    })
+    return { alpha, beta, gamma }
+  }
+
+  it('默认按创建时间倒序；total / hasMore / offset / limit 都在响应里', async () => {
+    const { alpha, beta, gamma } = await seedThree()
+
+    const { status, json } = await call(webServer, runtime, '/pixmart/api/projects?limit=2')
+    assert.equal(status, 200)
+    assert.equal(json.count, 2, 'count 仍是"这一页的条数"（老字段语义不变）')
+    assert.equal(json.total, 3, 'total 是过滤后的真实总数')
+    assert.equal(json.hasMore, true)
+    assert.equal(json.offset, 0)
+    assert.equal(json.limit, 2)
+    assert.deepEqual(idsOf(json), [gamma.id, beta.id])
+    assert.equal(json.projects.some((entry) => entry.id === alpha.id), false, '第 3 个确实在下一页')
+  })
+
+  it('offset 翻页：第二页接着第一页，最后一页 hasMore=false', async () => {
+    const { alpha, beta } = await seedThree()
+
+    const page2 = await call(webServer, runtime, '/pixmart/api/projects?limit=2&offset=2')
+    assert.equal(page2.status, 200)
+    assert.equal(page2.json.count, 1)
+    assert.equal(page2.json.total, 3)
+    assert.equal(page2.json.hasMore, false, '最后一页必须说"没有更多"，否则界面会一直显示加载更多')
+    assert.deepEqual(idsOf(page2.json), [alpha.id])
+
+    // 两页拼起来正好是全集，不重不漏（排序带并列兜底，正是为了这条）
+    const page1 = await call(webServer, runtime, '/pixmart/api/projects?limit=2&offset=0')
+    const union = [...idsOf(page1.json), ...idsOf(page2.json)]
+    assert.deepEqual([...union].sort(), [alpha.id, beta.id, ...union.filter((id) => id !== alpha.id && id !== beta.id)].sort())
+    assert.equal(new Set(union).size, 3)
+  })
+
+  it('q 按项目名过滤，大小写不敏感', async () => {
+    const { alpha } = await seedThree()
+
+    const lower = await call(webServer, runtime, '/pixmart/api/projects?q=alpha')
+    assert.equal(lower.json.count, 1)
+    assert.equal(lower.json.total, 1, 'total 也必须是过滤后的数')
+    assert.deepEqual(idsOf(lower.json), [alpha.id])
+
+    const upper = await call(webServer, runtime, '/pixmart/api/projects?q=ALPHA')
+    assert.deepEqual(idsOf(upper.json), [alpha.id], '大写也要命中')
+
+    const miss = await call(webServer, runtime, '/pixmart/api/projects?q=没有这个项目')
+    assert.equal(miss.json.count, 0)
+    assert.equal(miss.json.total, 0)
+    assert.equal(miss.json.hasMore, false)
+  })
+
+  it('q 按模块名过滤：模块标识与显示名都能命中', async () => {
+    const { beta } = await seedThree()
+
+    for (const keyword of ['detail.hero', 'DETAIL.HERO', '详情首屏']) {
+      const { status, json } = await call(
+        webServer,
+        runtime,
+        '/pixmart/api/projects?q=' + encodeURIComponent(keyword),
+      )
+      assert.equal(status, 200)
+      assert.deepEqual(idsOf(json), [beta.id], `q=${keyword} 应只命中 Beta`)
+    }
+  })
+
+  it('摘要里带 modules（HTTP 层新增），但 list() 的形状没变（工具层不动）', async () => {
+    const { alpha } = await seedThree()
+
+    const http = await call(webServer, runtime, '/pixmart/api/projects?limit=50')
+    const entry = http.json.projects.find((item) => item.id === alpha.id)
+    assert.ok(entry, '项目要在列表里')
+    assert.deepEqual([...entry.modules].sort(), ['main.white-bg', '白底主图'].sort())
+
+    // 决定④：`pixmart_projects` 工具的 list 返回的是 ProjectStore.list()，
+    // 它的形状必须与批次 C 之前**逐字一致**——模块名只走 HTTP 那条新读口。
+    const tool = runtime.projectStore.list().find((item) => item.id === alpha.id)
+    assert.equal('modules' in tool, false, 'list() 不得多出 modules 字段')
+    assert.deepEqual(
+      Object.keys(tool).sort(),
+      ['cover', 'createdAt', 'id', 'imageCount', 'model', 'name', 'provider'].sort(),
+    )
+  })
+
+  it('四种排序都生效；未知排序 → 400 bad_sort（不静默落回默认）', async () => {
+    const { alpha, beta, gamma } = await seedThree()
+
+    const asc = await call(webServer, runtime, '/pixmart/api/projects?sort=createdAt:asc')
+    assert.deepEqual(idsOf(asc.json), [alpha.id, beta.id, gamma.id])
+
+    const desc = await call(webServer, runtime, '/pixmart/api/projects?sort=createdAt:desc')
+    assert.deepEqual(idsOf(desc.json), [gamma.id, beta.id, alpha.id])
+
+    const byName = await call(webServer, runtime, '/pixmart/api/projects?sort=name:asc')
+    assert.deepEqual(idsOf(byName.json), [alpha.id, beta.id, gamma.id])
+
+    const byImages = await call(webServer, runtime, '/pixmart/api/projects?sort=images:desc')
+    assert.deepEqual(idsOf(byImages.json), [gamma.id, beta.id, alpha.id])
+
+    const bad = await call(webServer, runtime, '/pixmart/api/projects?sort=createdAt%3Asideways')
+    assert.equal(bad.status, 400)
+    assert.equal(bad.json.error.code, 'bad_sort')
+  })
+
+  it('★ 超过 limit 时 total 仍是真实总数（原来那 5 个项目不会再凭空消失）', async () => {
+    for (let i = 1; i <= 55; i += 1) {
+      await seedNamedProject(runtime.projectStore, {
+        name: '批量-' + String(i),
+        createdAt: at(1) + i * 1000,
+        images: 0,
+      })
+    }
+
+    const first = await call(webServer, runtime, '/pixmart/api/projects?limit=50')
+    assert.equal(first.status, 200)
+    assert.equal(first.json.count, 50, 'limit 仍按既有语义生效')
+    // 关键：旧实现是 `list().slice(0, limit)`，响应里**根本没有字段**说明还有 5 个。
+    assert.equal(first.json.total, 55, 'total 必须是过滤后的真实总数，不是这一页的条数')
+    assert.equal(first.json.hasMore, true)
+
+    const rest = await call(webServer, runtime, '/pixmart/api/projects?limit=50&offset=50')
+    assert.equal(rest.json.count, 5)
+    assert.equal(rest.json.total, 55)
+    assert.equal(rest.json.hasMore, false)
+
+    // 两页合起来就是全部 55 个，一个不漏
+    const seen = new Set([...idsOf(first.json), ...idsOf(rest.json)])
+    assert.equal(seen.size, 55)
+  })
+
+  it('limit 上限仍是 200（客户端不能靠 limit 把整库一次拉出来）', async () => {
+    const { status, json } = await call(webServer, runtime, '/pixmart/api/projects?limit=9999')
+    assert.equal(status, 200)
+    assert.equal(json.limit, 200)
+  })
+})
+
+// ── ⑧ 批次 C：项目重命名（只改显示名，绝不移动目录） ───────────────────────
+
+describe('批次 C：POST /pixmart/api/projects/<id>/rename', () => {
+  const rename = (id, body) =>
+    call(webServer, runtime, `/pixmart/api/projects/${id}/rename`, { method: 'POST', body })
+
+  it('改名成功：返回新摘要，列表与详情都反映新名字', async () => {
+    const { id } = await seedProject()
+
+    const { status, json } = await rename(id, { name: '秋季主图' })
+    assert.equal(status, 200)
+    assert.equal(json.ok, true)
+    assert.equal(json.id, id, '返回的 id 还是原 id')
+    assert.equal(json.project.name, '秋季主图')
+    assert.equal(json.project.imageCount, 1)
+
+    const listed = await call(webServer, runtime, '/pixmart/api/projects?limit=50')
+    assert.equal(listed.json.projects[0].name, '秋季主图')
+
+    const detail = await call(webServer, runtime, `/pixmart/api/projects/${id}`)
+    assert.equal(detail.status, 200)
+    assert.equal(detail.json.project.name, '秋季主图')
+  })
+
+  it('★ 目录名不变：项目目录仍在、记录 id 不变、图片路由仍 200', async () => {
+    const { id, fileName } = await seedProject()
+    const before = await call(webServer, runtime, `/pixmart/file/${id}/${fileName}`)
+    assert.equal(before.status, 200)
+
+    await rename(id, { name: '改了个名字' })
+
+    // 1) 目录还在原处，目录名 = 项目 id
+    assert.equal(existsSync(join(projectDirOf(id), 'project.json')), true)
+    assert.equal(runtime.projectStore.has(id), true)
+    assert.deepEqual(readdirSync(join(dataDir, 'projects')), [id], '不得多出/改名任何目录')
+
+    // 2) project.json 里动的只有 name（id 与 items 原样）
+    const onDisk = JSON.parse(readFileSync(join(projectDirOf(id), 'project.json'), 'utf8'))
+    assert.equal(onDisk.name, '改了个名字')
+    assert.equal(onDisk.id, id, 'id 是身份，改名不得动它')
+    assert.equal(onDisk.items.length, 2)
+
+    // 3) 关键回归：图片文件路由仍然 200 —— 这正是"不能移动目录"的理由
+    const after = await call(webServer, runtime, `/pixmart/file/${id}/${fileName}`)
+    assert.equal(after.status, 200)
+    assert.equal(after.response.headers['content-type'], 'image/png')
+
+    // 4) 用新名字也查得到（搜索走的是记录里的 name，不是目录名）
+    const found = await call(webServer, runtime, '/pixmart/api/projects?q=' + encodeURIComponent('改了个名字'))
+    assert.deepEqual(found.json.projects.map((entry) => entry.id), [id])
+  })
+
+  it('非法名一律 400 invalid_name，且磁盘上的记录一个字节都不变', async () => {
+    const { id } = await seedProject()
+    const file = join(projectDirOf(id), 'project.json')
+    const before = readFileSync(file, 'utf8')
+
+    const bad = [
+      { name: '' },
+      { name: '   ' },
+      { name: 'a/b' },
+      { name: 'a\\b' },
+      { name: '..\\..\\逃逸' },
+      { name: 'x'.repeat(61) },
+      { name: 123 },
+      {},
+    ]
+    for (const body of bad) {
+      const { status, json } = await rename(id, body)
+      assert.equal(status, 400, `body=${JSON.stringify(body)} 应被拒`)
+      assert.equal(json.error.code, 'invalid_name')
+    }
+
+    assert.equal(readFileSync(file, 'utf8'), before, '被拒的请求不得改动记录')
+    assert.equal(runtime.projectStore.read(id).name, '工作台')
+  })
+
+  it('长度上限的边界：60 个字符合法、61 个拒绝', async () => {
+    const { id } = await seedProject()
+
+    const ok = await rename(id, { name: 'x'.repeat(60) })
+    assert.equal(ok.status, 200)
+    assert.equal(ok.json.project.name, 'x'.repeat(60))
+
+    const tooLong = await rename(id, { name: 'y'.repeat(61) })
+    assert.equal(tooLong.status, 400)
+    assert.equal(tooLong.json.error.code, 'invalid_name')
+    assert.equal(runtime.projectStore.read(id).name, 'x'.repeat(60), '被拒的那次不得改名字')
+  })
+
+  it('名字首尾空白被裁剪（不留"看不见的前导空格"）', async () => {
+    const { id } = await seedProject()
+    const { status, json } = await rename(id, { name: '  带空格的名字  ' })
+    assert.equal(status, 200)
+    assert.equal(json.project.name, '带空格的名字')
+  })
+
+  it('不存在的项目 → 404；GET 打 rename → 405', async () => {
+    const missing = await rename('nope', { name: '随便' })
+    assert.equal(missing.status, 404)
+    assert.equal(missing.json.error.code, 'not_found')
+
+    const { id } = await seedProject()
+    const get = await call(webServer, runtime, `/pixmart/api/projects/${id}/rename`)
+    assert.equal(get.status, 405)
+    assert.equal(get.json.error.code, 'method_not_allowed')
+    assert.equal(runtime.projectStore.read(id).name, '工作台')
+  })
+
+  it('跨目录的 id 在路由层就被挡（400 bad_id）', async () => {
+    const escaped = await call(webServer, runtime, '/pixmart/api/projects/%2E%2E%2Fpwn/rename', {
+      method: 'POST',
+      body: { name: 'x' },
+    })
+    assert.equal(escaped.status, 400)
+    assert.equal(escaped.json.error.code, 'bad_id')
+  })
+
+  it('非环回来源 → 403，且名字没被改', async () => {
+    const { id } = await seedProject()
+    const denied = await call(webServer, runtime, `/pixmart/api/projects/${id}/rename`, {
+      method: 'POST',
+      body: { name: '外部改的' },
+      remoteAddress: '192.168.1.5',
+    })
+    assert.equal(denied.status, 403)
+    assert.equal(denied.json.error.code, 'forbidden')
+    assert.equal(runtime.projectStore.read(id).name, '工作台')
+  })
+})
+
 // ── ⑥ 真实 runtime 上的端到端（防"假 runtime 掩盖真实缺陷"） ────────────────
 
 /**

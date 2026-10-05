@@ -42,7 +42,29 @@ window.__ModuleLoader__.load({
     const POLL_ACTIVE_MS = 1000
     const POLL_IDLE_MS = 10000
     const RUN_LIST_LIMIT = 5
-    const PROJECT_LIST_LIMIT = 50
+    /**
+     * 作品库每页条数（批次 C 的分页）。
+     *
+     * 取 24 而不是宿主的默认 50：网格是 `minmax(180px,1fr)`，24 张刚好是常见宽度的
+     * 三到四屏，既不会让首屏一次拉 200 个项目，也让「加载更多」在真实数据量下够得着
+     * （50 条一页时，用户往往要攒到 50 个以上才第一次看到这个按钮）。
+     * 宿主侧 `limit` 上限仍是 200，客户端不越权。
+     */
+    const PROJECT_PAGE_SIZE = 24
+    /**
+     * 搜索防抖：输入即过滤，但**不是每敲一个字就发一次请求**。
+     * 250ms 是"打字停顿"与"像卡住了"之间的常见折中。
+     */
+    const SEARCH_DEBOUNCE_MS = 250
+
+    /** 列表排序的可选项（值必须与宿主 `PROJECT_SORTS` 的键一一对应）。 */
+    const PROJECT_SORT_OPTIONS = [
+      { value: 'createdAt:desc', label: '最新优先' },
+      { value: 'createdAt:asc', label: '最早优先' },
+      { value: 'name:asc', label: '名称 A→Z' },
+      { value: 'images:desc', label: '图片最多' },
+    ]
+    const DEFAULT_PROJECT_SORT = 'createdAt:desc'
 
     /** 相对挂载点解析基址，绝不写死根绝对路径。 */
     const BASE = (() => {
@@ -639,7 +661,9 @@ window.__ModuleLoader__.load({
     function TextInput(props) {
       return h('input', {
         type: props.type ?? 'text',
-        style: inputStyle,
+        // 类名只用于测试/样式挂钩，不影响行为
+        ...(isString(props.className) && props.className !== '' ? { className: props.className } : {}),
+        style: { ...inputStyle, ...(isObject(props.style) ? props.style : {}) },
         value: props.value ?? '',
         placeholder: props.placeholder,
         disabled: props.disabled === true,
@@ -655,7 +679,8 @@ window.__ModuleLoader__.load({
       return h(
         'select',
         {
-          style: inputStyle,
+          ...(isString(props.className) && props.className !== '' ? { className: props.className } : {}),
+          style: { ...inputStyle, ...(isObject(props.style) ? props.style : {}) },
           value: props.value ?? '',
           disabled: props.disabled === true,
           onChange: props.onChange,
@@ -696,6 +721,23 @@ window.__ModuleLoader__.load({
         return outcome
       }, [])
       return { busy, result, run }
+    }
+
+    /**
+     * 组件卸载标志。异步落地时先问一句，**卸载后不再 setState**。
+     *
+     * `useMutation` 里那份 `alive` 只覆盖"它自己发起的写操作"；作品库列表/查看器
+     * 的请求是散在 effect 与事件处理器里的，所以单独抽一个钩子复用。
+     */
+    function useAlive() {
+      const alive = React.useRef(true)
+      React.useEffect(
+        () => () => {
+          alive.current = false
+        },
+        [],
+      )
+      return alive
     }
 
     /** 把 `apiPost` 的返回统一成 `{ok, text}`。 */
@@ -1679,6 +1721,7 @@ window.__ModuleLoader__.load({
     function CopyPromptButton(props) {
       const prompt = isString(props.prompt) ? props.prompt : ''
       const [result, setResult] = React.useState(null)
+      const alive = useAlive()
 
       if (prompt === '') return null
 
@@ -1700,8 +1743,13 @@ window.__ModuleLoader__.load({
           return
         }
         pending.then(
-          () => setResult({ ok: true, error: null }),
-          (err) => setResult({ ok: false, error: err && err.message ? err.message : '复制被拒绝' }),
+          () => {
+            if (alive.current) setResult({ ok: true, error: null })
+          },
+          (err) => {
+            if (!alive.current) return
+            setResult({ ok: false, error: err && err.message ? err.message : '复制被拒绝' })
+          },
         )
       }
 
@@ -1768,64 +1816,334 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 项目卡片。
+     *
+     * 结构上是「外层定位容器 + 内层真按钮 + 右上角复选框」：
+     *   - 复选框**不能**放进按钮里（嵌套交互元素在 HTML 里非法，点击语义也会打架），
+     *     所以它是按钮的兄弟节点，点它不会顺带打开项目详情；
+     *   - 封面只加载**一张**（`cover`），并带 `loading="lazy"` + `decoding="async"`，
+     *     50+ 项目时首屏只为可视区域内的卡片取图。
+     */
     function ProjectCard(props) {
       const project = props.project
       const cover = fileUrl(project.id, project.cover)
+      const id = isString(project.id) ? project.id : ''
+      const name = String(project.name ?? project.id ?? '项目')
+      const selected = props.selected === true
       return h(
-        'button',
+        'div',
+        { className: 'pxm-tile-wrap', style: { position: 'relative' } },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: selected ? 'pxm-tile pxm-tile-selected' : 'pxm-tile',
+            onClick: () => props.onOpen(id),
+            style: {
+              font: 'inherit',
+              color: 'inherit',
+              textAlign: 'left',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '10px',
+              border: selected
+                ? '1px solid currentColor'
+                : '1px solid color-mix(in srgb, currentColor 16%, transparent)',
+              background: 'color-mix(in srgb, currentColor 4%, transparent)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              width: '100%',
+              boxSizing: 'border-box',
+            },
+          },
+          h(
+            'div',
+            {
+              style: {
+                aspectRatio: '4 / 3',
+                borderRadius: '6px',
+                overflow: 'hidden',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                fontSize: '12px',
+                opacity: 0.85,
+              },
+            },
+            cover === null
+              ? h('span', null, '无封面')
+              : h('img', {
+                  src: cover,
+                  alt: name + ' 的封面',
+                  loading: 'lazy',
+                  decoding: 'async',
+                  style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
+                }),
+          ),
+          h('span', { style: { fontSize: '13px', fontWeight: 600 } }, name),
+          h(
+            'span',
+            { style: { fontSize: '12px', opacity: 0.7 } },
+            String(project.imageCount ?? 0) + ' 张 · ' + String(project.provider ?? '—'),
+          ),
+          // 创建时间（第 1 批：卡片上补时间）
+          h(
+            'span',
+            { className: 'pxm-tile-time', style: { fontSize: '12px', opacity: 0.6 } },
+            formatDateTime(project.createdAt),
+          ),
+        ),
+        h(
+          'span',
+          {
+            style: {
+              position: 'absolute',
+              top: '12px',
+              right: '12px',
+              display: 'flex',
+              padding: '2px',
+              borderRadius: '6px',
+              background: 'color-mix(in srgb, currentColor 10%, transparent)',
+            },
+          },
+          h('input', {
+            type: 'checkbox',
+            className: 'pxm-select-box',
+            checked: selected,
+            disabled: id === '',
+            'aria-label': '选择项目 ' + name,
+            title: '选中后可批量导出 / 删除',
+            onChange: () => {
+              if (typeof props.onToggleSelect === 'function') props.onToggleSelect(id)
+            },
+            style: { margin: 0, cursor: 'pointer' },
+          }),
+        ),
+      )
+    }
+
+    /**
+     * 把详情里的 `items` 摊平成"一张图一条"的序列，供查看器左右切换。
+     *
+     * 为什么按**项目内全部图片**而不是按模块：用户点开一张图后按 → ，期待的是
+     * "看下一张"，而不是"卡在这个模块里出不去"。每个条目自带模块上下文
+     * （模块名 / 尺寸 / 模型 / 提示词），所以切到哪一张都说得清它是谁。
+     */
+    function buildViewerEntries(items) {
+      const entries = []
+      if (!isArray(items)) return entries
+      items.forEach((item, itemIndex) => {
+        const images = isArray(item?.images) ? item.images.filter(isString) : []
+        images.forEach((image, k) => {
+          entries.push({
+            itemIndex,
+            itemImageIndex: k,
+            itemImageCount: images.length,
+            image,
+            label: isString(item?.label) ? item.label : '',
+            module: isString(item?.module) ? item.module : '',
+            size: isString(item?.size) ? item.size : '',
+            model: isString(item?.model) ? item.model : '',
+            prompt: isString(item?.prompt) ? item.prompt : '',
+          })
+        })
+      })
+      return entries
+    }
+
+    /** 查看器里两张对比图之间的箭头。 */
+    const compareArrowStyle = {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: '18px',
+      opacity: 0.6,
+      flex: '0 0 auto',
+    }
+
+    /**
+     * 大图查看器（`position: fixed` 覆盖层，**不使用 `shell.overlay`**）。
+     *
+     * 为什么不用 `shell.overlay`：那个全局座位已经被「实时预览卡」占用，一个插件同一
+     * 座位注册两次会互相覆盖。查看器是作品库面板**内部**的模态层，用 fixed 定位即可。
+     *
+     * 交互：`Esc` 关闭、`←` `→` 在项目内的图片之间切换、多张时显示「3 / 8」。
+     * 「并排对比」只在**当前这张图所在模块有多张**时出现（只有 1 张时没有可对比的对象，
+     * 出现一个点了没反应的开关比不出现更糟）。
+     * 关闭后把焦点还给打开它的那张缩略图，并把滚动位置放回原处。
+     */
+    function ImageViewer(props) {
+      const entries = isArray(props.entries) ? props.entries : []
+      const projectId = isString(props.projectId) ? props.projectId : ''
+      const index = isNumber(props.index) ? props.index : 0
+      const entry = entries[index]
+      const canCompare = isObject(entry) && entry.itemImageCount > 1
+      const compare = props.compare === true && canCompare
+
+      React.useEffect(() => {
+        const doc = typeof document === 'undefined' ? null : document
+        if (doc === null) return undefined
+        const onKey = (event) => {
+          const key = event && event.key
+          if (key === 'Escape') {
+            event.preventDefault()
+            props.onClose()
+            return
+          }
+          if (key === 'ArrowLeft') {
+            event.preventDefault()
+            props.onStep(-1)
+            return
+          }
+          if (key === 'ArrowRight') {
+            event.preventDefault()
+            props.onStep(1)
+          }
+        }
+        doc.addEventListener('keydown', onKey)
+        return () => doc.removeEventListener('keydown', onKey)
+      })
+
+      if (!isObject(entry)) return null
+
+      const url = fileUrl(projectId, entry.image)
+      // 对比对象：先看同一模块的下一张，没有了就退回上一张（"同一模块出现多张"的唯一场景）。
+      const itemEntries = entries.filter((other) => other.itemIndex === entry.itemIndex)
+      const pairIndex = entry.itemImageIndex + 1 < itemEntries.length
+        ? entry.itemImageIndex + 1
+        : entry.itemImageIndex - 1
+      const pair = compare ? itemEntries[pairIndex] : null
+      const pairUrl = isObject(pair) ? fileUrl(projectId, pair.image) : null
+
+      const stage = (source, altText) =>
+        source === null
+          ? h('span', { style: skin.muted }, '这张图取不到地址')
+          : h('img', {
+              src: source,
+              alt: altText,
+              decoding: 'async',
+              className: 'pxm-viewer-img',
+              style: {
+                maxWidth: '100%',
+                maxHeight: '62vh',
+                objectFit: 'contain',
+                display: 'block',
+                borderRadius: '8px',
+                background: 'color-mix(in srgb, currentColor 6%, transparent)',
+              },
+            })
+
+      return h(
+        'div',
         {
-          type: 'button',
-          className: 'pxm-tile',
-          onClick: () => props.onOpen(project.id),
+          className: 'pxm-viewer',
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': '图片查看器',
           style: {
-            font: 'inherit',
-            color: 'inherit',
-            textAlign: 'left',
-            cursor: 'pointer',
-            padding: '8px',
-            borderRadius: '10px',
-            border: '1px solid color-mix(in srgb, currentColor 16%, transparent)',
-            background: 'color-mix(in srgb, currentColor 4%, transparent)',
+            position: 'fixed',
+            inset: 0,
+            zIndex: 60,
             display: 'flex',
             flexDirection: 'column',
-            gap: '8px',
+            gap: '10px',
+            padding: '16px',
+            overflow: 'auto',
+            color: 'inherit',
+            background: 'color-mix(in srgb, Canvas 92%, transparent)',
+            backdropFilter: 'blur(2px)',
           },
         },
         h(
           'div',
+          { style: { ...skin.row, justifyContent: 'space-between' } },
+          h(
+            'div',
+            { style: skin.row },
+            h('strong', { style: { fontSize: '13px' } }, entry.label || entry.module || '产出图'),
+            isString(entry.module) && entry.module !== '' ? h('code', { style: skin.code }, entry.module) : null,
+            entries.length > 1
+              ? h(Pill, { key: 'pos' }, String(index + 1) + ' / ' + String(entries.length))
+              : null,
+          ),
+          h(
+            'div',
+            { style: skin.row },
+            canCompare
+              ? h(
+                  'label',
+                  {
+                    className: 'pxm-compare-toggle',
+                    style: { ...skin.row, gap: '4px', fontSize: '12px', cursor: 'pointer' },
+                  },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: compare,
+                    onChange: () => props.onToggleCompare(!compare),
+                    style: { margin: 0, cursor: 'pointer' },
+                  }),
+                  '并排对比',
+                )
+              : null,
+            h(Btn, { className: 'pxm-viewer-close', onClick: props.onClose }, '关闭'),
+          ),
+        ),
+        h(
+          'div',
           {
             style: {
-              aspectRatio: '4 / 3',
-              borderRadius: '6px',
-              overflow: 'hidden',
               display: 'flex',
+              gap: '10px',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'color-mix(in srgb, currentColor 6%, transparent)',
-              fontSize: '12px',
-              opacity: 0.85,
+              flexWrap: 'wrap',
             },
           },
-          cover === null
-            ? h('span', null, '无封面')
-            : h('img', {
-                src: cover,
-                alt: String(project.name ?? '项目封面'),
-                loading: 'lazy',
-                style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
-              }),
+          h(Btn, { className: 'pxm-viewer-prev', onClick: () => props.onStep(-1), disabled: entries.length < 2 }, '← 上一张'),
+          pair === null
+            ? stage(url, entry.label || '产出图')
+            : h(
+                'div',
+                {
+                  className: 'pxm-compare-pair',
+                  style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' },
+                },
+                stage(url, entry.label || '产出图'),
+                h('span', { style: compareArrowStyle }, '↔'),
+                stage(pairUrl, entry.label || '对比图'),
+              ),
+          h(Btn, { className: 'pxm-viewer-next', onClick: () => props.onStep(1), disabled: entries.length < 2 }, '下一张 →'),
         ),
-        h('span', { style: { fontSize: '13px', fontWeight: 600 } }, String(project.name ?? project.id)),
         h(
-          'span',
-          { style: { fontSize: '12px', opacity: 0.7 } },
-          String(project.imageCount ?? 0) + ' 张 · ' + String(project.provider ?? '—'),
-        ),
-        // 创建时间（第 1 批：卡片上补时间）
-        h(
-          'span',
-          { className: 'pxm-tile-time', style: { fontSize: '12px', opacity: 0.6 } },
-          formatDateTime(project.createdAt),
+          'div',
+          { style: { ...skin.card, maxWidth: '760px', margin: '0 auto', width: '100%', boxSizing: 'border-box' } },
+          h(MetaRow, { label: '尺寸' }, entry.size === '' ? '—' : entry.size),
+          h(MetaRow, { label: '模型' }, entry.model === '' ? '—' : entry.model),
+          h(MetaRow, { label: '模块' }, entry.module === '' ? '—' : entry.module),
+          h('span', { style: skin.key }, '提示词'),
+          entry.prompt === ''
+            ? h('p', { style: skin.muted }, '这个模块没有留下提示词。')
+            : h(
+                'p',
+                {
+                  className: 'pxm-viewer-prompt',
+                  style: {
+                    margin: 0,
+                    fontSize: '12px',
+                    lineHeight: 1.7,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    padding: '6px 8px',
+                    borderRadius: '6px',
+                    background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                  },
+                },
+                entry.prompt,
+              ),
+          h(CopyPromptButton, { prompt: entry.prompt }),
         ),
       )
     }
@@ -1845,9 +2163,23 @@ window.__ModuleLoader__.load({
       const projectId = isObject(project) && isString(project.id) ? project.id : ''
       const [action, setAction] = React.useState({ busy: null, error: null, note: null })
       const [confirming, setConfirming] = React.useState(false)
+      /** 重命名的内联编辑：`null` = 没在改名。 */
+      const [nameDraft, setNameDraft] = React.useState(null)
+      const alive = useAlive()
 
       const busy = action.busy
       const exportDir = isString(props.exportDir) ? props.exportDir : ''
+
+      /**
+       * 每个模块的第一张图在"项目内图片序列"里的下标。
+       * 与查看器用的 `buildViewerEntries` 同一口径（按 items 顺序、跳过非字符串）。
+       */
+      const itemImageOffsets = []
+      let flatCount = 0
+      items.forEach((item) => {
+        itemImageOffsets.push(flatCount)
+        flatCount += isArray(item?.images) ? item.images.filter(isString).length : 0
+      })
 
       const onExport = () => {
         if (projectId === '' || busy !== null) return
@@ -1884,6 +2216,7 @@ window.__ModuleLoader__.load({
         setAction({ busy: 'delete', error: null, note: null })
         apiPost('api/projects/' + encodeURIComponent(projectId) + '/delete', { confirm: true }).then(
           (result) => {
+            if (!alive.current) return
             if (result.ok !== true) {
               setAction({ busy: null, error: result.error, note: null })
               return
@@ -1893,6 +2226,30 @@ window.__ModuleLoader__.load({
             if (typeof props.onDeleted === 'function') props.onDeleted(projectId)
           },
         )
+      }
+
+      /**
+       * 重命名：只改**显示名**。
+       *
+       * 目录名（= 项目 id）不动——这是宿主侧的硬约束，客户端这边表现为
+       * "改完之后图片还看得见"（因为 `/pixmart/file/<id>/<name>` 里的 id 没变）。
+       * 成功后重取详情与列表，让新名字立刻出现在两处。
+       */
+      const onRename = () => {
+        if (projectId === '' || busy !== null || nameDraft === null) return
+        const name = nameDraft.trim()
+        if (name === '') return
+        setAction({ busy: 'rename', error: null, note: null })
+        apiPost('api/projects/' + encodeURIComponent(projectId) + '/rename', { name }).then((result) => {
+          if (!alive.current) return
+          if (result.ok !== true) {
+            setAction({ busy: null, error: explainProjectActionError(result.code, result.error), note: null })
+            return
+          }
+          setNameDraft(null)
+          setAction({ busy: null, error: null, note: '已重命名为「' + name + '」' })
+          if (typeof props.onRenamed === 'function') props.onRenamed(projectId)
+        })
       }
 
       return h(
@@ -1934,13 +2291,52 @@ window.__ModuleLoader__.load({
               h(
                 Btn,
                 {
+                  className: 'pxm-rename-btn',
+                  onClick: () => {
+                    setNameDraft(isString(project?.name) ? project.name : '')
+                    setAction({ busy: null, error: null, note: null })
+                  },
+                  disabled: busy !== null || projectId === '' || nameDraft !== null || confirming,
+                  title: '只改显示名；项目目录（= 项目 id）不动，图片链接因此不会失效',
+                },
+                '重命名',
+              ),
+              h(
+                Btn,
+                {
                   className: 'pxm-delete-btn',
                   onClick: () => setConfirming(true),
-                  disabled: busy !== null || projectId === '' || confirming,
+                  disabled: busy !== null || projectId === '' || confirming || nameDraft !== null,
                   title: '移入回收站，可恢复',
                 },
                 '删除项目',
               ),
+            )
+          : null,
+        state.phase === 'ready' && nameDraft !== null
+          ? h(
+              'div',
+              { className: 'pxm-rename-row', style: { ...skin.row, alignItems: 'flex-end' } },
+              h(
+                Field,
+                { label: '项目名（只改显示名，不移动目录）', style: { flex: '1 1 240px' } },
+                h(TextInput, {
+                  value: nameDraft,
+                  onChange: (event) => setNameDraft(event.target.value),
+                  disabled: busy !== null,
+                  placeholder: '例如：2026 秋季主图',
+                }),
+              ),
+              h(
+                Btn,
+                {
+                  className: 'pxm-rename-save',
+                  onClick: onRename,
+                  disabled: busy !== null || nameDraft.trim() === '',
+                },
+                busy === 'rename' ? '保存中…' : '保存',
+              ),
+              h(Btn, { onClick: () => setNameDraft(null), disabled: busy !== null }, '取消'),
             )
           : null,
         state.phase === 'ready' && confirming
@@ -2069,22 +2465,47 @@ window.__ModuleLoader__.load({
                       },
                       images.map((imageName, ii) => {
                         const url = fileUrl(projectId, imageName)
+                        // 摊平下标：查看器在**项目内所有图片**之间左右切换，
+                        // 所以这里要把"第几个模块的第几张"换算成全局序号。
+                        const flatIndex = itemImageOffsets[index] + ii
                         return url === null
                           ? null
-                          : h('img', {
-                              key: 'i' + String(ii),
-                              src: url,
-                              alt: String(item?.label ?? '产出图'),
-                              loading: 'lazy',
-                              style: {
-                                width: '100%',
-                                aspectRatio: '1 / 1',
-                                objectFit: 'cover',
-                                borderRadius: '6px',
-                                display: 'block',
-                                background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                          : h(
+                              'button',
+                              {
+                                key: 'i' + String(ii),
+                                type: 'button',
+                                className: 'pxm-thumb',
+                                title: '点开看原图（Esc 关闭，← → 切换）',
+                                onClick: (event) => {
+                                  if (typeof props.onOpenImage === 'function') {
+                                    props.onOpenImage(flatIndex, event.currentTarget)
+                                  }
+                                },
+                                style: {
+                                  padding: 0,
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'zoom-in',
+                                  display: 'block',
+                                  width: '100%',
+                                },
                               },
-                            })
+                              h('img', {
+                                src: url,
+                                alt: String(item?.label ?? '产出图'),
+                                loading: 'lazy',
+                                decoding: 'async',
+                                style: {
+                                  width: '100%',
+                                  aspectRatio: '1 / 1',
+                                  objectFit: 'cover',
+                                  borderRadius: '6px',
+                                  display: 'block',
+                                  background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                                },
+                              }),
+                            )
                       }),
                     )
                   : h('p', { style: skin.muted }, '这个模块没有产出图片。'),
@@ -2104,6 +2525,7 @@ window.__ModuleLoader__.load({
       const state = props.state
       const [action, setAction] = React.useState({ busy: null, error: null, note: null })
       const [confirming, setConfirming] = React.useState(false)
+      const alive = useAlive()
       const entries =
         state.phase === 'ready' && isObject(state.data) && isArray(state.data.trash)
           ? state.data.trash.filter(isObject)
@@ -2114,6 +2536,7 @@ window.__ModuleLoader__.load({
         if (busy !== null) return
         setAction({ busy: id, error: null, note: null })
         apiPost('api/trash/' + encodeURIComponent(id) + '/restore', {}).then((result) => {
+          if (!alive.current) return
           if (result.ok !== true) {
             setAction({ busy: null, error: result.error, note: null })
             return
@@ -2127,6 +2550,7 @@ window.__ModuleLoader__.load({
         if (busy !== null) return
         setAction({ busy: 'purge', error: null, note: null })
         apiPost('api/trash/purge', { confirm: true }).then((result) => {
+          if (!alive.current) return
           if (result.ok !== true) {
             setAction({ busy: null, error: result.error, note: null })
             return
@@ -2239,37 +2663,155 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 「还有更多吗」。
+     *
+     * 以宿主的 `hasMore` 为准；老宿主只回了 `total`（或者根本没回）时**按 total 推算**，
+     * 免得界面上出现"显示 24 / 共 55 却没有加载更多"这种自相矛盾的状态。
+     */
+    function hasMoreOf(data, offset, pageLength) {
+      if (data.hasMore === true) return true
+      if (data.hasMore === false) return false
+      return isNumber(data.total) ? offset + pageLength < data.total : false
+    }
+
+    /**
+     * 从某个元素往上找第一个"真的能滚"的祖先（查看器关闭时要把滚动位置放回去）。
+     *
+     * 覆盖层是 `position: fixed`，不锁 body 滚动，所以这里只是把打开前的
+     * 滚动偏移记下来、关闭时复原；找不到滚动祖先就只复原 window 的滚动。
+     */
+    function scrollParentOf(element) {
+      let node = isObject(element) ? element.parentElement : null
+      while (node !== null && node !== undefined) {
+        if (node.scrollHeight > node.clientHeight && node.clientHeight > 0) return node
+        node = node.parentElement
+      }
+      return null
+    }
+
     function WorkbenchPanel() {
       const selected = useStore(selectedProject)
-      const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
+      /**
+       * 列表状态。批次 C 起带分页：`projects` 是**已加载**的累计列表，
+       * `total` 是宿主报的过滤后总数，`hasMore` 决定「加载更多」出不出现。
+       */
+      const [list, setList] = React.useState({
+        phase: 'loading',
+        projects: [],
+        total: 0,
+        hasMore: false,
+        error: null,
+      })
+      /** 搜索框里的原始输入（每敲一个字都变）与防抖后的实际查询词。 */
+      const [query, setQuery] = React.useState('')
+      const [debounced, setDebounced] = React.useState('')
+      const [sort, setSort] = React.useState(DEFAULT_PROJECT_SORT)
+      /** 多选：数组（而非 Set）以便稳定顺序与直接渲染计数。 */
+      const [selectedIds, setSelectedIds] = React.useState([])
+      const [batch, setBatch] = React.useState({ busy: null, error: null, note: null })
+      const [confirmingBatch, setConfirmingBatch] = React.useState(false)
       const [detail, setDetail] = React.useState({ phase: 'idle', data: null, error: null })
+      /** 详情重取令牌：重命名成功后要强制刷新详情（`selected` 没变，effect 不会自己跑）。 */
+      const [detailToken, setDetailToken] = React.useState(0)
       const [trash, setTrash] = React.useState({ phase: 'idle', data: null, error: null })
       const [showTrash, setShowTrash] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
       /** 配置里的作品库导出路径；空串 = 未配置（导出时宿主会回 400 并给出指引）。 */
       const [exportDir, setExportDir] = React.useState('')
+      /** 查看器：`null` = 关着；`{index, compare}` = 开着第 index 张（0 基）。 */
+      const [viewer, setViewer] = React.useState(null)
 
-      const loadList = React.useCallback(
-        () =>
-          apiGet('api/projects?limit=' + String(PROJECT_LIST_LIMIT), isProjectList).then((result) => {
-            if (result.ok) setState({ phase: 'ready', data: result.data, error: null })
-            else setState({ phase: 'error', data: null, error: result.error })
-          }),
-        [],
-      )
+      const alive = useAlive()
+      const listRef = React.useRef(list)
+      React.useEffect(() => {
+        listRef.current = list
+      }, [list])
+      /** 请求序号：搜索/排序连打时，只有最新那次的结果允许落地（旧响应直接丢）。 */
+      const requestSeq = React.useRef(0)
+      /** 打开查看器前的现场（滚动位置 + 焦点元素），关闭时复原。 */
+      const viewerReturn = React.useRef(null)
 
       const loadTrash = React.useCallback(
         () =>
           apiGet('api/trash', isTrashList).then((result) => {
+            if (!alive.current) return
             if (result.ok) setTrash({ phase: 'ready', data: result.data, error: null })
             else setTrash({ phase: 'error', data: null, error: result.error })
           }),
-        [],
+        [alive],
       )
 
+      /**
+       * 取一页项目。
+       *
+       * `append` 为真时**追加**（「加载更多」），否则**替换**（搜索/排序/刷新/删除后）。
+       * URL 里始终带 `sort`，搜索词非空时带 `q`；`offset` 取已加载条数
+       * ——不用另一份计数器，避免"显示的条数"和"请求的偏移"两处各说各话。
+       */
+      const loadProjects = React.useCallback(
+        (append) => {
+          const offset = append ? listRef.current.projects.length : 0
+          const seq = requestSeq.current + 1
+          requestSeq.current = seq
+          setList((prev) =>
+            append
+              ? { ...prev, phase: 'loading-more', error: null }
+              : { phase: 'loading', projects: [], total: 0, hasMore: false, error: null },
+          )
+          const url =
+            'api/projects?limit=' +
+            String(PROJECT_PAGE_SIZE) +
+            '&offset=' +
+            String(offset) +
+            '&sort=' +
+            encodeURIComponent(sort) +
+            (debounced === '' ? '' : '&q=' + encodeURIComponent(debounced))
+          return apiGet(url, isProjectList).then((result) => {
+            if (!alive.current || seq !== requestSeq.current) return
+            if (!result.ok) {
+              // 失败时**保留**已加载的项目：一次"加载更多"失败不该把整页清空。
+              setList((prev) => ({ ...prev, phase: 'error', error: result.error }))
+              return
+            }
+            const data = isObject(result.data) ? result.data : {}
+            const page = isArray(data.projects) ? data.projects.filter(isObject) : []
+            setList((prev) => ({
+              phase: 'ready',
+              projects: append ? [...prev.projects, ...page] : page,
+              // 宿主没报 total 时的退化口径：就当这一页就是全部（不谎报更多）。
+              total: isNumber(data.total) ? data.total : page.length,
+              hasMore: hasMoreOf(data, offset, page.length),
+              error: null,
+            }))
+          })
+        },
+        [alive, debounced, sort],
+      )
+
+      /**
+       * 搜索防抖：输入即过滤，但**不是每敲一个字就发一次请求**。
+       * 清空按钮走同一条路（等 250ms），免得"清空"和"打字"两套时序互相打架。
+       */
       React.useEffect(() => {
-        loadList()
-      }, [loadList])
+        if (query === debounced) return undefined
+        const timer = setTimeout(() => setDebounced(query), SEARCH_DEBOUNCE_MS)
+        return () => clearTimeout(timer)
+      }, [query, debounced])
+
+      /**
+       * 搜索词或排序变化 → **回到第一页**并清空多选。
+       *
+       * 为什么必须清多选：选中集是"当时看到的那一批"。换了筛选条件还留着上一批的选中项，
+       * 「已选 3」里可能有两个已经不在屏幕上了——用户接下来点的「删除选中」会删掉他
+       * 根本看不见的东西，这是最危险的一类界面状态。
+       */
+      React.useEffect(() => {
+        setSelectedIds([])
+        setConfirmingBatch(false)
+        setViewer(null)
+        loadProjects(false)
+      }, [loadProjects])
 
       /**
        * 详情里要显示"导出会落到哪"，因此顺手把配置里的「作品库导出路径」取回来。
@@ -2278,13 +2820,13 @@ window.__ModuleLoader__.load({
        * （`no_export_dir`），界面再把它翻成"先去设置里配"。界面**不猜**任何默认路径。
        */
       React.useEffect(() => {
-        let alive = true
+        let live = true
         apiGet('api/providers', isProviders).then((result) => {
-          if (!alive || !result.ok) return
+          if (!live || !result.ok) return
           setExportDir(isString(result.data.exportDir) ? result.data.exportDir : '')
         })
         return () => {
-          alive = false
+          live = false
         }
       }, [])
 
@@ -2293,17 +2835,179 @@ window.__ModuleLoader__.load({
           setDetail({ phase: 'idle', data: null, error: null })
           return undefined
         }
-        let alive = true
+        let live = true
         setDetail({ phase: 'loading', data: null, error: null })
         apiGet('api/projects/' + encodeURIComponent(selected), isProjectDetail).then((result) => {
-          if (!alive) return
+          if (!live) return
           if (result.ok) setDetail({ phase: 'ready', data: result.data.project, error: null })
           else setDetail({ phase: 'error', data: null, error: result.error })
         })
         return () => {
-          alive = false
+          live = false
         }
-      }, [selected])
+      }, [selected, detailToken])
+
+      // ── 查看器 ────────────────────────────────────────────────────────────
+
+      /** 摊平项目内的图片；`detail` 一变就重算。 */
+      const viewerEntries = React.useMemo(
+        () => buildViewerEntries(isObject(detail.data) && isArray(detail.data.items) ? detail.data.items : []),
+        [detail],
+      )
+
+      const openViewer = (index, element) => {
+        const doc = typeof document === 'undefined' ? null : document
+        const container = scrollParentOf(element)
+        viewerReturn.current = {
+          element: element ?? null,
+          focus: doc === null ? null : doc.activeElement,
+          scrollX: typeof window === 'undefined' ? 0 : window.scrollX,
+          scrollY: typeof window === 'undefined' ? 0 : window.scrollY,
+          container: container === null ? null : container,
+          top: container === null ? 0 : container.scrollTop,
+        }
+        setViewer({ index, compare: false })
+      }
+
+      /**
+       * 关闭查看器：撤掉覆盖层，再把滚动位置与焦点**放回原处**。
+       * 复原用 try/catch 包住——某些环境里 `window.scrollTo` 会抛，
+       * 那不该让"关闭"这个动作本身失败。
+       */
+      const closeViewer = () => {
+        setViewer(null)
+        const saved = viewerReturn.current
+        viewerReturn.current = null
+        if (saved === null) return
+        try {
+          if (saved.container !== null) saved.container.scrollTop = saved.top
+          // 只在真的动过的时候才调：jsdom 里 `scrollTo` 是"未实现"的（会刷一条噪声），
+          // 而真实浏览器里 0 位移也本来就没什么可复原的。
+          if (
+            typeof window !== 'undefined' &&
+            typeof window.scrollTo === 'function' &&
+            (saved.scrollX !== window.scrollX || saved.scrollY !== window.scrollY)
+          ) {
+            window.scrollTo(saved.scrollX, saved.scrollY)
+          }
+          const target = saved.element ?? saved.focus
+          if (target !== null && target !== undefined && typeof target.focus === 'function') {
+            target.focus()
+          }
+        } catch {
+          /* 恢复现场失败不影响"已经关掉"这个事实 */
+        }
+      }
+
+      /** 在一个项目内的图片之间循环切换（越界回绕，看最后一张时按 → 回到第一张）。 */
+      const stepViewer = (delta) => {
+        const count = viewerEntries.length
+        if (count === 0) return
+        setViewer((prev) => {
+          if (prev === null) return prev
+          const next = (prev.index + delta + count) % count
+          return { ...prev, index: next }
+        })
+      }
+
+      // ── 多选批量操作 ──────────────────────────────────────────────────────
+
+      const toggleSelect = (id) => {
+        if (id === '') return
+        setSelectedIds((prev) =>
+          prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+        )
+      }
+
+      /**
+       * 批量删除：逐个走**软删**路由（`POST /projects/<id>/delete` + `confirm: true`）。
+       * 一项失败不影响其余项，失败的 id 与原因在面板里逐条显示。
+       */
+      const runBatchDelete = () => {
+        const ids = selectedIds.slice()
+        if (ids.length === 0 || batch.busy !== null) return
+        setBatch({ busy: 'delete', error: null, note: null })
+        const run = async () => {
+          const failures = []
+          for (const id of ids) {
+            const result = await apiPost('api/projects/' + encodeURIComponent(id) + '/delete', {
+              confirm: true,
+            })
+            if (result.ok !== true) failures.push(id + '：' + String(result.error ?? '删除失败'))
+          }
+          if (!alive.current) return
+          setConfirmingBatch(false)
+          setSelectedIds([])
+          if (failures.length > 0) {
+            setBatch({
+              busy: null,
+              error: '有 ' + String(failures.length) + ' 个项目没能移入回收站：' + failures.join('；'),
+              note: null,
+            })
+          } else {
+            setBatch({
+              busy: null,
+              error: null,
+              note: '已把 ' + String(ids.length) + ' 个项目移入回收站，可在「回收站」里恢复。',
+            })
+          }
+          loadProjects(false)
+        }
+        run()
+      }
+
+      /**
+       * 批量导出：落点用配置里的「作品库导出路径」。
+       *
+       * 没配置时**不发那一串注定失败的请求**，直接把"先去设置里填"显示出来
+       * ——这正是"不静默失败"的要求（发 N 个 400 再把同样的文案显示 N 次
+       * 只是把同一件事说得更吵）。
+       */
+      const runBatchExport = () => {
+        const ids = selectedIds.slice()
+        if (ids.length === 0 || batch.busy !== null) return
+        if (exportDir === '') {
+          setBatch({ busy: null, error: explainProjectActionError('no_export_dir', ''), note: null })
+          return
+        }
+        setBatch({ busy: 'export', error: null, note: null })
+        const run = async () => {
+          const failures = []
+          let files = 0
+          for (const id of ids) {
+            const result = await apiPost('api/projects/' + encodeURIComponent(id) + '/export', {
+              dir: exportDir,
+            })
+            if (result.ok !== true) {
+              failures.push(id + '：' + explainProjectActionError(result.code, result.error))
+              continue
+            }
+            const data = isObject(result.data) ? result.data : {}
+            files += isNumber(data.count) ? data.count : 0
+          }
+          if (!alive.current) return
+          if (failures.length > 0) {
+            setBatch({
+              busy: null,
+              error: '有 ' + String(failures.length) + ' 个项目没导出成功：' + failures.join('；'),
+              note: null,
+            })
+          } else {
+            setBatch({
+              busy: null,
+              error: null,
+              note:
+                '已导出 ' +
+                String(ids.length) +
+                ' 个项目（' +
+                String(files) +
+                ' 个文件）到 ' +
+                exportDir,
+            })
+          }
+        }
+        run()
+      }
 
       const header = h(
         'div',
@@ -2320,9 +3024,10 @@ window.__ModuleLoader__.load({
                 setNotice(null)
                 if (showTrash) {
                   setShowTrash(false)
-                  loadList()
+                  loadProjects(false)
                 } else {
                   selectedProject.set(null)
+                  setViewer(null)
                   setShowTrash(true)
                   setTrash({ phase: 'loading', data: null, error: null })
                   loadTrash()
@@ -2337,7 +3042,7 @@ window.__ModuleLoader__.load({
               onClick: () => {
                 setNotice(null)
                 if (showTrash) loadTrash()
-                else loadList()
+                else loadProjects(false)
               },
             },
             '刷新',
@@ -2354,12 +3059,12 @@ window.__ModuleLoader__.load({
             state: trash,
             onBack: () => {
               setShowTrash(false)
-              loadList()
+              loadProjects(false)
             },
             onReload: loadTrash,
             onChanged: () => {
               loadTrash()
-              loadList()
+              loadProjects(false)
             },
           }),
         )
@@ -2373,38 +3078,215 @@ window.__ModuleLoader__.load({
           h(ProjectDetail, {
             state: detail,
             exportDir,
-            onBack: () => selectedProject.set(null),
+            onBack: () => {
+              setViewer(null)
+              selectedProject.set(null)
+            },
+            onOpenImage: openViewer,
+            onRenamed: () => {
+              // 显示名变了：详情要重取，列表也要重取（搜索按名字匹配，改名会影响命中）。
+              setDetailToken((token) => token + 1)
+              loadProjects(false)
+            },
             onDeleted: (id) => {
+              setViewer(null)
               selectedProject.set(null)
               setNotice('已把「' + id + '」移入回收站，可在「回收站」里恢复。')
-              loadList()
+              loadProjects(false)
             },
           }),
+          viewer === null
+            ? null
+            : h(ImageViewer, {
+                entries: viewerEntries,
+                index: viewer.index,
+                compare: viewer.compare === true,
+                projectId: isObject(detail.data) && isString(detail.data.id) ? detail.data.id : '',
+                onClose: closeViewer,
+                onStep: stepViewer,
+                onToggleCompare: (next) =>
+                  setViewer((prev) => (prev === null ? prev : { ...prev, compare: next })),
+              }),
         )
       }
 
-      const projects = state.phase === 'ready' ? state.data.projects.filter(isObject) : []
+      const projects = list.projects
+      const selectedSet = new Set(selectedIds)
+      const selectedCount = projects.filter((project) => selectedSet.has(String(project.id))).length
+      const shown = projects.length
+      const total = isNumber(list.total) ? list.total : shown
 
       return h(
         'div',
         { style: skin.wrap },
         header,
         notice === null ? null : h(Notice, { role: 'status', title: '已删除', detail: notice }),
-        state.phase === 'loading' ? h(LoadingRow, { text: '正在读取项目列表…' }) : null,
-        state.phase === 'error'
+        // ── 搜索 + 排序（批次 C） ─────────────────────────────────────────────
+        h(
+          'div',
+          { style: { ...skin.row, alignItems: 'flex-end' } },
+          h(
+            Field,
+            { label: '搜索（项目名 / 模块名）', style: { flex: '1 1 220px' } },
+            h(
+              'div',
+              { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+              h(TextInput, {
+                className: 'pxm-search',
+                value: query,
+                placeholder: '例如：白底 / main.white-bg',
+                onChange: (event) => setQuery(event.target.value),
+              }),
+              query === ''
+                ? null
+                : h(
+                    Btn,
+                    {
+                      className: 'pxm-search-clear',
+                      onClick: () => {
+                        setQuery('')
+                        setDebounced('')
+                      },
+                      title: '清空搜索',
+                    },
+                    '清空',
+                  ),
+            ),
+          ),
+          h(
+            Field,
+            { label: '排序', style: { flex: '0 0 160px' } },
+            h(Select, {
+              className: 'pxm-sort',
+              value: sort,
+              options: PROJECT_SORT_OPTIONS,
+              onChange: (event) => setSort(event.target.value),
+            }),
+          ),
+        ),
+        // ── 计数 + 选择范围 ──────────────────────────────────────────────────
+        h(
+          'div',
+          { className: 'pxm-list-bar', style: { ...skin.row, justifyContent: 'space-between' } },
+          h(
+            'span',
+            { className: 'pxm-count', style: { fontSize: '12px', opacity: 0.72 } },
+            '显示 ' + String(shown) + ' / 共 ' + String(total),
+          ),
+          projects.length === 0
+            ? null
+            : h(
+                'div',
+                { className: 'pxm-select-range', style: skin.row },
+                h(
+                  Btn,
+                  {
+                    className: 'pxm-select-all',
+                    onClick: () => setSelectedIds(projects.map((project) => String(project.id))),
+                    disabled: batch.busy !== null,
+                    title: '只作用于当前筛选结果里已加载的项目',
+                  },
+                  '全选（当前 ' + String(shown) + ' 个）',
+                ),
+                h(
+                  Btn,
+                  {
+                    className: 'pxm-select-none',
+                    onClick: () => {
+                      setSelectedIds([])
+                      setConfirmingBatch(false)
+                    },
+                    disabled: batch.busy !== null || selectedCount === 0,
+                  },
+                  '取消全选',
+                ),
+              ),
+        ),
+        // ── 选中后才出现的工具条 ─────────────────────────────────────────────
+        selectedCount === 0
+          ? null
+          : h(
+              'div',
+              { className: 'pxm-select-toolbar', style: skin.row },
+              h('span', { className: 'pxm-selected-count', style: { fontSize: '12px' } }, '已选 ' + String(selectedCount)),
+              h(
+                'span',
+                { className: 'pxm-batch-actions', style: skin.row },
+                h(
+                  Btn,
+                  {
+                    className: 'pxm-batch-export',
+                    onClick: runBatchExport,
+                    disabled: batch.busy !== null,
+                    title:
+                      exportDir === ''
+                        ? '尚未配置「作品库导出路径」，请先到设置里填'
+                        : '复制到 ' + exportDir + '/<项目 id>/，原件不动',
+                  },
+                  batch.busy === 'export' ? '导出中…' : '导出选中',
+                ),
+                h(
+                  Btn,
+                  {
+                    className: 'pxm-batch-delete',
+                    onClick: () => setConfirmingBatch(true),
+                    disabled: batch.busy !== null || confirmingBatch,
+                    title: '移入回收站，可恢复',
+                  },
+                  '删除选中',
+                ),
+              ),
+            ),
+        confirmingBatch
           ? h(
               Notice,
-              { role: 'alert', title: '读取作品库失败', detail: state.error },
-              h(Btn, { onClick: () => loadList() }, '重试'),
+              {
+                role: 'alert',
+                title: '确认删除选中的 ' + String(selectedCount) + ' 个项目？',
+                detail:
+                  '这些项目会**移入回收站**（projects/.trash），之后仍可恢复；' +
+                  '清空回收站才会真正从磁盘删除。',
+              },
+              h(
+                'div',
+                { style: skin.row },
+                h(
+                  Btn,
+                  {
+                    className: 'pxm-confirm-batch-delete',
+                    onClick: runBatchDelete,
+                    disabled: batch.busy !== null,
+                  },
+                  batch.busy === 'delete' ? '删除中…' : '确认删除选中',
+                ),
+                h(Btn, { onClick: () => setConfirmingBatch(false), disabled: batch.busy !== null }, '取消'),
+              ),
             )
           : null,
-        state.phase === 'ready' && projects.length === 0
+        batch.error !== null && batch.error !== undefined
+          ? h(Notice, { role: 'alert', title: '批量操作失败', detail: batch.error })
+          : null,
+        batch.note !== null && batch.note !== undefined
+          ? h(Notice, { role: 'status', title: '已完成', detail: batch.note })
+          : null,
+        list.phase === 'loading' ? h(LoadingRow, { text: '正在读取项目列表…' }) : null,
+        list.phase === 'error'
+          ? h(
+              Notice,
+              { role: 'alert', title: '读取作品库失败', detail: list.error },
+              h(Btn, { onClick: () => loadProjects(false) }, '重试'),
+            )
+          : null,
+        list.phase === 'ready' && shown === 0
           ? h(Notice, {
-              title: '还没有作品',
-              detail: '用 pixmart_generate / pixmart_batch 生成后会出现在这里。',
+              title: query === '' ? '还没有作品' : '没有匹配的项目',
+              detail:
+                query === ''
+                  ? '用 pixmart_generate / pixmart_batch 生成后会出现在这里。'
+                  : '换个关键词试试；搜索匹配项目名与模块名（不区分大小写）。',
             })
           : null,
-        state.phase === 'ready' && projects.length > 0
+        projects.length > 0
           ? h(
               'div',
               {
@@ -2418,11 +3300,31 @@ window.__ModuleLoader__.load({
                 h(ProjectCard, {
                   key: String(project.id),
                   project,
+                  selected: selectedSet.has(String(project.id)),
+                  onToggleSelect: toggleSelect,
                   onOpen: (id) => {
                     setNotice(null)
+                    setBatch({ busy: null, error: null, note: null })
                     selectedProject.set(id)
                   },
                 }),
+              ),
+            )
+          : null,
+        list.hasMore === true
+          ? h(
+              'div',
+              { style: { display: 'flex', justifyContent: 'center' } },
+              h(
+                Btn,
+                {
+                  className: 'pxm-load-more',
+                  onClick: () => loadProjects(true),
+                  disabled: list.phase === 'loading-more',
+                },
+                list.phase === 'loading-more'
+                  ? '加载中…'
+                  : '加载更多（还有 ' + String(Math.max(0, total - shown)) + ' 个）',
               ),
             )
           : null,
@@ -2919,7 +3821,9 @@ window.__ModuleLoader__.load({
       '.pxm-chip-running{animation:pxm-pulse 1.4s ease-in-out infinite;}',
       '@keyframes pxm-pulse{0%,100%{opacity:1;}50%{opacity:.62;}}',
       '.pxm-scroll{scrollbar-width:thin;}',
-      '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible{outline:2px solid currentColor;outline-offset:2px;}',
+      /* 查看器是本插件在作品库面板内的模态层（position:fixed），入场动画随 reduced-motion 关闭 */
+      '.pxm-viewer{animation:pxm-in .16s ease-out;}',
+      '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid currentColor;outline-offset:2px;}',
       '.pxm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}',
       /* 窄屏（<640px）：退化为底部整宽 + 另设更小高度上限 */
       '@media (max-width:640px){',
@@ -2930,6 +3834,7 @@ window.__ModuleLoader__.load({
       '.pxm-card{animation:none!important;}',
       '.pxm-spin{animation:none!important;}',
       '.pxm-chip-running{animation:none!important;}',
+      '.pxm-viewer{animation:none!important;}',
       '}',
     ].join('\n')
 
@@ -3067,6 +3972,8 @@ window.__ModuleLoader__.load({
       ProjectDetail,
       TrashPanel,
       CopyPromptButton,
+      // 批次 C 新增：查看器（jsdom lane 直接把它挂起来验交互）
+      ImageViewer,
       PanelIcon,
       // 状态机 / 轮询器：jsdom lane 用来读快照、推进一次同步
       runPoller,
@@ -3082,9 +3989,15 @@ window.__ModuleLoader__.load({
       explainProjectActionError,
       formatDateTime,
       formatDuration,
+      buildViewerEntries,
+      scrollParentOf,
       HOST_STALE_HINT,
       POLL_ACTIVE_MS,
       POLL_IDLE_MS,
+      PROJECT_PAGE_SIZE,
+      SEARCH_DEBOUNCE_MS,
+      PROJECT_SORT_OPTIONS,
+      DEFAULT_PROJECT_SORT,
     }
 
     return { name, inject, apply, __test__ }

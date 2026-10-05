@@ -153,6 +153,28 @@ export interface ProjectSummary {
   readonly model: string
 }
 
+/**
+ * 列表摘要 + 该项目涉及的模块名（批次 C 的搜索要用）。
+ *
+ * **为什么不在 `ProjectSummary` 上加 `modules`**：`ProjectSummary` 也是
+ * `pixmart_projects` 工具 `list` action 的返回元素，而作品库优化方案 §4 决定④
+ * 明确「工具层不动，只在 HTTP 层新增字段」。所以模块名走这个**独立的**读口，
+ * 只有 `GET /pixmart/api/projects` 用它，工具的返回形状保持原样。
+ */
+export interface ProjectSummaryWithModules extends ProjectSummary {
+  /**
+   * 该项目出现过的模块名，去重后按首次出现顺序排列。
+   * 同时包含模块标识（`main.white-bg`）与显示名（`白底主图`）——用户可能按任一个搜。
+   */
+  readonly modules: readonly string[]
+}
+
+/** 一次目录扫描的原始结果：摘要 + 模块名。两者来自同一份 `project.json`，不重复读盘。 */
+interface ScannedProject {
+  readonly summary: ProjectSummary
+  readonly modules: readonly string[]
+}
+
 /** 回收站条目。`id` 是**回收站目录名**（恢复/清空都按它定位），`projectId` 是记录里的原 id。 */
 export interface TrashedProjectSummary {
   readonly id: string
@@ -194,6 +216,28 @@ function extensionFor(mediaType: string): string {
   if (mediaType === 'image/webp') return 'webp'
   if (mediaType === 'image/gif') return 'gif'
   return 'png'
+}
+
+/**
+ * 一个项目里出现过的模块名（去重、按首次出现顺序）。
+ *
+ * 取 **`module`（标识，如 `main.white-bg`）与 `label`（显示名，如 `白底主图`）两者**：
+ * 界面上用户看到的是 `label`，而提示词与工具里用的是 `module`，搜索必须两个都能命中，
+ * 否则"我明明看得见这个名字却搜不到"。
+ */
+function moduleNamesOf(record: ProjectRecord): readonly string[] {
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const item of record.items) {
+    for (const raw of [item.module, item.label]) {
+      if (typeof raw !== 'string') continue
+      const name = raw.trim()
+      if (name === '' || seen.has(name)) continue
+      seen.add(name)
+      names.push(name)
+    }
+  }
+  return names
 }
 
 export class ProjectStore {
@@ -329,6 +373,28 @@ export class ProjectStore {
     })
   }
 
+  /**
+   * 重命名项目 —— **只改 `project.json` 里的 `name` 显示名**。
+   *
+   * ★ 目录名（= 项目 id）**绝不移动、绝不重命名**。理由不是风格问题：
+   * `GET /pixmart/file/<projectId>/<name>` 与 `pixmart_projects action=get` 都以
+   * 目录名定位项目，改目录会让"已经能看的图"和"已经能取的记录"当场失效；
+   * 而且 `id` 一旦与目录名不一致，`cover` 字段（`<id>/images/<file>`）也会指错。
+   * 所以显示名与身份是两件事：显示名可以改，身份只能新建。
+   *
+   * @throws Error 项目不存在或记录损坏（由 `read` 抛出）。
+   */
+  async rename(projectId: string, name: string): Promise<ProjectRecord> {
+    const id = assertSafeId(projectId, '项目 id')
+    return this.mutex.run(id, async () => {
+      const existing = this.read(id)
+      // `id` / `items` / `createdAt` 原样保留：改的只有显示名与 updatedAt。
+      const record: ProjectRecord = { ...existing, name, updatedAt: Date.now() }
+      writeFileAtomic(this.projectFile(id), `${JSON.stringify(record, null, 2)}\n`)
+      return record
+    })
+  }
+
   /** 读取项目记录；缺失或损坏返回抛错前的明确失败。 */
   read(projectId: string): ProjectRecord {
     const result = readJsonFile<ProjectRecord>(this.projectFile(projectId))
@@ -344,9 +410,24 @@ export class ProjectStore {
 
   /** 列表——由扫描目录得出，不依赖任何索引文件。 */
   list(): readonly ProjectSummary[] {
+    return this.scan().map((entry) => entry.summary)
+  }
+
+  /**
+   * 列表 + 模块名（`GET /pixmart/api/projects` 的搜索用）。
+   *
+   * 与 `list()` **共用同一次扫描**：模块名本来就在已经读到的 `project.json` 里，
+   * 单独再加一个读口只是把"哪些字段对外"这件事说清楚，不额外读盘。
+   */
+  listWithModules(): readonly ProjectSummaryWithModules[] {
+    return this.scan().map((entry) => ({ ...entry.summary, modules: entry.modules }))
+  }
+
+  /** 扫描 `projects/*\/project.json`。单个项目损坏只跳过它，不影响整体列表。 */
+  private scan(): readonly ScannedProject[] {
     if (!existsSync(this.projectsRoot)) return []
 
-    const summaries: ProjectSummary[] = []
+    const scanned: ScannedProject[] = []
     for (const entry of readdirSync(this.projectsRoot)) {
       // **隐藏目录一律不是项目**：回收站 `.trash`、原子写的临时残骸等都走这一条。
       // 旧实现是"读不到 project.json 就跳过"，也恰好漏掉 `.trash`；但那种排除是
@@ -368,18 +449,21 @@ export class ProjectStore {
       const record = result.value
       const withImage = record.items.find((item) => item.images.length > 0)
       const cover = withImage?.images[0]
-      summaries.push({
-        id: record.id,
-        name: record.name,
-        createdAt: record.createdAt,
-        imageCount: record.items.reduce((total, item) => total + item.images.length, 0),
-        ...(cover === undefined ? {} : { cover: `${record.id}/${cover.file}` }),
-        provider: record.provider,
-        model: record.model,
+      scanned.push({
+        summary: {
+          id: record.id,
+          name: record.name,
+          createdAt: record.createdAt,
+          imageCount: record.items.reduce((total, item) => total + item.images.length, 0),
+          ...(cover === undefined ? {} : { cover: `${record.id}/${cover.file}` }),
+          provider: record.provider,
+          model: record.model,
+        },
+        modules: moduleNamesOf(record),
       })
     }
 
-    return summaries.sort((a, b) => b.createdAt - a.createdAt)
+    return scanned.sort((a, b) => b.summary.createdAt - a.summary.createdAt)
   }
 
   // ───────────────────────────────────────────────────── 软删 / 回收站
