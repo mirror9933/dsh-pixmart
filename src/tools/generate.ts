@@ -14,6 +14,7 @@ import { buildPrompt } from '../prompts/build.js'
 import { getModule } from '../prompts/modules.js'
 import { checkSize } from '../sizes.js'
 import { generateImages, sniffImageMediaType, type VendorReference } from '../vendor/openai-compat.js'
+import { exportImages } from './export-output.js'
 import type { ProjectItem, StoredImage } from '../store/project-store.js'
 import type { ToolContentBlock, ToolDefinitionLike, ToolRunContext } from '../host-types.js'
 import {
@@ -293,6 +294,10 @@ async function runGeneration(
   }
   await runtime.projectStore.appendItem(project.id, item)
 
+  // 7.5) 产物另存：配了「产物保存路径」就**复制**一份过去。
+  // 原件必须留在数据目录（作品库靠它），复制失败只记 warning，不改判成功/失败。
+  const exportOutcome = exportImages(config.outputDir, saved)
+
   // 8) 对话内可见（附件服务可用时）
   let attachments: unknown[] = []
   let attachmentNote: string | undefined
@@ -359,6 +364,9 @@ async function runGeneration(
     degraded: [...result.degraded],
     attempts: result.attempts,
     ms: result.ms,
+    outputDir: config.outputDir,
+    exported: [...exportOutcome.exported],
+    exportWarnings: [...exportOutcome.warnings],
     ...(attachmentNote === undefined ? {} : { attachmentNote }),
     ...(runtime.dataDirNotes.length === 0 ? {} : { dataDirNotes: [...runtime.dataDirNotes] }),
   }
@@ -384,6 +392,15 @@ function renderGeneration(value: Record<string, unknown>): ToolContentBlock[] {
   for (const image of images) {
     const record = image as Record<string, unknown>
     lines.push(`- ${String(record.path)} (${String(record.width)}x${String(record.height)}, ${String(record.bytes)} 字节)`)
+  }
+  // 另存副本的**完整路径**必须打出来：Agent 直接 `present` 这些路径，
+  // 不必再自己用 pwsh 往工作区里拷一份。
+  if (Array.isArray(value.exported) && value.exported.length > 0) {
+    lines.push(`已另存 ${value.exported.length} 张到「产物保存路径」（原件仍在数据目录）：`)
+    for (const target of value.exported) lines.push(`- ${String(target)}`)
+  }
+  if (Array.isArray(value.exportWarnings) && value.exportWarnings.length > 0) {
+    for (const warning of value.exportWarnings) lines.push(`⚠ ${String(warning)}`)
   }
   return renderWithImages(lines.join('\n'), value.attachments)
 }

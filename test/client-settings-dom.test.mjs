@@ -536,6 +536,28 @@ function buttonContaining(lane, text) {
 }
 
 /**
+ * 「产物保存」卡片本身（最内层那个 flex-column 且含「产物保存」的容器）。
+ * 卡片里也有一个文案为「保存」的按钮，与厂商卡片的重名，所以断言必须限定在卡内。
+ */
+function outputDirCard(lane) {
+  const candidates = [...lane.container.querySelectorAll('div')].filter(
+    (node) =>
+      (node.textContent ?? '').includes('产物保存') &&
+      node.style.display === 'flex' &&
+      node.style.flexDirection === 'column',
+  )
+  const card = candidates[candidates.length - 1] ?? null
+  assert.ok(card, '必须渲染出「产物保存」卡片')
+  return card
+}
+
+const outputDirInput = (lane) => outputDirCard(lane).querySelector('input')
+const outputDirButton = (lane, label) =>
+  [...outputDirCard(lane).querySelectorAll('button')].find(
+    (node) => node.textContent.trim() === label,
+  ) ?? null
+
+/**
  * 起一个"已拉取过模型"的场景并点掉「拉取模型」按钮。
  * @param options - `savedModels` 是保存后配置里的模型；`saveError` 让保存失败。
  */
@@ -868,6 +890,190 @@ describe('jsdom lane：模型选择面板', () => {
         /* 已关就算了 */
       }
     }
+  })
+})
+
+// ── 产物保存路径 ─────────────────────────────────────────────────────────────
+
+describe('jsdom lane：产物保存卡片', () => {
+  it('渲染当前值与「留空 = 不导出」说明；未设置时提示"未设置"', async () => {
+    const lane = await createLane({
+      respond: () => jsonResponse(providersPayload({ outputDir: 'D:/PixMartOut' })),
+    })
+    await lane.render()
+
+    const input = outputDirInput(lane)
+    assert.ok(input, '卡片里应有输入框')
+    assert.equal(input.value, 'D:/PixMartOut', '输入框应显示当前 outputDir')
+    assert.ok(lane.text().includes('留空 = 不导出'), '必须写明"留空 = 不导出"')
+    assert.ok(lane.text().includes('作品库'), '说明里应指出未导出时的查看入口')
+    assert.equal(lane.text().includes('未设置'), false, '已设置时不该显示"未设置"')
+
+    // 未设置（宿主回空串）时：输入框为空，标记为未设置
+    const empty = await createLane({
+      respond: () => jsonResponse(providersPayload({ outputDir: '' })),
+    })
+    await empty.render()
+    assert.equal(outputDirInput(empty).value, '')
+    assert.ok(empty.text().includes('未设置'))
+  })
+
+  it('点「保存」→ POST settings/output-dir 带 outputDir，成功后重取 api/providers', async () => {
+    const posted = []
+    let current = 'D:/PixMartOut'
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/settings\/output-dir$/.test(String(url))) {
+          const body = JSON.parse(String(init?.body ?? '{}'))
+          posted.push(body)
+          current = body.outputDir
+          return jsonResponse({ ok: true, outputDir: current })
+        }
+        return jsonResponse(providersPayload({ outputDir: current }))
+      },
+    })
+    await lane.render()
+
+    await lane.type(outputDirInput(lane), 'E:/pixmart-export')
+    await lane.click(outputDirButton(lane, '保存'))
+
+    assert.equal(posted.length, 1, `应只有 1 次 POST，实际 ${posted.length}`)
+    assert.deepEqual(posted[0], { outputDir: 'E:/pixmart-export' }, 'POST body 必须只带 outputDir')
+    // 成功后重取
+    const gets = lane.fetches.filter((call) => call.method === 'GET' && /\/api\/providers$/.test(call.url))
+    assert.ok(gets.length >= 2, `写成功后应重新取 api/providers，实际 GET ${gets.length} 次`)
+    assert.ok(lane.text().includes('已保存'), '应给出成功提示')
+    assert.equal(outputDirInput(lane).value, 'E:/pixmart-export', '界面应反映保存后的值')
+  })
+
+  it('点「清除」→ POST outputDir:""（回到不导出）', async () => {
+    const posted = []
+    let current = 'D:/PixMartOut'
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/settings\/output-dir$/.test(String(url))) {
+          const body = JSON.parse(String(init?.body ?? '{}'))
+          posted.push(body)
+          current = body.outputDir
+          return jsonResponse({ ok: true, outputDir: current })
+        }
+        return jsonResponse(providersPayload({ outputDir: current }))
+      },
+    })
+    await lane.render()
+
+    await lane.click(outputDirButton(lane, '清除'))
+
+    assert.deepEqual(posted, [{ outputDir: '' }], '清除必须发空串')
+    assert.ok(lane.text().includes('已清除'), '应给出清除提示')
+    assert.equal(outputDirInput(lane).value, '')
+    assert.ok(lane.text().includes('未设置'))
+  })
+
+  it('失败 → 卡片内显示可读原因与 code，不抛异常、按钮恢复、不白屏', async () => {
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/settings\/output-dir$/.test(String(url))) {
+          return jsonResponse(
+            {
+              ok: false,
+              error: { code: 'invalid_output_dir', message: '产物保存路径必须是绝对路径："out"' },
+            },
+            400,
+          )
+        }
+        return jsonResponse(providersPayload({ outputDir: '' }))
+      },
+    })
+    await lane.render()
+
+    await lane.type(outputDirInput(lane), 'out')
+    await lane.click(outputDirButton(lane, '保存'))
+
+    assert.ok(lane.text().includes('必须是绝对路径'), '应显示宿主返回的可读原因')
+    assert.ok(lane.text().includes('invalid_output_dir'), '应带上结构化 code')
+    const again = outputDirButton(lane, '保存')
+    assert.ok(again, '失败后卡片仍在（没白屏）')
+    assert.equal(again.disabled, false, '失败后按钮应恢复可用')
+  })
+
+  it('输入框失焦即保存；且「清除」压过这次失焦（不会把新输入当保存）', async () => {
+    const posted = []
+    let current = 'D:/PixMartOut'
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/settings\/output-dir$/.test(String(url))) {
+          const body = JSON.parse(String(init?.body ?? '{}'))
+          posted.push(body)
+          current = body.outputDir
+          return jsonResponse({ ok: true, outputDir: current })
+        }
+        return jsonResponse(providersPayload({ outputDir: current }))
+      },
+    })
+    await lane.render()
+
+    // React 的 onBlur 挂在 focusout 上
+    const focusOut = (element) =>
+      act(async () => {
+        element.dispatchEvent(new lane.window.FocusEvent('focusout', { bubbles: true }))
+      })
+
+    await lane.type(outputDirInput(lane), 'E:/by-blur')
+    await focusOut(outputDirInput(lane))
+    await settleAll()
+    assert.deepEqual(posted, [{ outputDir: 'E:/by-blur' }], '失焦应与点「保存」等价')
+
+    // 再输入一个不同的值，然后直接点「清除」：真实浏览器里 blur 先于 click，
+    // 显式的清除必须赢，而不是把刚输入的值保存下去。
+    await lane.type(outputDirInput(lane), 'E:/should-not-be-saved')
+    await act(async () => {
+      const clear = outputDirButton(lane, '清除')
+      clear.dispatchEvent(new lane.window.MouseEvent('mousedown', { bubbles: true }))
+      outputDirInput(lane).dispatchEvent(new lane.window.FocusEvent('focusout', { bubbles: true }))
+      clear.click()
+    })
+    await settleAll()
+
+    assert.equal(posted.length, 2, `「清除」这一步不该额外发一次保存，实际 ${posted.length} 次`)
+    assert.deepEqual(posted[1], { outputDir: '' }, '「清除」必须发空串')
+    assert.equal(posted.some((body) => body.outputDir === 'E:/should-not-be-saved'), false)
+    assert.equal(outputDirInput(lane).value, '')
+  })
+
+  it('请求进行中按钮禁用（防重复提交）', async () => {
+    let release
+    const pending = new Promise((resolve) => {
+      release = () => resolve(jsonResponse({ ok: true, outputDir: 'E:/out' }))
+    })
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/settings\/output-dir$/.test(String(url))) return pending
+        return jsonResponse(providersPayload({ outputDir: '' }))
+      },
+    })
+    await lane.render()
+
+    await lane.type(outputDirInput(lane), 'E:/out')
+    await act(async () => {
+      outputDirButton(lane, '保存').click()
+    })
+
+    const during = outputDirButton(lane, '保存中…')
+    assert.ok(during, '请求中按钮文案应变为「保存中…」')
+    assert.equal(during.disabled, true, '请求中「保存」必须禁用')
+    assert.equal(outputDirButton(lane, '清除').disabled, true, '请求中「清除」也必须禁用')
+
+    await act(async () => {
+      release()
+    })
+    await settleAll()
+    assert.ok(outputDirButton(lane, '保存'), '请求结束后按钮应恢复')
   })
 })
 

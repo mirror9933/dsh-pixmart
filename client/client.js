@@ -1300,6 +1300,127 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 「产物保存」卡片：配置 `outputDir`。
+     *
+     * 动机（实测）：用户跑测试时，产物与参考图是被**会话里的 agent 用 pwsh 手动**
+     * 拷进工作区的（插件从 P0 起就是 `exportToWorkspace: false`，只写数据目录）。
+     * 配好这个目录后插件自己复制一份过去，Agent 就有稳定路径可以 `present`，
+     * 不必再往工作区里拷。
+     *
+     * 语义：**留空 = 不导出**；非空必须是绝对路径（宿主侧也会校验并回
+     * `invalid_output_dir`）。失焦与点「保存」等价，成功后重取 `api/providers`。
+     */
+    function OutputDirCard(props) {
+      const current = isString(props.outputDir) ? props.outputDir : ''
+      const [value, setValue] = React.useState(current)
+      const save = useMutation()
+      /**
+       * 「清除」要压过「失焦即保存」。
+       *
+       * 真实浏览器里点按钮会先让输入框失焦（blur 先于 click），于是"输入了新路径
+       * 再点清除"会变成"把新路径保存了"。这里在按钮的 mousedown 上打个标记，
+       * 让紧随其后的 blur 让位给显式的清除动作。
+       */
+      const skipBlur = React.useRef(false)
+
+      // 宿主的视图变了（保存/清除成功后的重取）→ 同步输入框
+      React.useEffect(() => {
+        setValue(current)
+      }, [current])
+
+      const submit = (next) =>
+        save.run(async () => {
+          const outcome = await apiPost('api/settings/output-dir', { outputDir: next }, (payload) =>
+            isString(payload.outputDir),
+          )
+          if (outcome.ok !== true) return postResult(outcome, '')
+          return postResult(outcome, next === '' ? '已清除，产物只写数据目录' : '已保存')
+        }).then((outcome) => {
+          if (isObject(outcome) && outcome.ok === true && typeof props.reload === 'function') {
+            props.reload()
+          }
+          return outcome
+        })
+
+      const trimmed = value.trim()
+      const dirty = trimmed !== current
+
+      return h(
+        'div',
+        { style: skin.card },
+        h(
+          'div',
+          { style: skin.row },
+          h('strong', { style: { fontSize: '13px' } }, '产物保存'),
+          h(Pill, null, current === '' ? '未设置' : '已设置'),
+        ),
+        h(
+          'p',
+          { style: skin.muted },
+          '留空 = 不导出：产物只写在插件数据目录，从侧边栏「PixMart → 作品库」查看。' +
+            '设置后每张成功的图会「另行复制」一份到该目录，方便直接用该路径引用；' +
+            '数据目录里的原件始终保留。',
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+          h(
+            Field,
+            // 路径可能很长：独占一行，别让「标签 + 值」被 flex 拆散。
+            { label: '产物保存路径（须为绝对路径）', style: { flex: '1 0 100%' } },
+            h(TextInput, {
+              value,
+              disabled: save.busy,
+              placeholder: '绝对路径，如 D:/PixMartOut（留空 = 不导出）',
+              onChange: (event) => setValue(event.target.value),
+              onBlur: () => {
+                if (skipBlur.current) {
+                  skipBlur.current = false
+                  return
+                }
+                if (trimmed !== current) submit(trimmed)
+              },
+            }),
+          ),
+        ),
+        h(
+          'div',
+          { style: skin.row },
+          h(
+            Btn,
+            {
+              disabled: save.busy || !dirty,
+              onClick: () => submit(trimmed),
+              title: '写入 config.json 的 outputDir；每次成功的图会另存一份到这里',
+            },
+            save.busy ? '保存中…' : '保存',
+          ),
+          // 包一层只为接 mousedown（见 skipBlur 的说明），不改变按钮本身的样子。
+          h(
+            'span',
+            {
+              style: { display: 'inline-flex' },
+              onMouseDown: () => {
+                skipBlur.current = true
+              },
+            },
+            h(
+              Btn,
+              {
+                disabled: save.busy || current === '',
+                onClick: () => submit(''),
+                title: '清空该设置：回到"不导出"，产物只写数据目录',
+              },
+              '清除',
+            ),
+          ),
+          save.busy ? h(Spinner, { label: '保存中' }) : null,
+        ),
+        h(Msg, { result: save.result }),
+      )
+    }
+
     function ProvidersSection(props) {
       const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
 
@@ -1454,6 +1575,10 @@ window.__ModuleLoader__.load({
             : null,
           h('div', { style: skin.row }, field('数据目录', String(data.dataDir ?? '—'))),
         ),
+
+        // 放在最后：厂商卡片里已有按钮文案为「保存」，这里再出现一个「保存」
+        // 不该改变既有卡片在 DOM 中的先后（设置页的自动化测试按文案取按钮）。
+        h(OutputDirCard, { outputDir: data.outputDir, reload }),
 
         h('p', { style: skin.muted }, '插件 ' + PLUGIN + '@' + VERSION + ' · 设置页插槽 settings.section'),
       )
@@ -2336,6 +2461,7 @@ window.__ModuleLoader__.load({
       ProvidersSection,
       ProviderCard,
       DefaultsCard,
+      OutputDirCard,
       WorkbenchPanel,
       PanelIcon,
       // 状态机 / 轮询器：jsdom lane 用来读快照、推进一次同步

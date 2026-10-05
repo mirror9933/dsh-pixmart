@@ -17,6 +17,7 @@ import { buildPrompt } from '../prompts/build.js'
 import { getModule } from '../prompts/modules.js'
 import { checkSize } from '../sizes.js'
 import { generateImages } from '../vendor/openai-compat.js'
+import { exportImages } from './export-output.js'
 import type { ProjectItem } from '../store/project-store.js'
 import type { ToolContentBlock, ToolDefinitionLike, ToolRunContext } from '../host-types.js'
 import {
@@ -163,6 +164,14 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           const mark = record.status === 'done' ? '✓' : '✗'
           const tail = record.error === undefined ? '' : ` — ${String(record.error)}`
           lines.push(`${mark} ${String(record.label)}（${String(record.module)}）${tail}`)
+        }
+        // 另存副本的**完整路径**要打出来：Agent 直接 present，不必用 pwsh 再拷一次。
+        if (Array.isArray(value.exported) && value.exported.length > 0) {
+          lines.push(`已另存 ${String(value.exported.length)} 张到「产物保存路径」（原件仍在数据目录）：`)
+          for (const target of value.exported) lines.push(`- ${String(target)}`)
+        }
+        if (Array.isArray(value.exportWarnings) && value.exportWarnings.length > 0) {
+          for (const warning of value.exportWarnings) lines.push(`⚠ ${String(warning)}`)
         }
         return renderWithImages(lines.join('\n'), value.attachments)
       },
@@ -323,6 +332,10 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
             )
           }
 
+          // 产物另存：**复制**一份到「产物保存路径」。失败只记 warning，
+          // 这一项仍然是 done —— 图已经落在数据目录里了。
+          const exported = exportImages(config.outputDir, saved)
+
           const first = saved[0]
           await runtime.runStore.setItem(run.runId, index, {
             status: 'done',
@@ -368,7 +381,14 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           }
           await runtime.projectStore.appendItem(project.id, itemRecord)
 
-          return { module: item.module, label, status: 'done' as const, files: saved.length }
+          return {
+            module: item.module,
+            label,
+            status: 'done' as const,
+            files: saved.length,
+            exported: [...exported.exported],
+            exportWarnings: [...exported.warnings],
+          }
         })
 
         const completed = outcome.filter((entry) => entry.status === 'done').length
@@ -418,6 +438,11 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           requests: completed + failed,
           items: outcome,
           attachments,
+          outputDir: config.outputDir,
+          exported: outcome.flatMap((entry) => (entry.status === 'done' ? [...entry.exported] : [])),
+          exportWarnings: outcome.flatMap((entry) =>
+            entry.status === 'done' ? [...entry.exportWarnings] : [],
+          ),
           ms: Date.now() - started,
           ...(attachmentNote === undefined ? {} : { attachmentNote }),
         }

@@ -9,6 +9,8 @@
  * 用户总得能进设置页把配置改回来。
  */
 
+import { isAbsolute } from 'node:path'
+
 /** 四种调用形态。`gemini-native` 是 Ofox 的 Gemini 图像模型唯一可用路径。 */
 export type ApiMode = 'images-generations' | 'images-edits' | 'chat-image' | 'gemini-native'
 export type Dialect = 'standard' | 'ofox'
@@ -60,6 +62,13 @@ export interface PixmartConfig {
   readonly promptOverrides: Readonly<Record<string, string>>
   readonly exportToWorkspace: boolean
   readonly attachmentInConversation: boolean
+  /**
+   * 产物「另存」目录：每张**成功落盘**的图会再**复制**一份到这里，
+   * 便于 Agent / 用户拿到一个稳定的路径（原件始终留在数据目录）。
+   *
+   * 空串 = 不导出（P0 起的默认行为）；非空时必须是绝对路径。
+   */
+  readonly outputDir: string
 }
 
 export const CONFIG_VERSION = 1
@@ -104,6 +113,7 @@ export function defaultConfig(): PixmartConfig {
     promptOverrides: {},
     exportToWorkspace: false,
     attachmentInConversation: true,
+    outputDir: '',
   }
 }
 
@@ -210,6 +220,27 @@ function pickStringRecord(
     else warnings.push(`${trail}.${key}.${k} 不是字符串，已丢弃`)
   }
   return out
+}
+
+/**
+ * 解析 `outputDir`：空串表示不导出；非空时**必须是绝对路径**。
+ *
+ * 相对路径的落点取决于宿主进程的工作目录（GUI 启动时那还是 profile 目录），
+ * 用户根本无法预期，因此宁可记一条 warning 当作「未设置」——**不能抛**：
+ * 配置脏不该让插件拒绝启动，用户总得能进设置页改回来。
+ */
+function pickOutputDir(
+  source: Record<string, unknown>,
+  fallback: string,
+  warnings: string[],
+): string {
+  const raw = pickString(source, 'outputDir', fallback, warnings, 'config').trim()
+  if (raw === '') return ''
+  if (!isAbsolute(raw)) {
+    warnings.push(`config.outputDir "${raw}" 不是绝对路径，已按未设置处理（不导出）`)
+    return ''
+  }
+  return raw
 }
 
 const API_MODES: readonly ApiMode[] = [
@@ -342,6 +373,7 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
       promptOverrides: pickStringRecord(raw, 'promptOverrides', {}, warnings, 'config'),
       exportToWorkspace: pickBool(raw, 'exportToWorkspace', false, warnings, 'config'),
       attachmentInConversation: pickBool(raw, 'attachmentInConversation', true, warnings, 'config'),
+      outputDir: pickOutputDir(raw, fallback.outputDir, warnings),
     },
     warnings,
   }

@@ -15,7 +15,7 @@
  *   5. **任何响应体都不含 apiKey**：厂商一律回脱敏后的 `ProviderView`。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { findProvider, toProviderView, type PixmartConfig, type ProviderConfig } from './config.js'
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
@@ -358,6 +358,8 @@ async function handleApi(
       warnings: runtime.configWarnings(),
       defaults: config.defaults,
       limits: config.limits,
+      // 设置页「产物保存」卡片的数据源：空串 = 不导出。
+      outputDir: config.outputDir,
       providers: config.providers.map((provider) => toProviderView(provider)),
       usage: runtime.usage.summary(),
       historical: historicalTotals(runtime.projectStore.list()),
@@ -401,6 +403,13 @@ async function handleApi(
   if (route === '/defaults' || route === '/defaults/') {
     if (requirePost()) return
     await handleDefaults(runtime, response, readBody)
+    return
+  }
+
+  // POST /pixmart/api/settings/output-dir
+  if (route === '/settings/output-dir' || route === '/settings/output-dir/') {
+    if (requirePost()) return
+    await handleOutputDir(runtime, response, readBody)
     return
   }
 
@@ -720,6 +729,38 @@ async function handleDefaults(
   }))
 
   sendJson(response, 200, { ok: true, defaults: updated.defaults })
+}
+
+/**
+ * 写「产物保存路径」。
+ *
+ * 语义：空串 = **清除**（回到"不导出"，产物只在数据目录、经「作品库」查看）；
+ * 非空时**必须是绝对路径**——相对路径的落点取决于宿主进程的工作目录
+ * （GUI 启动时那还是 profile 目录），用户无法预期，所以宁可 400 也不静默接受。
+ *
+ * 走 `ConfigStore.update()`：原子写 + 按 configPath 串行读改写（与其余写路由一致）。
+ */
+async function handleOutputDir(
+  runtime: ToolRuntime,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+  const field = pickStringField(body, 'outputDir')
+  if (!field.present) {
+    fail(response, 400, 'bad_field', 'outputDir 缺失')
+    return
+  }
+  if (field.value !== '' && !isAbsolute(field.value)) {
+    fail(response, 400, 'invalid_output_dir', `产物保存路径必须是绝对路径："${field.value}"`)
+    return
+  }
+
+  const updated = await runtime.configStore.update((current) => ({
+    ...current,
+    outputDir: field.value,
+  }))
+  sendJson(response, 200, { ok: true, outputDir: updated.outputDir })
 }
 
 /**

@@ -89,6 +89,7 @@ declare module 'node:fs' {
   export function fsyncSync(fd: number): void
   export function renameSync(oldPath: string, newPath: string): void
   export function unlinkSync(path: string): void
+  export function copyFileSync(source: string, target: string): void
   export function existsSync(path: string): boolean
   export function readdirSync(path: string): string[]
   export function statSync(path: string): { isDirectory(): boolean; isFile(): boolean; size: number; mtimeMs: number }

@@ -83,6 +83,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           defaultProvider: { type: 'string' },
           defaultModel: { type: 'string' },
           defaultSize: { type: 'string' },
+          outputDir: { type: 'string' },
           providerIds: { type: 'array', items: { type: 'string' } },
           warnings: { type: 'array', items: { type: 'string' } },
         },
@@ -99,6 +100,13 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         }
         lines.push(
           `默认：${String(value.defaultProvider)} / ${String(value.defaultModel)} / ${String(value.defaultSize)}`,
+        )
+        // 产物保存路径：Agent 要靠它决定 present 哪个路径，而不是自己往工作区里拷。
+        const outputDir = typeof value.outputDir === 'string' ? value.outputDir : ''
+        lines.push(
+          outputDir === ''
+            ? '产物保存路径：未设置（产物只写数据目录，经作品库查看）'
+            : `产物保存路径：${outputDir}（每张成功的图会另存一份到这里，原件仍在数据目录）`,
         )
         if (Array.isArray(value.warnings) && value.warnings.length > 0) {
           lines.push(`注意：${value.warnings.join('；')}`)
@@ -122,6 +130,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           defaultProvider: config.defaults.provider,
           defaultModel: config.defaults.model,
           defaultSize: config.defaults.size,
+          outputDir: config.outputDir,
           limits: { ...config.limits },
           providerIds: selected.map((p) => p.id),
         }
