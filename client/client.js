@@ -555,6 +555,47 @@ window.__ModuleLoader__.load({
       // 历史产出：账本（usage.jsonl）自 P2 起才有，此前的产出由项目记录汇总。
       // 不单列的话，"累计用量 0"会和用户可见的项目并排出现、数字对不上。
       const historical = isObject(data.historical) ? data.historical : {}
+
+      /**
+       * 把「标签 + 值」包成一个**不可内部断行**的 flex 项。
+       *
+       * 之前两者是行容器里的两个独立子项，换行时会从中间断开——「尺寸」留在上一行、
+       * `1:1` 掉到下一行，看起来像错位。成组之后换行只会整对一起走。
+       */
+      const field = (label, value) =>
+        h(
+          'span',
+          {
+            style: {
+              display: 'inline-flex',
+              alignItems: 'baseline',
+              gap: '6px',
+              whiteSpace: 'nowrap',
+            },
+          },
+          h('span', { style: skin.key }, label),
+          h('code', { style: skin.code }, value),
+        )
+
+      /**
+       * 同上的多值版本：标签 + 若干子项。
+       * 组内允许换行（模型一多不能横向溢出），但标签 `flexShrink: 0` 且始终与
+       * 第一个值同排，视觉上不会被拆散。
+       */
+      const fieldGroup = (label, children) =>
+        h(
+          'span',
+          {
+            style: {
+              display: 'inline-flex',
+              flexWrap: 'wrap',
+              alignItems: 'baseline',
+              gap: '6px',
+            },
+          },
+          h('span', { style: { ...skin.key, flexShrink: 0 } }, label),
+          ...children,
+        )
       const providers = data.providers.filter(isObject)
 
       return h(
@@ -574,19 +615,11 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: skin.row },
-            h('span', { style: skin.key }, '厂商'),
-            h('code', { style: skin.code }, String(defaults.provider ?? '—')),
-            h('span', { style: skin.key }, '模型'),
-            h('code', { style: skin.code }, String(defaults.model ?? '—')),
-            h('span', { style: skin.key }, '尺寸'),
-            h('code', { style: skin.code }, String(defaults.size ?? '—')),
+            field('厂商', String(defaults.provider ?? '—')),
+            field('模型', String(defaults.model ?? '—')),
+            field('尺寸', String(defaults.size ?? '—')),
           ),
-          h(
-            'div',
-            { style: skin.row },
-            h('span', { style: skin.key }, '数据目录'),
-            h('code', { style: skin.code }, String(data.dataDir ?? '—')),
-          ),
+          h('div', { style: skin.row }, field('数据目录', String(data.dataDir ?? '—'))),
         ),
 
         h(
@@ -661,10 +694,8 @@ window.__ModuleLoader__.load({
                         : '密钥缺失',
                     ),
                   ),
-                  h(
-                    'div',
-                    { style: skin.row },
-                    h('span', { style: skin.key }, '模型'),
+                  fieldGroup(
+                    '模型',
                     isArray(provider.models) && provider.models.length > 0
                       ? provider.models.map((model, mi) =>
                           h(
@@ -673,15 +704,13 @@ window.__ModuleLoader__.load({
                             isObject(model) ? String(model.id ?? model.label ?? '?') : String(model),
                           ),
                         )
-                      : h('span', { style: skin.muted }, '未声明模型'),
+                      : [h('span', { style: skin.muted }, '未声明模型')],
                   ),
-                  h(
-                    'div',
-                    { style: skin.row },
-                    h('span', { style: skin.key }, '支持尺寸'),
+                  fieldGroup(
+                    '支持尺寸',
                     isArray(provider.allowedSizes) && provider.allowedSizes.length > 0
-                      ? h('code', { style: skin.code }, provider.allowedSizes.map(String).join(' / '))
-                      : h('span', { style: skin.muted }, '未声明'),
+                      ? [h('code', { style: skin.code }, provider.allowedSizes.map(String).join(' / '))]
+                      : [h('span', { style: skin.muted }, '未声明')],
                   ),
                 ),
               ),
