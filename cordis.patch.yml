@@ -1,0 +1,8 @@
+# dsh bundle patch: 把 dsh-pixmart 插入 profile 的层栈。
+#
+# 注意：后层按 `id` 覆盖前层，且 `config` 是「整段替换」而非深合并——
+# 覆盖本行时必须重述全部所需键。
+- insert:
+    - id: dsh-pixmart
+      name: dsh-pixmart
+      config: {}
