@@ -254,6 +254,11 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         model: { type: 'string' },
         provider: { type: 'string' },
         listModules: { type: 'boolean', description: '为 true 时只列出模块清单。' },
+        hasReference: {
+          type: 'boolean',
+          description:
+            '本次是否会带参考图。默认 false（文生图）——无参考图时拼装会剔除依赖参考图的句子，并在缺少 vars.product 时注入"通用无品牌"主体。',
+        },
       },
     },
     output: {
@@ -281,6 +286,9 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         }
         const lines = [`模块：${String(value.label)}（${String(value.module)}）`, `尺寸：${String(value.size)}`]
         if (value.sizeSupported === false) lines.push(`⚠ ${String(value.sizeHint)}`)
+        if (Array.isArray(value.notes) && value.notes.length > 0) {
+          lines.push('', `拼装调整：${value.notes.join('；')}`)
+        }
         lines.push('', '提示词：', String(value.prompt))
         if (typeof value.negative === 'string' && value.negative !== '') {
           lines.push('', `负向提示：${value.negative}`)
@@ -323,6 +331,10 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           vars: pickRecord(args, 'vars') ?? {},
           overrides: config.promptOverrides,
           userPrompt: pickString(args, 'userPrompt'),
+          hasReferences:
+            typeof args === 'object' &&
+            args !== null &&
+            (args as Record<string, unknown>).hasReference === true,
         })
 
         const size = pickString(args, 'size') ?? built.size
@@ -344,6 +356,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           ...(built.negative === undefined ? {} : { negative: built.negative }),
           size,
           sizeSupported: sizeResult?.supported ?? true,
+          notes: [...built.notes],
           ...(sizeResult !== undefined && !sizeResult.supported
             ? { sizeHint: `${sizeResult.reason}；最近可用：${sizeResult.nearest.join('、')}` }
             : {}),

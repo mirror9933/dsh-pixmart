@@ -172,6 +172,9 @@ async function runGeneration(
       vars: input.vars ?? {},
       overrides: config.promptOverrides,
       userPrompt: [input.prompt, input.userPrompt].filter((v): v is string => v !== undefined).join('\n\n'),
+      // F2/F3：模块片段是按"有参考图"的场景写的；无参考图时必须按句剔除相关描述，
+      // 并在缺少产品描述时注入"通用无品牌"主体（见 prompts/build.ts 顶部说明）。
+      hasReferences: mode === 'edit' || input.referencePaths.length > 0,
     })
     finalPrompt = built.prompt
     negative = built.negative
@@ -313,6 +316,26 @@ async function runGeneration(
     }
   }
 
+  // 产出尺寸核对：F1 的教训是端点可能**静默忽略**尺寸参数。
+  // 与其相信请求已被遵守，不如在落盘后核对实际像素并如实回报。
+  const requestedAspect = (() => {
+    const pixel = /^(\d+)x(\d+)$/i.exec(sizeResult.normalized)
+    if (pixel !== null) return Number(pixel[1]) / Number(pixel[2])
+    const ratio = /^(\d+):(\d+)$/.exec(sizeResult.normalized)
+    return ratio === null ? 0 : Number(ratio[1]) / Number(ratio[2])
+  })()
+
+  const sizeMismatch: string[] = []
+  for (const image of saved) {
+    if (requestedAspect <= 0 || image.height === 0) continue
+    const actual = image.width / image.height
+    if (Math.abs(actual - requestedAspect) / requestedAspect > 0.02) {
+      sizeMismatch.push(
+        `${image.file}: 请求 ${sizeResult.normalized}（比例 ${requestedAspect.toFixed(3)}），实际 ${image.width}x${image.height}（比例 ${actual.toFixed(3)}）`,
+      )
+    }
+  }
+
   return {
     ok: true,
     projectId: project.id,
@@ -322,6 +345,7 @@ async function runGeneration(
     apiMode: result.apiMode,
     planReason: result.planReason,
     size: sizeResult.normalized,
+    sizeMismatch,
     images: saved.map((image) => ({
       path: image.absolutePath,
       relative: `${project.id}/${image.file}`,
@@ -352,6 +376,9 @@ function renderGeneration(value: Record<string, unknown>): ToolContentBlock[] {
   ]
   if (Array.isArray(value.degraded) && value.degraded.length > 0) {
     lines.push(`⚠ 已降级（这些参数被厂商拒绝后去除）：${value.degraded.join('、')}`)
+  }
+  if (Array.isArray(value.sizeMismatch) && value.sizeMismatch.length > 0) {
+    lines.push(`⚠ 尺寸未被厂商遵守：${value.sizeMismatch.join('；')}`)
   }
   if (typeof value.attachmentNote === 'string') lines.push(`注意：${value.attachmentNote}`)
   for (const image of images) {

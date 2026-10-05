@@ -293,10 +293,15 @@ function buildRequest(
     for (const reference of references) {
       parts.push({ inlineData: { mimeType: reference.mediaType, data: encodeBase64(reference.data) } })
     }
-    const body: Record<string, unknown> = { contents: [{ parts }] }
+    // `responseModalities` 是**必需**的，不是可选装饰：
+    // 实测（tools/probe-aspect.mjs，2026-10-05）缺它时端点会**整体忽略 generationConfig**，
+    // 输出回落到模型默认比例（1408x768），`aspectRatio` 形同虚设；
+    // 带上它之后 1:1 / 3:4 / 16:9 才真正生效。
+    const generationConfig: Record<string, unknown> = { responseModalities: ['TEXT', 'IMAGE'] }
     if (variant.includeSize && request.size !== undefined) {
-      body.generationConfig = { imageConfig: { aspectRatio: request.size } }
+      generationConfig.imageConfig = { aspectRatio: request.size }
     }
+    const body: Record<string, unknown> = { contents: [{ parts }], generationConfig }
     headers['Content-Type'] = 'application/json'
     return { url, headers, init: { method: 'POST', headers, body: JSON.stringify(body), signal: request.signal } }
   }

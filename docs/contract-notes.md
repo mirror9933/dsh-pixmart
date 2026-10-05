@@ -332,3 +332,52 @@ node tools/asar.mjs grep "ContentBlock" 30 "dsh-(tools|session)/"
 `output.schema` 声明 `additionalProperties: false` 而返回值超出声明时，调用**直接失败**
 （`tool "…" returned invalid value`）。P1 的 18 项单测没有覆盖这一点——
 应补一条测试：把每个工具的返回值喂给 `output.schema` 校验器。这属于"真实组合才暴露"的契约。
+
+## 11. F1–F3 修复（2026-10-05）
+
+### 11.1 F1 根因：缺 `responseModalities` 导致端点整体忽略 `generationConfig`
+
+用真实端点做的对照实验（`tools/probe-aspect.mjs`，提示词固定，只改 body 形状）：
+
+| 变体 | 实际产出 |
+|---|---|
+| `imageConfig.aspectRatio` 单独传（原实现） | 1408×768 ❌ |
+| **`+ responseModalities: ['TEXT','IMAGE']`** | **1024×1024 ✅** |
+| `+ imageSize: '1K'` | 1408×768 ❌ |
+| `generationConfig.aspectRatio`（放到上层） | 1408×768 ❌ |
+| 不传 `generationConfig`（对照） | 1408×768 |
+
+第一行与最后一行**完全一致** → 缺 `responseModalities` 时端点把整个 `generationConfig` 丢掉。
+加上它之后比例映射正确：`1:1`→1024×1024、`3:4`→896×1200、`16:9`→1376×768。
+
+**修复**：`gemini-native` 分支固定带 `responseModalities: ['TEXT','IMAGE']`。
+
+**加固**：`pixmart_generate` 落盘后核对实际宽高比与请求值，偏差 >2% 时在返回值与卡片里
+回报 `sizeMismatch`。端点再变时是**可见告警**而不是静默失真。
+
+### 11.2 F2 修复：拼装感知有无参考图
+
+`buildPrompt` 增加 `hasReferences`（**默认 false** —— 保守假设更安全）。无参考图时
+**按句**剔除含 `reference` 的描述：删句而非删词，避免留下残句。
+
+例外：整模块覆盖（`overrides[moduleId]`）时既不剔除也不注入保护语——用户显式接管就该由用户说了算。
+
+### 11.3 F3 修复：不编造真实品牌
+
+| 情形 | 行为 |
+|---|---|
+| 文生图且无 `vars.product` | 注入「通用无品牌、无对应实体」主体句 + 负向提示追加品牌/商标禁令 |
+| 文生图且给了 `vars.product`，但模块片段里没有 `{product}` 占位符 | 把产品描述补成独立主体句（**否则用户描述会被静默丢弃**） |
+| 有参考图 | 不注入（产品来自参考图） |
+
+第三条是修复过程中发现的**额外缺口**：24 个模块里只有 5 个声明了 `variables`，
+其余模块没有 `{product}` 占位符，调用方给的产品描述会凭空消失。
+
+### 11.4 测试
+
+新增 `test/prompt-guards.test.mjs`（10 项），把三条修复与 §10.4 的教训都钉住；
+其中一项直接断言 `gemini-native` 请求体必须含 `responseModalities`。
+`pnpm verify` 共 **28 项全绿**。
+
+> 仍未验证：修复后的**工具级**端到端（`pixmart_generate` 真出 1:1 图）需要再重启一次宿主。
+> 但适配器层已由「真实端点对照实验 + 单元断言」双重确认。
