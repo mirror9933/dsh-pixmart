@@ -179,7 +179,8 @@ describe('§10.4 —— 工具返回值必须能通过宿主的 schema 校验', 
   })
 
   it('每个工具都有描述与 params schema（注册的前置条件）', () => {
-    assert.equal(tools.length, 6)
+    // P0 起 6 个，P2 增加 batch / projects → 8 个
+    assert.equal(tools.length, 8)
     for (const tool of tools) {
       assert.ok(tool.name.startsWith('pixmart_'), tool.name)
       assert.ok(tool.description.length > 40, `${tool.name} 描述过短`)

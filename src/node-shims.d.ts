@@ -67,6 +67,7 @@ declare function fetch(
 
 declare module 'node:fs' {
   export function writeFileSync(file: string, data: string | Uint8Array, encoding?: string): void
+  export function appendFileSync(file: string, data: string, encoding?: string): void
   export function readFileSync(file: string): Uint8Array
   export function readFileSync(file: string, encoding: string): string
   export function mkdirSync(path: string, options?: { readonly recursive?: boolean }): string | undefined

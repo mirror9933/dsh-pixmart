@@ -5,9 +5,11 @@
  * 这里只负责把运行时建好、把工具一次性注册进当前 fiber。
  */
 import type { DshPixmartConfig, HostContext, ToolDefinitionLike } from '../host-types.js'
+import { createBatchTool } from './batch.js'
 import { createGenerateTools } from './generate.js'
 import { createMetaTools } from './meta.js'
 import { createPingTool } from './ping.js'
+import { createProjectsTool } from './projects.js'
 import { createRuntime } from './runtime.js'
 
 /**
@@ -22,6 +24,8 @@ export function createTools(ctx: HostContext, config: DshPixmartConfig): ToolDef
     createPingTool(ctx, config.dataDir),
     ...createMetaTools(runtime),
     ...createGenerateTools(runtime),
+    createBatchTool(runtime),
+    createProjectsTool(runtime),
   ]
 }
 

@@ -9,6 +9,8 @@
  */
 import { ConfigStore } from '../store/config-store.js'
 import { ProjectStore } from '../store/project-store.js'
+import { RunStore } from '../store/run-store.js'
+import { UsageLog } from '../log/usage.js'
 import { resolveDataDir } from '../store/paths.js'
 import type { PixmartConfig } from '../config.js'
 import type {
@@ -27,6 +29,10 @@ export interface ToolRuntime {
   readonly dataDirNotes: readonly string[]
   readonly configStore: ConfigStore
   readonly projectStore: ProjectStore
+  /** 运行注册表：实时预览的 host 半边（§8.5.3）。 */
+  readonly runStore: RunStore
+  /** 用量审计：每次厂商请求一行，硬计数。 */
+  readonly usage: UsageLog
   /** 惰性加载配置；并发调用共享同一次读盘。 */
   config(): Promise<PixmartConfig>
   /** 首次加载产生的 warning（含配置损坏隔离）。 */
@@ -40,6 +46,11 @@ export function createRuntime(ctx: HostContext, config: DshPixmartConfig): ToolR
   const resolved = resolveDataDir(config.dataDir)
   const configStore = new ConfigStore(resolved.dataDir)
   const projectStore = new ProjectStore(resolved.dataDir)
+  const runStore = new RunStore(resolved.dataDir)
+  const usage = new UsageLog(resolved.dataDir)
+
+  // 上一次进程留下的 running 记录改判为 interrupted：**绝不假装还在跑**（§8.5.3）。
+  void runStore.markInterruptedOnBoot().catch(() => undefined)
 
   let pending: Promise<PixmartConfig> | undefined
   let warnings: readonly string[] = []
@@ -50,6 +61,8 @@ export function createRuntime(ctx: HostContext, config: DshPixmartConfig): ToolR
     dataDirNotes: resolved.degraded,
     configStore,
     projectStore,
+    runStore,
+    usage,
     config(): Promise<PixmartConfig> {
       if (pending === undefined) {
         pending = configStore.load().then((result) => {
