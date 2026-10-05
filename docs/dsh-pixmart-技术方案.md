@@ -252,12 +252,18 @@ dsh-pixmart/
 │   ├── api.ts                # fetch 封装（相对挂载点解析，不写死根路径）
 │   └── client.js             # 构建产物（ModuleLoader 包装）
 ├── lib/                      # tsc 产物
+├── dist/                     # 打包产物：剥离 __test__ 后的 client bundle（不入库，见 §11.5）
 ├── test/                     # vitest + mock OpenAI 兼容服务端
 ├── docs/
 │   ├── TECHNICAL-PLAN.md     # 本文件
 │   └── contract-notes.md     # spike 结论与逐条取证记录
 └── tools/                    # 构建/安装/校验脚本
+    └── strip-test-hooks.mjs  # 打包步骤：剥离 client bundle 的 __test__（§11.5）
 ```
+
+> 上面这份树是最初的规划稿，与当前仓库已有出入（例如 host 工具是
+> `src/tools/{ping,meta,generate,batch,projects}.ts`，客户端是单个手写的
+> `client/client.js`，测试跑 `node:test` 而非 vitest）。**以实际目录为准**。
 
 ### 6.1 分层铁律
 
@@ -1123,6 +1129,31 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 | host 代码 | 需要重启（host HMR 只做 stat 检测 + rev/SSE 通知刷新） |
 | `package.json` / exports / `dsh.client` / profile bundles | 必须重启 |
 
+### 11.5 打包：剥离 client bundle 的 `__test__` 测试钩子（P4 待办第 1 条）
+
+`client/client.js` 的 factory 返回值上挂了一个 `__test__`（组件与纯函数/状态机内部件），
+供 jsdom lane 与浏览器 lane 从 bundle 里取件。宿主只读 `name` / `inject` / `apply`，多一个键
+对宿主无害，但**生产包不该带测试入口**——因此作为**打包步骤**剥离，源码不动。
+
+```sh
+pnpm build:client     # = node tools/strip-test-hooks.mjs → 写 dist/client.js
+```
+
+- **实现**：`tools/strip-test-hooks.mjs`，`node` 直跑，**不引入打包器、不加任何依赖**
+  （`dependencies` 仍为空）。按锚句定位 → 花括号配平 → 断言下一行正是那条带 `__test__` 的
+  `return`；任何一步对不上就报错退出，不做"尽力而为"的改写。
+- **自证**：产物与源码做**前缀/后缀逐行比对**，唯一差异点必须是新 return 行，删块之外
+  **零字节改动**；行数账、UTF-8 字节账、`node --check`、`name`/`inject`/`apply` 三项齐全。
+- **陈旧性守卫**：`test/strip-test-hooks.test.mjs` 把当前 `client/client.js` 现场剥一遍，
+  与 `dist/client.js` **逐字节**比对。`dist` 缺失 → 带可读原因跳过（干净 checkout 的正常
+  形态，不崩）；`dist` 存在但不一致 → **失败**并提示 `pnpm build:client`。
+- **自动产出**：`pretest`（跑测试前）与 `prepack`（打包/发布前）都调用它；
+  `files` 白名单已加入 `dist`。`dist/` **不入库**（见 `.gitignore`）。
+- **⚠️ exports 仍然指向 `./client/client.js`，没有切到 `dist/client.js`**。
+  原因：开发期 profile 是指向本仓库的 symlink，而 `client.js` 还在频繁改；一旦切到 `dist/`，
+  刷新页面看到的是**过期产物**，比现状更容易误判。
+  **切换 `exports["./client"]` 到 `dist/client.js` 是 P4 打包的最后一步，等停止迭代后再做。**
+
 ---
 
 ## 12. 实施阶段
@@ -1149,7 +1180,7 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 
 | # | 待办 | 说明 | 来源 |
 |---|---|---|---|
-| 1 | **构建步骤剥离 `client/client.js` 的 `__test__` 测试钩子** | 手写无构建阶段，jsdom lane 需要从 bundle 里取到组件，因此 `factory` 返回值上多挂了 `__test__`。宿主只读 `name`/`inject`/`apply`，多一个键无害，但生产包不该带测试入口——P4 引入打包器时一并剥掉 | 提交 `3ec6cd2` |
+| 1 | ~~构建步骤剥离 `client/client.js` 的 `__test__` 测试钩子~~ ✅ **已完成（源码不动，剥离放在打包步骤）** | 手写无构建阶段，jsdom lane 需要从 bundle 里取到组件，因此 `factory` 返回值上多挂了 `__test__`。宿主只读 `name`/`inject`/`apply`，多一个键无害，但生产包不该带测试入口。**做法**：`tools/strip-test-hooks.mjs` + `pnpm build:client` 产出 `dist/client.js`（`pretest`/`prepack` 自动跑，`files` 已含 `dist`，`dist/` 不入库），`test/strip-test-hooks.test.mjs` 有陈旧性守卫。**⚠️ 剩下的最后一步**：把 `exports["./client"]` 切到 `dist/client.js`——**故意留到最后**，因为 profile 仍 symlink 本仓库且 `client.js` 还在改，切早了刷新页面看到的是过期产物。详见 §11.5 | 提交 `3ec6cd2` |
 | 2 | jsdom 覆盖不到的项转 GUI 目视 | 「高度不撑大」在 jsdom 退化为内联样式 + 元素数快照；reduced-motion、缩略图真实加载、真实 CSS 布局（窄屏底部整宽）只能目视 | §13.5 |
 | 3 | Git 分发形态 | 走 GitHub 分发时把 `lib/` 与 `client/client.js` 一并提交，规避 pnpm ≥10 的构建脚本门禁 | §11.1 |
 
@@ -1173,9 +1204,10 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 
 ```sh
 pnpm typecheck      # host + client 两个 program
-pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，260 项）
+pnpm build:client   # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js（§11.5）
+pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，269 项；pretest 会先跑 build:client）
 pnpm test:browser   # 真实排版引擎 lane（需系统 Edge/Chrome，见 §13.7）
-pnpm build          # host tsc（client bundle 是手写产物，无构建步骤）
+pnpm build          # host tsc（client bundle 是手写产物，无转译构建步骤）
 pnpm verify         # 上面四条串起来；无浏览器时 test:browser 会醒目失败（可用 PXM_LANE_ALLOW_SKIP=1 显式放行）
 git diff --check
 ```
@@ -1191,6 +1223,7 @@ git diff --check
 | `vendor/openai-compat.ts` | 四种 apiMode 的请求构造 golden JSON；`standard` / `ofox` 两种方言的字段名断言（`input_images` vs `image`、`output_format` vs `response_format`、`x-goog-api-key` vs Bearer）；b64 / url / chat / inlineData 四种响应解析；降级链顺序；错误码映射；重试判定 |
 | `store/paths.ts` | 路径穿越拦截；dataDir 越界拒绝 |
 | `log/usage.ts` | 追加 + 读取 + 汇总 |
+| `tools/strip-test-hooks.mjs`（`test/strip-test-hooks.test.mjs`） | 剥离确定性（同源两次同字节）；产物无 `__test__`；`node --check` 通过；`name`/`inject`/`apply` 齐全；**陈旧性守卫**（dist 缺失→带原因跳过；dist 陈旧→失败并提示 `pnpm build:client`）；结构对不上时脚本非零退出（§11.5） |
 
 ### 13.3 集成测试
 
@@ -1469,3 +1502,5 @@ Agent 调用 pixmart_batch {
 | v1.5 | 2026-10-05 | **P2 + P3 落地，测试 18 → 65 项**。P2（`1eebf72`）：`batch` / `projects` / 运行注册表 / `usage.jsonl` 硬计数。P3：`/pixmart/api/*` + 图片只读路由（`08a0e63`）、设置页 + 作品库 + `shell.overlay` 实时预览卡（`c6b342c`）、client 契约测试 13 项（`4518a7b`）、jsdom lane 10 项（`3ec6cd2`）。**三处真实缺陷**：①路由在 `apply()` 里 `ctx.get('webServer')` → 永不注册（`7a2ca2c`，违反 §7.1 自己定的规则）；②浮层自动展开缺 `isActive` → 结束后不收起（`3ec6cd2`，违反 §8.5.5 / D12，由 jsdom lane 首跑抓出）；③「账本 0 与可见项目对不上」→ **账本保持真实、历史产出另列**（`1671c63`）。新增 §12.2 P4 待办（含剥离 `__test__`）与 §12.3 未执行的付费验证 |
 | v1.6 | 2026-10-05 | **新增浏览器 lane（§13.7）**：`playwright-core`（`devDependencies`，`dependencies` 仍为空）+ 系统 Edge/Chrome，**不下载浏览器**；加载**未经修改的原产物** `client/client.js`（自证断言逐字节比对 sha256），经真实 `apply(ctx)` 注册路径挂进复刻的 shell 骨架（40px 标题栏带 + `--dsh-frame-chrome-top` + `.centerCol` 直系 flex 子项 + `display:contents` 槽锚点）。10 条断言全按几何（`getBoundingClientRect` / `scrollTop` / `scrollWidth` / `elementFromPoint` / 真 `mouse.wheel()`）。新增 `pnpm test:browser` 并挂进 `pnpm verify`；无浏览器时**醒目失败**（`PXM_LANE_ALLOW_SKIP=1` 可显式放行）。新增 [tools/lane-mutations.mjs](../tools/lane-mutations.mjs)：11 条反向变异全部被对应用例抓住，另记 1 条已知观测盲区（`overscroll-behavior` 在本 DOM 拓扑下不可观测） |
 | v1.7 | 2026-10-05 | **修掉 lane 抓到的"长路径撑破设置弹窗"**（`#settingsDialog.scrollWidth 687 > clientWidth 520`，520px + 87 字符路径）。根因是 v1.6 之前为修 bug 1 把 `whiteSpace:nowrap` 加在「标签 + 值」的**整组**上：短值没问题，长路径一个断点都没有 → 组的 `min-content` = 整条路径宽度。改法：组去掉 `nowrap`（保持 `inline-flex` + `baseline` + `gap`）；标签 `nowrap` + `flexShrink:0`（不拆散、不压缩）；值 `minWidth:0` + `overflowWrap:anywhere`（在**自己内部**换行，`min-content` 压到一个字符）；`<input>` 补 `minWidth:0`。**故意不加** `flexWrap:wrap`：实测它会把长值整行推到标签下面（拆散回归，`M15` 为证）。浏览器 lane 10 → **11** 条断言（新增 520px/375px 两条 87 字符路径的无溢出用例），严格变异 11 → **14** 条（`M13`/`M14`/`M15`），`pnpm test` 仍为 **260** 项全绿 |
+| v1.8 | 2026-10-05 | **P4 待办第 1 条落地：打包步骤剥离 client bundle 的 `__test__`**（§11.5 新增）。新增 `tools/strip-test-hooks.mjs`（按锚句定位 + 花括号配平 + 前缀/后缀逐行自证 + `node --check`，**不引入打包器、不加依赖**）、`pnpm build:client`，`files` 加 `dist`，`pretest` / `prepack` 自动产出，`dist/` 写入 `.gitignore`（产物不入库）。新增 `test/strip-test-hooks.test.mjs`（9 项，含**陈旧性守卫**：把当前源码现场剥一遍与 `dist/client.js` 逐字节比对；缺失→带原因跳过，陈旧→失败并提示 `pnpm build:client`）。**源码 `client/client.js` 一个字节未改**（五套 node:test + 浏览器 lane 仍从它的 `__test__` 取件）。**⚠️ `exports["./client"]` 仍指向 `./client/client.js`**：切换是 P4 打包的最后一步，等停止迭代后再做。`pnpm test` 260 → **269** 项、`pnpm test:browser` **11** 项全绿 |
+| v1.9 | 2026-10-05 | **README 重写为用户视角**（安装 / 首次配置 / 怎么用 / 产物在哪 / 费用 / FAQ / 已知限制 / 开发者），不再写「P0 进行中」这类内部阶段状态。诚实标注：**未发布到 registry、`private: true`**，只能用本地路径 / git 地址安装；P0–P3 已完成、**P4 未完成**；不做 3D / 视频、不做服务端缩略图、macOS 未验证、当前 0.0.1 |

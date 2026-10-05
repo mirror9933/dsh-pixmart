@@ -20,7 +20,7 @@
  * 前置：本机装有 Microsoft Edge 或 Google Chrome。没有可用浏览器时**整轮不会假装通过**：
  * 会打印醒目 SKIP 横幅并以非零码结束（除非显式 `PXM_LANE_ALLOW_SKIP=1`）。
  *
- * 与 `pnpm test`（node:test 260 项）的分工见 docs/dsh-pixmart-技术方案.md §13.7。
+ * 与 `pnpm test`（node:test 269 项）的分工见 docs/dsh-pixmart-技术方案.md §13.7。
  */
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'

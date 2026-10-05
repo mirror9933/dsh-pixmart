@@ -19,16 +19,20 @@
   "files": [
     "lib",
     "client",
+    "dist",
     "cordis.patch.yml",
     "README.md",
     "NOTICE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:client": "node tools/strip-test-hooks.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "node tools/strip-test-hooks.mjs",
     "test": "node --test test/*.test.mjs",
     "test:browser": "node --test test/browser/*.test.mjs",
     "verify": "pnpm typecheck && pnpm build && pnpm test && pnpm test:browser",
+    "prepack": "node tools/strip-test-hooks.mjs",
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "dsh": {

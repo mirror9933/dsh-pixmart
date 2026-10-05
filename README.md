@@ -1,51 +1,241 @@
 # dsh-pixmart
 
-DeepSeek Harness 的**电商生图插件**：主图 / 详情图 / 广告图生成、风格复刻、作品库与生图实时预览。
+给 **DeepSeek Harness** 加一套**电商生图**能力：主图、详情图、广告图、风格复刻、白底图。
+全部操作都在**对话里**完成——你说要什么，Agent 去调工具。
 
-- 状态：**P0（骨架 + 契约 spike）** 进行中
-- 技术方案：[docs/dsh-pixmart-技术方案.md](./docs/dsh-pixmart-技术方案.md)
-- P0 取证结论：[docs/contract-notes.md](./docs/contract-notes.md) ← **实现前必读，与方案冲突以它为准**
+> **当前状态（请先读这段）**
+>
+> - **尚未发布到 registry**，`package.json` 里 `private: true`。所以只能用**本地路径 / git 地址**安装（见下方「安装」）。
+> - 功能阶段：**P0–P3 已完成，P4（打包与分发）未完成**——README / 打包步骤 / 上架还没收尾。
+> - 版本：`0.0.1`。测试：`pnpm test`（269 项）与 `pnpm test:browser`（11 项）全绿。
+> - 没做的功能写在「[已知限制](#已知限制)」里，别当成已有能力。
+
+---
+
+## 一句话
+
+你在对话里说「帮我给这个产品做一张 1:1 的白底主图」，Agent 会用本插件的工具把图**真的生成出来**，
+落盘到插件数据目录，并在侧边栏「PixMart → 作品库」里给你看。
+
+---
+
+## 能做什么
+
+### 用起来大概是这样
+
+| 你想做的事 | 对话里怎么说 | 背后用的工具 |
+|---|---|---|
+| 生成白底首图 / 场景主图 | 「做一张 1:1 的白底主图」 | `pixmart_generate` |
+| 拿产品图做保真改写 | 「按这张图做一张场景图，产品别变形」 | `pixmart_edit`（带参考图） |
+| 学某张爆款图的设计风格 | 「照这张爆款的风格，换成我的产品」 | `pixmart_edit` + `tool.style-replica` 模块 |
+| 有参考图做纯白底 | 「把这个玩偶抠出来放纯白底」 | `pixmart_edit` + `tool.white-bg` 模块 |
+| 详情页一整套（14 屏） | 「帮我出一套详情图」 | `pixmart_batch` |
+| 翻旧账 / 导出以前的图 | 「我之前生成过什么」/「把那个项目导出」 | `pixmart_projects` |
+
+### 工具（共 8 个）
+
+**免费、不发任何厂商请求**（放心让 Agent 多调）：
+
+| 工具 | 作用 |
+|---|---|
+| `pixmart_prompt` | 按模块把最终提示词拼出来给你看（dry run）。也可以 `listModules: true` 列出全部模块。 |
+| `pixmart_check_size` | 校验目标尺寸这个模型到底支不支持，不支持就给最近的可选尺寸。 |
+| `pixmart_providers` | 列出厂商 / 模型 / 能力 / 密钥是否就位（**不返回密钥内容**）。 |
+| `pixmart_projects` | 作品库操作：`list` / `get` / `export` / `delete` / `restore` / `usage`。 |
+| `pixmart_ping` | 自检：确认插件已加载、工具链路可用。装完想确认一次就调它。 |
+
+**计费、每次都会真的调用厂商**：
+
+| 工具 | 作用 | 备注 |
+|---|---|---|
+| `pixmart_generate` | 文生图 | 可以一次多张（`n`，1–4） |
+| `pixmart_edit` | 图生图 / 参考图保真 / 风格复刻 / 白底图 | **必须**给参考图；想保持产品一致只能用这个 |
+| `pixmart_batch` | 一次做一整套（比如详情图 14 屏） | 每项独立成败，一项失败不影响其余 |
+
+### 提示词模块（共 24 个）
+
+模块是**决定画面长什么样的预设**。你不用记 id，直接说人话，Agent 会挑；也可以自己指定。
+
+- **主图 5 个**：白底首图、场景主图、卖点主图、细节主图、尺寸规格主图
+- **详情图 14 个**：首屏、场景、氛围、卖点、细节、效果对比、工艺材质、系列、尺寸规格、配件、使用方式、品牌故事、售后、多角度
+- **广告 3 个**：电商广告、社交种草、海报
+- **工具 2 个**：`tool.white-bg`（**有参考图的**纯白底）、`tool.style-replica`（爆款风格迁移）
+
+> ⚠️ 容易选错的一处：**「基于参考图做纯白底」要用 `tool.white-bg`**，不是 `main.white-bg`。
+> 后者是**无参考图**的白底首图，它的提示词是给**带印刷包装**的商品写的，拿去做玩偶 / 软体产品会不对口。
+> 需要保持产品外观一致（保真 / 风格复刻 / 白底图）时，一定要走 `pixmart_edit` 并带参考图——文生图保证不了主体一致。
+
+---
 
 ## 安装
 
-```powershell
-$dsh = 'E:\Program Files\deepseek harness\resources\runtime\cli\bin\dsh.cmd'
+**前提：先装好 DeepSeek Harness，并知道它的 `dsh` 命令。**
 
-# 装进一个 scratch profile 验证（不要直接装进正在使用的 profile）
-& $dsh plugin --profile px add <本仓库路径>
-& $dsh --profile px --dump-config      # 断言出现 dsh-pixmart 层
+当前**没有发布到 registry**（`private: true`），所以**不能用** `dsh plugin add dsh-pixmart` 这种按名字装的方式。
+用**路径**或**git 地址**：
+
+```sh
+# 从本地目录安装（推荐先装到 scratch profile 验证，不要直接装进正在使用的 profile）
+dsh plugin --profile px add E:\Programs\agent\dsh-pixmart
+
+# 或者从 git 地址安装
+dsh plugin --profile px add <git-url>
+
+# 确认装上了：输出里应当出现 dsh-pixmart 层
+dsh --profile px --dump-config
 ```
 
-`dsh plugin` 会自动把本包并入 profile 的 `dsh.profile.bundles`，无需手写 profile manifest。
+装完**重启宿主**（host 代码改动必须重启才生效，见「[常见问题](#常见问题)」）。
 
-> 注意：`dsh.cmd` 的退出码恒为 1（Electron-as-Node 启动方式所致），**不要用退出码判断成功**，看输出里的 `Done in …`。
+> **待验证**：上面这三条命令来自技术方案 §11.2 的既有记录，**没有在全新 `DSH_HOME` 上跑过一遍完整的从零安装**（那是 P4 的验收项 A8，尚未执行）。
+> 另外 `dsh.cmd` 的退出码**恒为 1**（Electron-as-Node 启动方式所致）——**不要用退出码判断成功**，看输出里的 `Done in …`。
 
-## 自检
+---
 
-安装后可用 `pixmart_ping` 工具自检（确认插件已加载、工具注册链路可用、列出宿主服务）。
+## 首次配置（最关键的一步）
 
-不需要模型凭据的落盘自检：
+**不填 API Key 是生不出图的**；没配密钥时工具会返回一条可读的报错并指向设置页，这是正常的首次体验，不是坏了。
 
-```powershell
-$env:PIXMART_P0_MARKER = "$PWD\.probe\p0-marker.json"
-$p = Start-Process -FilePath $dsh -ArgumentList '--profile','px' -PassThru -WindowStyle Hidden
-Start-Sleep -Seconds 16
-Get-Content $env:PIXMART_P0_MARKER
-taskkill /PID $p.Id /T /F     # 必须 /T；切勿按进程名杀（会误杀桌面端）
-```
+1. **重启宿主**（安装后必须重启；改完 `package.json` / exports 也一样）。
+2. **刷新页面**（浏览器端改动刷新即可生效）。
+3. 打开 **设置 → PixMart**。
+4. 在**厂商**卡片里填 **API Key**（默认厂商是 **Ofox**；也可以先设环境变量 `OFOX_API_KEY`，它的优先级高于设置页）。
+   密钥只以「是否就位」的形式回显，任何时候都不会显示内容。
+5. 点 **「测试连接」**——确认端点与密钥都对。
+6. 点 **「拉取模型」**（`GET {baseUrl}/models`，**只拉取、不写配置**）→ 在列表里**多选**你需要的生图模型 → 点 **「保存选择」**（这是唯一会写入模型列表的入口）。
+   - 列表很长：搜索框按子串过滤；「全选 / 全不选」只作用于**当前筛选结果**；「只选图像模型」按启发式**重设**选择。
+7. 回到顶部的 **「默认值」** 卡片，选 **厂商 / 模型 / 尺寸 / 每次张数（1–4）** 并保存。生图时不带参数就用这一套。
+8. **可选**：在 **「作品库导出路径」** 卡片里填一个**绝对路径**。只有你在作品库点「导出」时，图片才会被复制到 `该路径/<项目 id>/`。
+   - 空着 = 未配置，导出按钮会提示你先去填。
+   - **必须是绝对路径**：填相对路径会被当成「未设置」并记一条 warning（宿主的工作目录是什么，用户无从预期）。
+   - 生成时**不会**往这里自动复制任何文件。
 
-## 开发
+设置页里还能看到**累计用量**与**数据目录**，方便核对账目。
 
-```powershell
+---
+
+## 怎么用
+
+**直接对话就行**，不需要记工具名或参数。Agent 侧有一段系统提示，知道什么时候该用这些工具。例如：
+
+- 「帮我给这个产品做一张 1:1 的白底主图」
+- 「按这张爆款图的设计风格，换成我的产品，出一张社交种草图」
+- 「帮我出一套详情图，14 屏，先给我看提示词再开始」
+
+Agent 的默认动作顺序是（这条顺序是为了省钱）：
+
+1. `pixmart_prompt` —— 拼出最终提示词给你看（**免费**）
+2. `pixmart_check_size` —— 校验尺寸（**免费**）
+3. `pixmart_generate` / `pixmart_edit` / `pixmart_batch` —— 真正生图（**计费**）
+
+**批量前 Agent 会先把「项数 × 每项张数」报给你确认**，不会自己放大规模。单张生图实测要 **1–3 分钟**（曾观测到 106 秒），耐心等；等待期间不要让它重复调同一个工具（会重复计费）。
+
+---
+
+## 产物在哪
+
+- **只落盘到插件数据目录**，形如：
+
+  ```
+  $DSH_HOME/pixmart/
+  ├── config.json            # 厂商 / 密钥 / 默认值（设置页写的就是它）
+  ├── index.json             # 项目索引（可重建）
+  ├── usage.jsonl            # 追加式用量审计
+  ├── exports/               # 导出副本的默认落点（在数据目录内）
+  └── projects/<项目 id>/
+      ├── project.json       # 项目元数据 + 每张图的记录
+      └── images/<sha256前8位>-<slug>.png
+  ```
+
+  宿主的 `DSH_HOME` 没设时（GUI 启动的宿主就是这样）会回落到 `<用户主目录>/.dsh/pixmart`。实际路径可以直接在设置页的**数据目录**一栏看到。
+
+- **浏览**：侧边栏「**PixMart → 作品库**」。里面有搜索、排序、分页、查看器、删除 / 回收站 / 导出。
+- **要文件形式的副本**：用作品库里的「**导出**」（先在设置里配好作品库导出路径）。生成时不会往工作区拷任何东西。
+
+---
+
+## 费用
+
+| 免费（不发厂商请求） | 计费（每次真实调用厂商） |
+|---|---|
+| `pixmart_prompt`、`pixmart_check_size`、`pixmart_providers`、`pixmart_projects`、`pixmart_ping` | `pixmart_generate`、`pixmart_edit`、`pixmart_batch` |
+
+- 计费次数 = **项数 × 每项张数**。`pixmart_batch` 的 `items` 有几项、`n` 是几张，就调几次。
+- 批量前 Agent 会**报价并等你确认**。
+- 用量可以在设置页的「累计用量」或 `pixmart_projects` 的 `usage` 里核。
+- 项目内单项数量上限、并发上限都在配置里（默认并发 2、单批最多 20 项）。
+
+---
+
+## 常见问题
+
+**Q：按钮点了报「宿主未加载此接口，请重启 DeepSeek Harness 后重试」？**
+A：这是**预期**的——**host 代码改动必须重启宿主**才生效（host 的 HMR 只做文件 stat 检测 + 通知刷新页面）。
+分级记住：client bundle 改动 → 刷新页面即可；host 代码 → 重启；`package.json` / exports / `dsh.client` / profile bundles → 必须重启。
+
+**Q：生成了图，但对话里看不到图片？**
+A：检查配置 `attachmentInConversation`（**默认 `true`**）。它是 `config.json` 里的字段，**设置页目前没有对应开关**；关掉之后图片只落盘，工具会回一句说明。
+另外宿主没提供 `attachments` 服务时也会只落盘——这两种情况都能在侧边栏作品库里看到图。
+
+**Q：删掉的项目还能找回来吗？**
+A：能。删除是**软删**：项目被移入回收站（`projects/.trash`，磁盘字节一个都没少），在作品库的「回收站」里可以逐个**恢复**，或者整体**清空**（清空才真的删）。
+Agent 侧通过 `pixmart_projects` 删除时，默认同样是软删；**只有你明确要求永久删除时它才会传 `permanent: true`**——两种模式都需要 `confirm: true`。
+
+**Q：我直接改了 `config.json`，为什么要重启才生效？**
+A：**正确做法是用设置页改**，不要手改 `config.json`。设置页改完即时生效（写完会用原子写落盘）；手改文件则要等宿主重启后才被读进来。
+
+**Q：`pnpm test:browser` 报没有浏览器？**
+A：这条 lane 需要系统已装 Edge 或 Chrome（**不会自动下载浏览器**）。没有浏览器时它会**醒目失败**而不是假装通过；确实要放行可以设 `PXM_LANE_ALLOW_SKIP=1`。
+
+**Q：装完发现工具没出现？**
+A：先在对话里调一次 `pixmart_ping`——它无副作用，能确认「插件已加载 + 工具注册链路可用」，并列出宿主当前暴露的服务。
+
+---
+
+## 已知限制
+
+- **不做 3D、不做视频**（v1 范围外）。
+- **不做服务端缩略图**：作品库靠浏览器加载原图，图多时首屏会吃力。
+- **不像云盘**：没有账号、没有云同步、没有多人协作；数据就在本机数据目录。
+- **「重新生成」已取消**：作品库里没有这个入口（原先设计过，已砍掉）。
+- **提示词片段是英文**：目标模型（Gemini / gpt-image 系）对英文指令的遵循度更稳；界面标签是中文。
+- **macOS 未验证**：目前只在 Windows 上实际跑过。
+- **未上架社区市场**，也**未发布到 registry**。
+- **打包（P4）未完成**：`exports["./client"]` 仍指向源码 `client/client.js`（不是打包产物），
+  git 分发形态、从零安装全链路验证（A8）都还没做。
+- **部分验证没做**：真实批量生图的端到端链路要花钱，尚未执行（mock 层已过）。
+
+---
+
+## 开发者
+
+host 半是 TypeScript（`src/`，**运行时零 `@deepseek-ai` 依赖**），client 半是手写的
+`client/client.js`（`window.__ModuleLoader__` 包装，没有打包器、没有 JSX）。
+
+```sh
 pnpm install
-pnpm build        # tsc → lib/
-pnpm typecheck
+pnpm typecheck        # host + client 两个 program
+pnpm build            # host tsc → lib/
+pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
+pnpm test             # node:test（含 jsdom lane），269 项
+pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），11 项
+pnpm verify           # 上面几条串起来
 ```
 
-- host 半：`src/`（TypeScript，**运行时零 `@deepseek-ai` 依赖**）
-- client 半：`client/client.js`（手写 `window.__ModuleLoader__` 包装，P0 不引入打包器）
-- bundle 层：`cordis.patch.yml`
-- 取证工具：`tools/asar.mjs`（读取 `app.asar` 内 DSH 源码）
+**文档**：
+
+- [docs/dsh-pixmart-技术方案.md](./docs/dsh-pixmart-技术方案.md) —— 技术方案（架构、契约、阶段、验证矩阵、打包与分发 §11.5）
+- [docs/contract-notes.md](./docs/contract-notes.md) —— P0 实测契约结论，**与方案冲突以它为准**
+- [docs/作品库优化方案.md](./docs/作品库优化方案.md) —— 作品库后续优化（**待审核，未开工**）
+- [docs/a2-acceptance.md](./docs/a2-acceptance.md) —— A2（真实生图落盘）验收记录
+
+**打包注意**：`exports["./client"]` **仍然指向源码** `client/client.js`（没切到 `dist/client.js`）。
+原因：开发期 profile 是指向本仓库的 symlink，而 `client.js` 还在频繁改；切早了刷新页面看到的是过期产物。
+**切换 exports 到 `dist/client.js` 是 P4 打包的最后一步，等停止迭代后再做**（见方案 §11.5 / §12.2）。
+`dist/` 不入库，`pnpm test` 的 `pretest` 与发布时的 `prepack` 会自动产出它；忘了重新构建会被
+`test/strip-test-hooks.test.mjs` 的陈旧性守卫抓住。
+
+---
 
 ## 许可
 
