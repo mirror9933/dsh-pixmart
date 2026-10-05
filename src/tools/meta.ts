@@ -77,7 +77,6 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
     output: {
       schema: {
         type: 'object',
-        additionalProperties: false,
         properties: {
           ok: { type: 'boolean' },
           dataDir: { type: 'string' },
@@ -87,6 +86,8 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           providerIds: { type: 'array', items: { type: 'string' } },
           warnings: { type: 'array', items: { type: 'string' } },
         },
+        // 实际值还带 dataDirNotes / limits / 动态的 `provider:<id>`，因此必须开放。
+        additionalProperties: true,
         required: ['ok'],
       },
       render: (_args, value) => {
@@ -163,7 +164,6 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
     output: {
       schema: {
         type: 'object',
-        additionalProperties: false,
         properties: {
           ok: { type: 'boolean' },
           supported: { type: 'boolean' },
@@ -175,6 +175,8 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           model: { type: 'string' },
           apiMode: { type: 'string' },
         },
+        // 失败路径返回 { ok:false, error:{ code, message, hint? } }，同样要放行。
+        additionalProperties: true,
         required: ['ok', 'supported'],
       },
       render: (_args, value) => {
@@ -257,7 +259,6 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
     output: {
       schema: {
         type: 'object',
-        additionalProperties: false,
         properties: {
           ok: { type: 'boolean' },
           prompt: { type: 'string' },
@@ -269,6 +270,8 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           sizeHint: { type: 'string' },
           moduleIds: { type: 'array', items: { type: 'string' } },
         },
+        // 失败路径返回 { ok:false, error:{…} }，同样要放行。
+        additionalProperties: true,
         required: ['ok'],
       },
       render: (_args, value) => {
