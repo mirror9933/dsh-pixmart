@@ -36,8 +36,17 @@ export function apply(ctx: HostContext, config: DshPixmartConfig = {}): void {
   }, 'dsh-pixmart: tools')
 
   // client 半 ↔ host 的唯一通道（包式 client 拿不到 host.call）。
-  // webServer 是可选服务，缺失时 registerRoutes 返回 no-op。
-  ctx.effect(() => registerRoutes(ctx, runtime), 'dsh-pixmart: http routes')
+  // 注册形状已与 dshmarket 的 RouteDefinition 对齐：
+  //   { kind: 'exact' | 'prefix', path, handler(request, response) }
+  // webServer 缺失时 registerRoutes 返回 no-op；**注册期任何异常也只降级为 no-op**——
+  // 客户端 UI 拿不到数据可以接受，但工具绝不能因为路由没注册上而整体消失。
+  ctx.effect(() => {
+    try {
+      return registerRoutes(ctx, runtime)
+    } catch {
+      return () => {}
+    }
+  }, 'dsh-pixmart: http routes')
 
   writeSmokeMarker(ctx)
 }
