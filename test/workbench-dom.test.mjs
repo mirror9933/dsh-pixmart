@@ -148,8 +148,9 @@ const jsonResponse = (body, status = 200) => ({
 /**
  * 默认路由：列表 + 详情 + 回收站 + 配置（导出路径），写操作按需覆盖。
  *
- * `exportDir` 给一个绝对路径：导出按钮把它当作 `dir` 发出去（未配置时界面不猜路径，
- * 由宿主回 `no_export_dir`）。
+ * `exportDir` 给一个绝对路径：导出按钮把它当作 `dir` 发出去。
+ * 未配置时**客户端预检即拦下**（`checkExportDir`，详情页与批量导出共用），
+ * 不发那次注定失败的请求；宿主的 `no_export_dir` 仍保留为权威兜底。
  */
 const EXPORT_DIR = 'D:/PixMartExport'
 
@@ -632,13 +633,14 @@ describe('jsdom lane：导出', () => {
     assert.ok(lane.text().includes(EXPORT_DIR))
   })
 
-  it('未配置导出路径 → 400 no_export_dir：界面给出可读提示并引导去设置（不静默失败）', async () => {
+  it('未配置导出路径 → 客户端预检即拦下：给可读提示、引导去设置、**不发那次注定失败的请求**', async () => {
     const lane = await createLane({
       respond(url, init = {}) {
         const method = String(init.method ?? 'GET').toUpperCase()
         if (method === 'GET' && url.includes('/api/providers')) {
           return jsonResponse(providersPayload({ exportDir: '' }))
         }
+        // 仍备一个 400 兜底：万一实现退回"发出去看宿主"，用例要能明确报出来
         if (method === 'POST' && url.endsWith('/export')) {
           return jsonResponse(
             {
@@ -658,11 +660,12 @@ describe('jsdom lane：导出', () => {
     await openDetail(lane)
     await lane.click('导出图片')
 
-    // 未配置时不该猜任何默认路径
-    assert.deepEqual(JSON.parse(String(lane.posts('/export')[0].body)), {})
+    // 判定已收敛到 `checkExportDir`，详情页与批量导出共用同一处。
+    // 这条比旧断言**更强**：旧版只验证"发出去后被宿主拒、再显示文案"，
+    // 现在要求根本不发那次注定失败的请求。宿主的 400 仍保留为权威兜底。
+    assert.equal(lane.posts('/export').length, 0, '未配置导出路径时不得发出导出请求')
     assert.ok(lane.text().includes('还没有配置「作品库导出路径」'), '必须给出可读提示')
     assert.ok(lane.text().includes('设置'), '必须引导用户去设置页')
-    assert.ok(lane.text().includes('no_export_dir') || lane.text().includes('导出路径'), '要能看出原因')
     assert.equal(lane.container.querySelectorAll('*').length > 0, true, '不得白屏')
   })
 })

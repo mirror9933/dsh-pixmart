@@ -162,6 +162,28 @@ window.__ModuleLoader__.load({
       return text === '' ? '操作失败' : text
     }
 
+    /**
+     * 导出前的**统一判定**：没配「作品库导出路径」就不要发那串注定失败的请求。
+     *
+     * 为什么要有这个 helper：导出有两个入口（详情页单个 / 多选工具条批量），
+     * 此前**批量在客户端预检、详情页发出去靠宿主回 400** —— 用户看到的文案一致
+     * （都过 `explainProjectActionError`），但**规则写在两处**。将来宿主改了错误码
+     * 或校验口径，很可能只改一处，另一个入口就悄悄不一致了。
+     *
+     * 现在两个入口共用这一处判定；宿主的 400 仍然保留为**权威兜底**
+     * （客户端手里的配置快照可能过时，那时预检会放行，由宿主拦下）。
+     *
+     * @param exportDir - 配置里的导出路径（可能为空串）。
+     * @returns 通过时给出 trim 后的路径，否则给出可读原因。
+     */
+    function checkExportDir(exportDir) {
+      const dir = isString(exportDir) ? exportDir.trim() : ''
+      if (dir === '') {
+        return { ok: false, error: explainProjectActionError('no_export_dir', '') }
+      }
+      return { ok: true, dir }
+    }
+
     /** 取数助手：no-store + 形状校验 + 不抛异常。 */
     async function apiGet(path, validate) {
       if (BASE === null) return { ok: false, error: '无法解析插件基址' }
@@ -2183,10 +2205,15 @@ window.__ModuleLoader__.load({
 
       const onExport = () => {
         if (projectId === '' || busy !== null) return
+        // 与批量导出共用同一处判定：未配置就不发那串注定失败的请求。
+        // （宿主侧仍会校验一遍，作为客户端配置快照过时时的权威兜底。）
+        const guard = checkExportDir(exportDir)
+        if (guard.ok !== true) {
+          setAction({ busy: null, error: guard.error, note: null })
+          return
+        }
         setAction({ busy: 'export', error: null, note: null })
-        // 导出目录由配置决定（宿主侧也会回退到配置里再校验一遍）；
-        // 界面**不**猜任何路径，未配置时把宿主给出的可读原因原样显示出来。
-        const body = exportDir === '' ? {} : { dir: exportDir }
+        const body = { dir: guard.dir }
         apiPost('api/projects/' + encodeURIComponent(projectId) + '/export', body).then((result) => {
           if (result.ok !== true) {
             setAction({
@@ -2966,8 +2993,9 @@ window.__ModuleLoader__.load({
       const runBatchExport = () => {
         const ids = selectedIds.slice()
         if (ids.length === 0 || batch.busy !== null) return
-        if (exportDir === '') {
-          setBatch({ busy: null, error: explainProjectActionError('no_export_dir', ''), note: null })
+        const guard = checkExportDir(exportDir)
+        if (guard.ok !== true) {
+          setBatch({ busy: null, error: guard.error, note: null })
           return
         }
         setBatch({ busy: 'export', error: null, note: null })
@@ -2976,7 +3004,7 @@ window.__ModuleLoader__.load({
           let files = 0
           for (const id of ids) {
             const result = await apiPost('api/projects/' + encodeURIComponent(id) + '/export', {
-              dir: exportDir,
+              dir: guard.dir,
             })
             if (result.ok !== true) {
               failures.push(id + '：' + explainProjectActionError(result.code, result.error))
