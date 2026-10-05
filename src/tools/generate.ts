@@ -249,6 +249,23 @@ async function runGeneration(
       createdAt: Date.now(),
     })
 
+    // 记账：**每一次付费调用都必须留痕，失败也要**（失败同样消耗了配额/可能已计费）。
+    // 早先这里与成功路径都漏了 append，导致 generate/edit 从不写账本，
+    // 「累计用量」长期为 0。账本**低报**比不报更危险——它看起来像"没花钱"。
+    runtime.usage.append({
+      ts: Date.now(),
+      provider: provider.id,
+      model: target.model,
+      apiMode: result.apiMode,
+      size: sizeResult.normalized,
+      n,
+      images: 0,
+      ok: false,
+      ms: result.ms,
+      projectId: project.id,
+      errorCode: result.error.code,
+    })
+
     return failure(
       result.error.code,
       result.error.message,
@@ -293,6 +310,20 @@ async function runGeneration(
     createdAt: Date.now(),
   }
   await runtime.projectStore.appendItem(project.id, item)
+
+  // 记账：成功路径同样必须留痕（见失败路径处的说明）。
+  runtime.usage.append({
+    ts: Date.now(),
+    provider: provider.id,
+    model: target.model,
+    apiMode: result.apiMode,
+    size: sizeResult.normalized,
+    n,
+    images: saved.length,
+    ok: true,
+    ms: result.ms,
+    projectId: project.id,
+  })
 
   // 7.5) 产物另存：配了「产物保存路径」就**复制**一份过去。
   // 原件必须留在数据目录（作品库靠它），复制失败只记 warning，不改判成功/失败。
