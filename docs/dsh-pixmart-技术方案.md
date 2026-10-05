@@ -1173,8 +1173,10 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 
 ```sh
 pnpm typecheck      # host + client 两个 program
-pnpm test           # vitest
-pnpm build          # host tsc + client bundle
+pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，260 项）
+pnpm test:browser   # 真实排版引擎 lane（需系统 Edge/Chrome，见 §13.7）
+pnpm build          # host tsc（client bundle 是手写产物，无构建步骤）
+pnpm verify         # 上面四条串起来；无浏览器时 test:browser 会醒目失败（可用 PXM_LANE_ALLOW_SKIP=1 显式放行）
 git diff --check
 ```
 
@@ -1215,6 +1217,92 @@ git diff --check
 4. 断言 exports 指向的 host/client 产物、patch、静态资源全部存在。
 5. `--dump-config` 必须出现插件层。
 6. 启动后检查工具可见性与 UI 名册。
+
+### 13.7 浏览器 lane（真实排版引擎：Playwright + 系统 Edge/Chrome）
+
+**为什么单独一条 lane**：jsdom 没有排版引擎——`scrollHeight` / `getBoundingClientRect()` /
+`scrollTop` 在 jsdom 里是常量 0，所以「滚不动」「顶栏被滚走」「顶栏压在窗口标题栏下面」
+「窄屏横向溢出」「标签与值被换行拆散」这几类缺陷**原理上**测不出来（`test/client.test.mjs`
+文件头早已列明这一点）。本节这条 lane 用真排版引擎，只按**几何**断言。
+
+```sh
+pnpm test:browser     # = node --test test/browser/*.test.mjs —— 只在有浏览器的机器上跑
+pnpm verify           # typecheck + build + test(260) + test:browser
+```
+
+**前置**：本机装有 Microsoft Edge 或 Google Chrome。用 `playwright-core` +
+`channel: 'msedge' | 'chrome'`（**不下载浏览器**，`playwright-core` 进 `devDependencies`，
+`dependencies` 仍为空）。**没有可用浏览器时不会假装通过**：打印醒目 SKIP 横幅并以**非零码**
+结束；确实要在无浏览器机器上放行，用 `PXM_LANE_ALLOW_SKIP=1`（此时该轮显式报告为 skipped）。
+
+**harness**（都不进产物、不参与打包、不改 bundle）：
+
+| 文件 | 角色 |
+|---|---|
+| [test/browser/shell.html](../test/browser/shell.html) | 复刻 shell 的最小真实骨架：`html,body,#root` 高度 100% + `overflow:hidden`、**40px 标题栏带**（模拟 `titleBarOverlay`，`z-index:1100`）并发布 `--dsh-frame-chrome-top: 40px`、`.centerCol`（flex 列 + `overflow:hidden` + 高度锁死），**我们的面板是它的直接 flex 子项**（槽锚点 `display:contents`，无 DOM 包裹）；设置页槽另有自己的滚动弹窗容器 |
+| [test/browser/lane.js](../test/browser/lane.js) | 页面侧 harness：`client.js` 之前定义 `window.__ModuleLoader__` → `factory(require)`（`require('react')` = 页面里的**真 React 18 UMD**）→ 最小假 `ctx` 调 **`apply(ctx)`**（走真实注册路径，不读 `__test__`）→ 挂进槽锚点；并暴露只讲事实的几何探针（rect / scrollTop / scrollWidth / `elementFromPoint` / 计算后 overflow） |
+| [test/browser/lane-server.mjs](../test/browser/lane-server.mjs) | 只读静态服务（白名单路径 + 真 800×800 PNG 顶替图片路由）+ 浏览器解析/启动；默认服务的永远是**仓库原产物 `client/client.js`** |
+| [test/browser/layout.test.mjs](../test/browser/layout.test.mjs) | 10 条断言 |
+| [tools/lane-mutations.mjs](../tools/lane-mutations.mjs) | **反向变异验证**：把实现改坏、确认对应用例真的失败（见下表） |
+
+**覆盖的 10 条断言**（全部基于真实几何 / 真滚轮 `mouse.wheel()`，没有一条是"读内联样式字符串"）：
+
+| # | 断言 | 手段 |
+|---|---|---|
+| 0 | lane 自证：服务/加载的就是仓库原产物（逐字节 sha256 一致）+ 真 React UMD + 真图片解码 | `createHash` on 服务字节 / `naturalWidth > 0` |
+| 1 | 详情页能滚；滚到底时**最后一张图完整可见** | `mouse.wheel` → `scrollTop > 0` → 滚到不动 → 末张 `rect` 落在滚动区内 |
+| 2 | 列表页（40 项）能滚 | 同上 |
+| 3 | 查看器顶栏 `top ≥ 40`（`--dsh-frame-chrome-top`），关闭按钮完整在视口内且 `elementFromPoint` 命中的是它自己 | rect + 命中测试 |
+| 4 | 查看器内容滚动时顶栏与根盒子 `top` 不变、`root.scrollTop === 0` | `mouse.wheel` + rect 对比 |
+| 5 | 打开查看器时背景 `.pxm-scroll` 被锁（计算后 `overflow-y: hidden`）、关闭后**精确还原**（回 `auto` 且滚动位置复原） | `getComputedStyle` + `scrollTop` |
+| 6 | 375px 窄屏：文档 `scrollWidth ≤ clientWidth + 1`、长英文提示词/长模型名/超长项目名不被 `overflow-x:hidden` 裁掉 | `scrollWidth` vs `clientWidth` + 按内容定位长串承载元素 |
+| 7 | 设置页「默认值」卡片：标签与值**同列堆叠**（左边界对齐、值在标签下方）；「标签 + 值」成组的那一对在窄屏下**仍留在同一行** | rect 差值 + 左边界 |
+
+**变异对照表**（`node tools/lane-mutations.mjs`，11 条严格变异全部被对应用例抓住；
+脚本自身校验"每处 `find` 恰好命中一次"与"仓库原产物 sha256 前后一致"）：
+
+| 变异 | 改坏的实现 | 抓住它的用例 |
+|---|---|---|
+| `M1-panel-height` | 面板根去掉 `height:100%` / `minHeight:0`（提交 `c56b518` 的根因） | 1、2、5（`scrollHeight 2534 == clientHeight 2534`：滚轮找不到可滚的盒子） |
+| `M2-scroll-hidden` | 唯一滚动容器不再可滚（`overflowY: auto → hidden`） | 1、2、5（滚轮之后 `scrollTop` 仍为 0） |
+| `M3-viewer-top-zero` | 查看器 `top` 退回 `0`（提交 `680b7d4` 的根因之一） | 3、5（`bar.top=16 < 40`；关闭按钮被标题栏带盖住，点击超时） |
+| `M4-viewer-root-scrolls` | 查看器退回"整块一个 `overflow:auto`"（顶栏跟着内容滚走） | 4、5（根盒子成了滚动容器、顶栏位移） |
+| `M5-no-background-lock` | 打开查看器时不锁背景 | 5（计算后 `overflow-y` 仍是 `auto`） |
+| `M6-no-lock-restore` | 关闭时 `cleanup` 不还原背景 | 5（关闭后仍是 `hidden`） |
+| `M7-prompt-unbreakable` | 提示词同时去掉 `overflowWrap:anywhere` 与 `wordBreak:break-word` | 6（`scrollWidth 666 > clientWidth 305`） |
+| `M8-metarow-no-wrap-anywhere` | 元信息行的值去掉 `overflowWrap:anywhere` / `wordBreak` | 6（滚动区 `scrollWidth 798 > clientWidth 339`） |
+| `M9-tile-name-no-wrap-anywhere` | 项目卡片名字去掉 `overflowWrap:anywhere` | 6（`scrollWidth 749 > clientWidth 321`） |
+| `M10-field-row` | 设置页 `Field` 去掉 `flexDirection:column` | 7（控件与标签并排：左边界差 24px） |
+| `M11-field-ungrouped` | 「标签 + 值」退回两个独立 flex 子项（提交 `97083a9` 的根因） | 7（值被换到下一行：`top` 差 26px） |
+| `M12-no-overscroll-contain`（**信息性，无断言能抓住**） | 只去掉 `overscrollBehavior: contain` | 无 —— 已知观测盲区，见下 |
+
+**它仍然覆盖不到什么**（不要把这些当成已验证）：
+
+- **真实 Electron 外壳**：真实的 `titleBarOverlay` 原生按钮、`--dsh-windows-titlebar-height`
+  由 preload 写入的真实值、菜单宿主（`z-index:1100`）、原生全屏归零——本 lane 只是**模拟**
+  了一条 40px 不透明带。真实窗口里"按钮真的被盖住/点不到"仍要靠 GUI 目视（§13.5）。
+- **macOS / overlay 滚动条**：实测 headless Chromium 下滚动条不占宽度
+  （`offsetWidth - clientWidth === 0`），所以 `lockBackgroundScroll` 里
+  `scrollbar-gutter: stable` 那条分支（"锁上时内容不横移"）在 lane 里**走不到**，
+  也量不出横移。
+- **`overscroll-behavior: contain` 不可观测**：查看器是 `position: fixed` 的**兄弟**覆盖层，
+  `.pxm-scroll` 不在它的滚动链上，"滚轮链式滚动到背景"在这套 DOM 拓扑下不可能发生
+  （信息性变异 M12 已证实无断言能抓住）。T5 里轮询式的"背景没动"是**护栏**，
+  真正的可证伪证据是计算后 `overflow-y` 与关闭后的还原。
+- **图片内容**：lane 用自造的 800×800 PNG 顶替 `/pixmart/file/*`，只保证"能解码、布局尺寸对"，
+  不覆盖真实图片的解码耗时、色彩、损坏图。
+- **真实数据规模与网络**：`fetch` 全 stub（零真实网络），项目数、提示词长度、模型名长度
+  都是夹具；真实 200 个项目 / 超长中文提示词下的滚动性能与懒加载节奏不在此列。
+- **字体差异**：断行位置依赖实际字体，lane 用的是本机系统字体；换字体的机器上"刚好临界"
+  的断行结论可能不同（夹具里的长串刻意留了大余量）。
+- **输入方式**：只有鼠标滚轮；触摸/触控板惯性滚动、键盘滚动、拖滚动条都不覆盖。
+- **reduced-motion / 动画**：入场动画只在等待 250ms 后测几何，动画本身（`.pxm-in`）不覆盖。
+
+**本次 lane 抓到的真实观察（未修，不属本次范围）**：设置页「数据目录」这一对是
+`display:inline-flex` + `white-space:nowrap` 的整组，**组内不会换行**；导出路径偏长时
+（实测 87 字符路径 + 窗口 520px）该组宽 652px 而卡片内容区约 437px，设置弹窗因此出现
+**横向滚动条**（`#settingsDialog.scrollWidth 687 > clientWidth 520`，文档本身不受影响）。
+它不是"标签与值被拆散"，但值得后续决定：是允许组内断行，还是给值加省略号。
 
 ---
 
@@ -1364,3 +1452,4 @@ Agent 调用 pixmart_batch {
 | v1.3 | 2026-10-05 | **P0 落地 + 据实测修订方案**。完成：A1（scratch profile 安装、自动并入 `dsh.profile.bundles`、`--dump-config` 断言）、S1 宿主半边（真实 Loader 组合 + 手写 JSON Schema 被接受 + `schemas()` 投影一致）、S3（图片块 = `{type:'image', attachment}`）。修订：`host.call` → 本插件 HTTP API（§6 / §7.11 / §8.5.4 / 架构图 / 分层铁律）；**可选服务不得在 `apply()` 探测**（§7.1，实测 `fs`/`credentials` 延迟就绪）；`defineTool` 只是编译糖 → 改为手写零运行时依赖定义（§7.2 / §7.7）。新增 [contract-notes.md](./contract-notes.md)、[tools/asar.mjs](../tools/asar.mjs)、`pixmart_ping` 与 `PIXMART_P0_MARKER` 自检钩子。**P0 验收全部通过**：A1（安装）、S1（含 desktop 活宿主实调）、S2（GUI 目视：设置页 + 侧边栏面板切换）、S3；**R2 / R3 关闭**。另据实测修正：`DSH_HOME` 在 GUI 启动的宿主里未设置 → 数据目录回落 `<用户主目录>/.dsh`；插件安装热生效而 host 代码改动需重启 |
 | v1.4 | 2026-10-05 | **P1 落地**（提交 `e83c150`）。新增：`src/config.ts`（容错解析 + 脱敏视图）、`src/store/{paths,atomic,mutex,config-store,project-store}.ts`、`src/vendor/openai-compat.ts`（4 apiMode × 2 方言 + 降级链 + 重试）、`src/prompts/{types,modules,build}.ts`（24 模块）、`src/sizes.ts`、`src/image-info.ts`、`src/tools/*`、`test/vendor.test.mjs`（18 项）。两处实现修正：**降级链只在 `bad_request` 触发**（5xx/429 换档位会重复花钱）、**按哈希前缀扫描真正去重**。三处与方案偏离已记录（不维护索引 / 增加 `finish` 片段 / 工具文件合并）。`pnpm verify` 全绿；A2 全链待宿主重启 + 真实 Key |
 | v1.5 | 2026-10-05 | **P2 + P3 落地，测试 18 → 65 项**。P2（`1eebf72`）：`batch` / `projects` / 运行注册表 / `usage.jsonl` 硬计数。P3：`/pixmart/api/*` + 图片只读路由（`08a0e63`）、设置页 + 作品库 + `shell.overlay` 实时预览卡（`c6b342c`）、client 契约测试 13 项（`4518a7b`）、jsdom lane 10 项（`3ec6cd2`）。**三处真实缺陷**：①路由在 `apply()` 里 `ctx.get('webServer')` → 永不注册（`7a2ca2c`，违反 §7.1 自己定的规则）；②浮层自动展开缺 `isActive` → 结束后不收起（`3ec6cd2`，违反 §8.5.5 / D12，由 jsdom lane 首跑抓出）；③「账本 0 与可见项目对不上」→ **账本保持真实、历史产出另列**（`1671c63`）。新增 §12.2 P4 待办（含剥离 `__test__`）与 §12.3 未执行的付费验证 |
+| v1.6 | 2026-10-05 | **新增浏览器 lane（§13.7）**：`playwright-core`（`devDependencies`，`dependencies` 仍为空）+ 系统 Edge/Chrome，**不下载浏览器**；加载**未经修改的原产物** `client/client.js`（自证断言逐字节比对 sha256），经真实 `apply(ctx)` 注册路径挂进复刻的 shell 骨架（40px 标题栏带 + `--dsh-frame-chrome-top` + `.centerCol` 直系 flex 子项 + `display:contents` 槽锚点）。10 条断言全按几何（`getBoundingClientRect` / `scrollTop` / `scrollWidth` / `elementFromPoint` / 真 `mouse.wheel()`）。新增 `pnpm test:browser` 并挂进 `pnpm verify`；无浏览器时**醒目失败**（`PXM_LANE_ALLOW_SKIP=1` 可显式放行）。新增 [tools/lane-mutations.mjs](../tools/lane-mutations.mjs)：11 条反向变异全部被对应用例抓住，另记 1 条已知观测盲区（`overscroll-behavior` 在本 DOM 拓扑下不可观测） |

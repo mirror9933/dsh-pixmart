@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dsh-pixmart browser lane（复刻 shell 的最小真实骨架）</title>
+    <style>
+      /*
+       * 这不是 shell 的还原，而是**与排版类缺陷有关的**那部分骨架：
+       *   - html/body/#root 高度 100%、margin 0、overflow hidden（和 GUI 一样，文档本身不滚）；
+       *   - 一条 40px 的窗口标题栏带（模拟 Electron 的 titleBarOverlay），
+       *     并发布 shell 给模态层用的 `--dsh-frame-chrome-top`；
+       *   - `.centerCol` = ui-layout AppFrame 的中栏：flex 列 + overflow hidden + 高度锁死，
+       *     **座位自己不给滚动**（面板必须自带滚动，见 client.js `skin.panel` 的注释）；
+       *   - 我们的面板是这个 `.centerCol` 的**直接 flex 子项**（槽锚点是 display:contents，
+       *     没有额外 DOM 包裹）——这一点是"详情页滚不动"那条缺陷的复现前提。
+       * 尺寸/颜色无关紧要；**几何与 overflow 链**才是被测对象。
+       */
+      :root {
+        --dsh-frame-chrome-top: 40px;
+        --dsh-windows-titlebar-height: 40px;
+        color-scheme: light;
+      }
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        overflow: hidden;
+        font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #fff;
+        color: #18181b;
+      }
+      /* 窗口 chrome：Electron 的原生按钮画在 web 内容之上，所以它必须有最高层叠。 */
+      #dsh-titlebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: var(--dsh-frame-chrome-top);
+        z-index: 1100;
+        background: #202124;
+      }
+      #frame {
+        position: absolute;
+        inset: 0;
+        box-sizing: border-box;
+        padding-top: var(--dsh-frame-chrome-top);
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        grid-template-rows: 100%;
+        overflow: hidden;
+      }
+      .sidebar {
+        min-width: 0;
+        overflow: hidden;
+        border-right: 1px solid rgba(0, 0, 0, 0.12);
+        background: #f4f4f5;
+      }
+      /* AppFrame 中栏：高度由网格行锁死，overflow hidden —— 它不滚。 */
+      .centerCol {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-width: 0;
+        min-height: 0;
+        height: 100%;
+      }
+      /* 真实 shell 在窄屏会把侧栏收掉；不收掉的话 375px 下中栏只剩 155px，不是真实场景。 */
+      @media (max-width: 639px) {
+        #frame {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          display: none;
+        }
+      }
+      /* 设置弹窗自己滚（设置页插槽只负责排版，见 client.js `skin.wrap` 的注释）。 */
+      #settingsDialog {
+        position: fixed;
+        top: var(--dsh-frame-chrome-top);
+        left: 0;
+        right: 0;
+        bottom: 0;
+        overflow: auto;
+        background: #fff;
+      }
+      /* 槽锚点：ui-renderer 的槽是 display:contents —— 面板因此是外层容器的直接 flex 子项。 */
+      .slot-anchor {
+        display: contents;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dsh-titlebar" aria-hidden="true"></div>
+    <div id="root">
+      <div id="frame">
+        <div class="sidebar" aria-hidden="true"></div>
+        <div class="centerCol" id="centerCol"><div id="panelAnchor" class="slot-anchor"></div></div>
+      </div>
+    </div>
+    <div id="settingsDialog" hidden><div id="settingsAnchor" class="slot-anchor"></div></div>
+
+    <!--
+      装载顺序即真实顺序：
+        1) React / ReactDOM 的 **UMD** 构建（真实的 React 18，不是替身）；
+        2) lane.js：定义 `window.__ModuleLoader__`（在 client.js 之前！）+ harness；
+        3) 仓库原产物 client/client.js —— 原样加载，不做任何转译/包装。
+    -->
+    <script src="/node_modules/react/umd/react.development.js"></script>
+    <script src="/node_modules/react-dom/umd/react-dom.development.js"></script>
+    <script src="/test/browser/lane.js"></script>
+    <script src="/client/client.js"></script>
+  </body>
+</html>
