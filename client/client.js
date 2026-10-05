@@ -119,7 +119,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    async function apiPost(path) {
+    /** 写请求：把宿主结构化 error 的 code/message 提出来，便于在卡片里显示可读原因。 */
+    async function apiPost(path, body, validate) {
       if (BASE === null) return { ok: false, error: '无法解析插件基址' }
       const url = relativeUrl(path)
       if (url === null) return { ok: false, error: '无法解析请求地址' }
@@ -128,12 +129,26 @@ window.__ModuleLoader__.load({
           method: 'POST',
           cache: 'no-store',
           headers: { 'content-type': 'application/json' },
-          body: '{}',
+          body: JSON.stringify(body === undefined ? {} : body),
         })
-        if (!response.ok) return { ok: false, error: 'HTTP ' + String(response.status) }
-        const body = await response.json().catch(() => null)
-        if (!isObject(body)) return { ok: false, error: '响应形状不符合预期' }
-        return { ok: true, data: body }
+        const payload = await response.json().catch(() => null)
+        if (!isObject(payload)) {
+          return { ok: false, error: 'HTTP ' + String(response.status) + '：响应不是 JSON' }
+        }
+        if (payload.ok !== true) {
+          const detail = isObject(payload.error) ? payload.error : {}
+          const code = isString(detail.code) ? detail.code : 'http_' + String(response.status)
+          // 把宿主的结构化 error 提到顶层，调用方不必再解一层。这里只搬
+          // `code` / `message` 两个字符串，**绝不把整个 payload 当文案**。
+          const message = isString(detail.message)
+            ? detail.message
+            : 'HTTP ' + String(response.status) + '：请求失败'
+          return { ok: false, error: message, code, status: response.status, data: payload }
+        }
+        if (typeof validate === 'function' && !validate(payload)) {
+          return { ok: false, error: '响应形状不符合预期', status: response.status }
+        }
+        return { ok: true, data: payload, status: response.status }
       } catch (err) {
         return { ok: false, error: err && err.message ? err.message : '请求失败' }
       }
@@ -512,10 +527,473 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ── ① settings.section：只读厂商 / 默认值 / 数据目录 / 累计用量 ──────────
+    // ── ① settings.section：厂商（可写）/ 默认值（可写）/ 数据目录 / 累计用量 ──
+
+    /** 「结果」小字：成功一行、失败一行；**绝不把任何密钥值放进来**。 */
+    function Msg(props) {
+      if (!isObject(props.result)) return null
+      const failed = props.result.ok !== true
+      return h(
+        'span',
+        {
+          role: failed ? 'alert' : 'status',
+          style: {
+            fontSize: '12px',
+            lineHeight: 1.6,
+            color: failed ? '#ef4444' : '#22c55e',
+            wordBreak: 'break-word',
+          },
+        },
+        String(props.result.text ?? ''),
+      )
+    }
+
+    function Field(props) {
+      return h(
+        'label',
+        {
+          style: {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+            fontSize: '12px',
+            flex: '1 1 180px',
+            minWidth: 0,
+          },
+        },
+        h('span', { style: { opacity: 0.7 } }, props.label),
+        ...(isArray(props.children) ? props.children : [props.children]),
+      )
+    }
+
+    const inputStyle = {
+      font: 'inherit',
+      fontSize: '12px',
+      padding: '3px 6px',
+      borderRadius: '6px',
+      color: 'inherit',
+      background: 'transparent',
+      border: '1px solid color-mix(in srgb, currentColor 24%, transparent)',
+      width: '100%',
+      boxSizing: 'border-box',
+    }
+
+    function TextInput(props) {
+      return h('input', {
+        type: props.type ?? 'text',
+        style: inputStyle,
+        value: props.value ?? '',
+        placeholder: props.placeholder,
+        disabled: props.disabled === true,
+        autoComplete: props.autoComplete ?? 'off',
+        spellCheck: false,
+        onChange: props.onChange,
+        onBlur: props.onBlur,
+      })
+    }
+
+    function Select(props) {
+      const options = isArray(props.options) ? props.options : []
+      return h(
+        'select',
+        {
+          style: inputStyle,
+          value: props.value ?? '',
+          disabled: props.disabled === true,
+          onChange: props.onChange,
+        },
+        ...options.map((option, index) =>
+          h('option', { key: 'o' + String(index), value: option.value }, option.label),
+        ),
+      )
+    }
+
+    /**
+     * 一次写操作的公共状态：`busy`（按钮禁用，防重复提交）+ `result`（卡片内提示）。
+     * 组件卸载后落地的响应直接丢弃，避免对已卸载组件 setState。
+     */
+    function useMutation() {
+      const [busy, setBusy] = React.useState(false)
+      const [result, setResult] = React.useState(null)
+      const alive = React.useRef(true)
+      React.useEffect(
+        () => () => {
+          alive.current = false
+        },
+        [],
+      )
+      const run = React.useCallback(async (fn) => {
+        setBusy(true)
+        setResult(null)
+        let outcome
+        try {
+          outcome = await fn()
+        } catch (err) {
+          // 任何意外都收敛成卡片内提示，绝不冒泡成白屏
+          outcome = { ok: false, error: err && err.message ? err.message : '请求失败' }
+        }
+        if (!alive.current) return outcome
+        setBusy(false)
+        if (isObject(outcome)) setResult(outcome)
+        return outcome
+      }, [])
+      return { busy, result, run }
+    }
+
+    /** 把 `apiPost` 的返回统一成 `{ok, text}`。 */
+    function postResult(outcome, okText) {
+      if (isObject(outcome) && outcome.ok === true) return { ok: true, text: okText }
+      const detail = isObject(outcome) && isString(outcome.error) ? outcome.error : '请求失败'
+      const code = isObject(outcome) && isString(outcome.code) ? '（' + outcome.code + '）' : ''
+      return { ok: false, text: detail + code }
+    }
+
+    /** 单个厂商的凭据表单：baseUrl / apiKey / 拉取模型 / 测试连接。 */
+    function ProviderCard(props) {
+      const provider = props.provider
+      const id = isString(provider.id) ? provider.id : ''
+      const hasKey = provider.hasApiKey === true
+      const keyFromEnv = provider.apiKeySource === 'env'
+
+      const [baseUrl, setBaseUrl] = React.useState(String(provider.baseUrl ?? ''))
+      const [nativeUrl, setNativeUrl] = React.useState(String(provider.geminiNativeBaseUrl ?? ''))
+      const [keyEnv, setKeyEnv] = React.useState(String(provider.apiKeyEnv ?? ''))
+      const [keyValue, setKeyValue] = React.useState('')
+      const creds = useMutation()
+      const models = useMutation()
+      const probe = useMutation()
+
+      // 宿主的视图变了（例如拉取模型后重取成功）→ 同步输入框的初值
+      React.useEffect(() => {
+        setBaseUrl(String(provider.baseUrl ?? ''))
+        setNativeUrl(String(provider.geminiNativeBaseUrl ?? ''))
+        setKeyEnv(String(provider.apiKeyEnv ?? ''))
+      }, [provider.id, provider.baseUrl, provider.geminiNativeBaseUrl, provider.apiKeyEnv])
+
+      const endpoint = 'api/providers/' + encodeURIComponent(id) + '/'
+
+      const writeCredentials = (payload) =>
+        creds.run(async () => {
+          const outcome = await apiPost(endpoint + 'credentials', payload)
+          if (outcome.ok !== true) return postResult(outcome, '')
+          setKeyValue('')
+          return postResult(outcome, '已保存')
+        }).then((outcome) => {
+          if (outcome.ok === true) props.reload()
+          return outcome
+        })
+
+      const onRefresh = () =>
+        models.run(async () => {
+          const outcome = await apiPost(endpoint + 'refresh-models', {})
+          if (outcome.ok !== true) return postResult(outcome, '')
+          const list = isArray(outcome.data.models) ? outcome.data.models : []
+          return postResult(outcome, '已拉取 ' + String(list.length) + ' 个模型')
+        }).then((outcome) => {
+          if (outcome.ok === true) props.reload()
+          return outcome
+        })
+
+      const onTest = () =>
+        probe.run(async () => {
+          const outcome = await apiPost(endpoint + 'test', {})
+          if (isObject(outcome) && outcome.ok === true && isObject(outcome.data)) {
+            return postResult(outcome, '连接正常')
+          }
+          const data = isObject(outcome) ? outcome.data : null
+          const failure = isObject(data) && isObject(data.error) ? data.error : null
+          const message = failure !== null && isString(failure.message) ? failure.message : '连接失败'
+          const code = failure !== null && isString(failure.code) ? '（' + failure.code + '）' : ''
+          return { ok: false, text: message + code }
+        })
+
+      const disableCredentials = creds.busy || id === ''
+
+      return h(
+        'div',
+        {
+          style: {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            paddingTop: props.index === 0 ? '0' : '10px',
+            borderTop:
+              props.index === 0
+                ? 'none'
+                : '1px solid color-mix(in srgb, currentColor 10%, transparent)',
+          },
+        },
+        h(
+          'div',
+          { style: skin.row },
+          h('strong', { style: { fontSize: '13px' } }, String(provider.label ?? id ?? '未命名')),
+          h('code', { style: { ...skin.code, opacity: 0.7 } }, String(provider.id ?? '—')),
+          h(Pill, null, String(provider.group ?? '—')),
+          h(Pill, null, String(provider.apiMode ?? '—')),
+          h(
+            Pill,
+            null,
+            provider.hasApiKey === true
+              ? '密钥已就位' + (provider.apiKeySource ? '（' + String(provider.apiKeySource) + '）' : '')
+              : '密钥缺失',
+          ),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+          h(
+            Field,
+            { label: 'Base URL' },
+            h(TextInput, {
+              value: baseUrl,
+              disabled: creds.busy,
+              placeholder: 'https://api.example.com/v1',
+              onChange: (event) => setBaseUrl(event.target.value),
+              onBlur: () => {
+                const next = baseUrl.trim()
+                if (next !== String(provider.baseUrl ?? '')) writeCredentials({ baseUrl: next })
+              },
+            }),
+          ),
+          h(
+            Field,
+            { label: 'Gemini 原生 Base URL（可选）' },
+            h(TextInput, {
+              value: nativeUrl,
+              disabled: creds.busy,
+              placeholder: 'https://api.example.com/gemini/v1beta',
+              onChange: (event) => setNativeUrl(event.target.value),
+              onBlur: () => {
+                const next = nativeUrl.trim()
+                if (next !== String(provider.geminiNativeBaseUrl ?? '')) {
+                  writeCredentials({ geminiNativeBaseUrl: next })
+                }
+              },
+            }),
+          ),
+          h(
+            Field,
+            { label: '密钥环境变量名（可选，优先级高于本页填写）' },
+            h(TextInput, {
+              value: keyEnv,
+              disabled: creds.busy,
+              placeholder: 'OFOX_API_KEY',
+              onChange: (event) => setKeyEnv(event.target.value),
+              onBlur: () => {
+                const next = keyEnv.trim()
+                if (next !== String(provider.apiKeyEnv ?? '')) writeCredentials({ apiKeyEnv: next })
+              },
+            }),
+          ),
+          h(
+            Field,
+            { label: 'API Key（留空表示不修改）' },
+            h(TextInput, {
+              type: 'password',
+              value: keyValue,
+              disabled: creds.busy,
+              placeholder: hasKey ? '已就位，留空不改动' : '粘贴密钥',
+              autoComplete: 'new-password',
+              onChange: (event) => setKeyValue(event.target.value),
+            }),
+          ),
+        ),
+        h(
+          'div',
+          { style: skin.row },
+          h(
+            Btn,
+            {
+              disabled: disableCredentials || keyValue === '',
+              onClick: () => writeCredentials({ apiKey: keyValue }),
+              title: '把上面填写的密钥写入本机配置',
+            },
+            creds.busy ? '保存中…' : '保存',
+          ),
+          h(
+            Btn,
+            {
+              disabled: disableCredentials,
+              onClick: () => writeCredentials({ apiKey: '' }),
+              title: '清除本机配置里的密钥（环境变量里的密钥不受影响）',
+            },
+            '清除密钥',
+          ),
+          h(
+            Btn,
+            {
+              disabled: models.busy,
+              onClick: onRefresh,
+              title: 'GET {baseUrl}/models 并把模型列表写回配置',
+            },
+            models.busy ? '拉取中…' : '拉取模型',
+          ),
+          h(
+            Btn,
+            { disabled: probe.busy, onClick: onTest, title: '发一次探测请求，不写配置' },
+            probe.busy ? '测试中…' : '测试连接',
+          ),
+          keyFromEnv
+            ? h(
+                'span',
+                { style: { fontSize: '12px', opacity: 0.7 } },
+                '当前密钥来自环境变量，清除本页填写不会生效',
+              )
+            : null,
+        ),
+        h(Msg, { result: creds.result }),
+        h(Msg, { result: models.result }),
+        h(Msg, { result: probe.result }),
+        h(
+          'span',
+          { style: { fontSize: '12px', opacity: 0.7, lineHeight: 1.6 } },
+          '模型：' +
+            (isArray(provider.models) && provider.models.length > 0
+              ? provider.models.map(String).join(' / ')
+              : '未声明（可点「拉取模型」）'),
+        ),
+      )
+    }
+
+    /** 默认值卡片：provider / model / size 为可选下拉，保存后回传解析过的默认值。 */
+    function DefaultsCard(props) {
+      const providers = props.providers
+      const defaults = props.defaults
+      const [provider, setProvider] = React.useState(String(defaults.provider ?? ''))
+      const [model, setModel] = React.useState(String(defaults.model ?? ''))
+      const [size, setSize] = React.useState(String(defaults.size ?? '1:1'))
+      const [n, setN] = React.useState(String(defaults.n ?? 1))
+      const save = useMutation()
+
+      React.useEffect(() => {
+        setProvider(String(defaults.provider ?? ''))
+        setModel(String(defaults.model ?? ''))
+        setSize(String(defaults.size ?? '1:1'))
+        setN(String(defaults.n ?? 1))
+      }, [defaults.provider, defaults.model, defaults.size, defaults.n])
+
+      const current = providers.find((item) => isObject(item) && item.id === provider)
+      const models = isObject(current) && isArray(current.models) ? current.models : []
+      const sizes =
+        isObject(current) && isArray(current.allowedSizes) && current.allowedSizes.length > 0
+          ? current.allowedSizes.map(String)
+          : ['1:1', '3:4', '4:3', '9:16', '16:9']
+
+      const onProvider = (next) => {
+        setProvider(next)
+        // 换厂商时若当前模型不在新厂商列表里，就退回该厂商的第一个模型，
+        // 避免直接撞上「unknown_model」的 400。
+        const target = providers.find((item) => isObject(item) && item.id === next)
+        const list = isObject(target) && isArray(target.models) ? target.models.map(String) : []
+        if (list.length > 0 && list.indexOf(model) < 0) setModel(list[0])
+      }
+
+      const nValue = Number(n)
+      const nValid = Number.isInteger(nValue) && nValue >= 1 && nValue <= 4
+
+      const onSave = () =>
+        save.run(async () => {
+          const payload = { provider, size }
+          if (model !== '') payload.model = model
+          if (nValid) payload.n = nValue
+          const outcome = await apiPost('api/defaults', payload, (payloadShape) =>
+            isObject(payloadShape.defaults),
+          )
+          if (outcome.ok !== true) return postResult(outcome, '')
+          return postResult(outcome, '已保存')
+        }).then((outcome) => {
+          if (outcome.ok === true) props.reload()
+          return outcome
+        })
+
+      return h(
+        'div',
+        { style: skin.card },
+        h(
+          'div',
+          { style: skin.row },
+          h('strong', { style: { fontSize: '13px' } }, '默认值'),
+          h(Pill, null, '生图不带参数时用这一套'),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+          h(
+            Field,
+            { label: '厂商' },
+            h(Select, {
+              value: provider,
+              disabled: save.busy,
+              options: providers.map((item) => ({
+                value: String(item.id ?? ''),
+                label: String(item.label ?? item.id ?? '—'),
+              })),
+              onChange: (event) => onProvider(event.target.value),
+            }),
+          ),
+          h(
+            Field,
+            { label: '模型' },
+            h(Select, {
+              value: model,
+              disabled: save.busy,
+              options: [
+                { value: '', label: '（用该厂商的第一个模型）' },
+                ...models.map((name) => ({ value: String(name), label: String(name) })),
+                // 当前默认模型不在列表里时也显示出来，避免界面与配置不一致
+                ...(model !== '' && models.indexOf(model) < 0
+                  ? [{ value: model, label: model + '（不在列表里）' }]
+                  : []),
+              ],
+              onChange: (event) => setModel(event.target.value),
+            }),
+          ),
+          h(
+            Field,
+            { label: '尺寸' },
+            h(Select, {
+              value: size,
+              disabled: save.busy,
+              options: sizes.map((name) => ({ value: name, label: name })),
+              onChange: (event) => setSize(event.target.value),
+            }),
+          ),
+          h(
+            Field,
+            { label: '每次张数（1–4）' },
+            h(TextInput, {
+              type: 'number',
+              value: n,
+              disabled: save.busy,
+              onChange: (event) => setN(event.target.value),
+            }),
+          ),
+        ),
+        h(
+          'div',
+          { style: skin.row },
+          h(
+            Btn,
+            { disabled: save.busy || !nValid, onClick: onSave, title: '写入 config.json 的 defaults' },
+            save.busy ? '保存中…' : '保存默认值',
+          ),
+          nValid ? null : h('span', { style: { fontSize: '12px', color: '#ef4444' } }, '张数应为 1–4 的整数'),
+        ),
+        h(Msg, { result: save.result }),
+      )
+    }
 
     function ProvidersSection(props) {
       const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
+
+      const reload = React.useCallback(
+        () =>
+          apiGet('api/providers', isProviders).then((result) => {
+            if (result.ok) setState({ phase: 'ready', data: result.data, error: null })
+            else setState({ phase: 'error', data: null, error: result.error })
+          }),
+        [],
+      )
 
       React.useEffect(() => {
         let alive = true
@@ -544,7 +1022,12 @@ window.__ModuleLoader__.load({
           h(
             Notice,
             { role: 'alert', title: '读取失败', detail: state.error },
-            h('p', { style: skin.muted }, '宿主路由可能尚未就绪，或插件未加载到当前 profile。'),
+            h(
+              'div',
+              { style: skin.row },
+              h(Btn, { onClick: () => reload() }, '重试'),
+              h('p', { style: skin.muted }, '宿主路由可能尚未就绪，或插件未加载到当前 profile。'),
+            ),
           ),
         )
       }
@@ -577,25 +1060,6 @@ window.__ModuleLoader__.load({
           h('code', { style: skin.code }, value),
         )
 
-      /**
-       * 同上的多值版本：标签 + 若干子项。
-       * 组内允许换行（模型一多不能横向溢出），但标签 `flexShrink: 0` 且始终与
-       * 第一个值同排，视觉上不会被拆散。
-       */
-      const fieldGroup = (label, children) =>
-        h(
-          'span',
-          {
-            style: {
-              display: 'inline-flex',
-              flexWrap: 'wrap',
-              alignItems: 'baseline',
-              gap: '6px',
-            },
-          },
-          h('span', { style: { ...skin.key, flexShrink: 0 } }, label),
-          ...children,
-        )
       const providers = data.providers.filter(isObject)
 
       return h(
@@ -605,21 +1069,36 @@ window.__ModuleLoader__.load({
         h(
           'p',
           { style: skin.muted },
-          '本页只读：厂商、模型、默认值与累计用量。密钥只显示「是否就位」，不回显内容。',
+          '在此填写密钥与端点、拉取模型、测试连接，并选定默认生图模型。' +
+            '密钥只以「是否就位」的形式回显，任何时候都不会显示内容。',
         ),
+
+        h(DefaultsCard, {
+          providers,
+          defaults,
+          reload,
+        }),
 
         h(
           'div',
           { style: skin.card },
-          h('strong', { style: { fontSize: '13px' } }, '默认值'),
           h(
             'div',
             { style: skin.row },
-            field('厂商', String(defaults.provider ?? '—')),
-            field('模型', String(defaults.model ?? '—')),
-            field('尺寸', String(defaults.size ?? '—')),
+            h('strong', { style: { fontSize: '13px' } }, '厂商'),
+            h(Pill, null, providers.length + ' 个'),
+            h(Btn, { onClick: () => reload(), title: '重新读取厂商与模型' }, '刷新'),
           ),
-          h('div', { style: skin.row }, field('数据目录', String(data.dataDir ?? '—'))),
+          providers.length === 0
+            ? h('p', { style: skin.muted }, '未配置任何厂商。可在插件配置中补充 provider 条目。')
+            : providers.map((provider, index) =>
+                h(ProviderCard, {
+                  key: isString(provider.id) ? provider.id : 'p' + String(index),
+                  provider,
+                  index,
+                  reload,
+                }),
+              ),
         ),
 
         h(
@@ -646,74 +1125,7 @@ window.__ModuleLoader__.load({
                   String(historical.note ?? ''),
               )
             : null,
-        ),
-
-        h(
-          'div',
-          { style: skin.card },
-          h(
-            'div',
-            { style: skin.row },
-            h('strong', { style: { fontSize: '13px' } }, '厂商'),
-            h(Pill, null, providers.length + ' 个'),
-          ),
-          providers.length === 0
-            ? h('p', { style: skin.muted }, '未配置任何厂商。可在插件配置中补充 provider 条目。')
-            : providers.map((provider, index) =>
-                h(
-                  'div',
-                  {
-                    key: isString(provider.id) ? provider.id : 'p' + String(index),
-                    style: {
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      paddingTop: index === 0 ? '0' : '8px',
-                      borderTop:
-                        index === 0
-                          ? 'none'
-                          : '1px solid color-mix(in srgb, currentColor 10%, transparent)',
-                    },
-                  },
-                  h(
-                    'div',
-                    { style: skin.row },
-                    h(
-                      'strong',
-                      { style: { fontSize: '13px' } },
-                      String(provider.label ?? provider.id ?? '未命名'),
-                    ),
-                    h('code', { style: { ...skin.code, opacity: 0.7 } }, String(provider.id ?? '—')),
-                    h(Pill, null, String(provider.group ?? '—')),
-                    h(Pill, null, String(provider.apiMode ?? '—')),
-                    h(
-                      Pill,
-                      null,
-                      provider.hasApiKey === true
-                        ? '密钥已就位' + (provider.apiKeySource ? '（' + String(provider.apiKeySource) + '）' : '')
-                        : '密钥缺失',
-                    ),
-                  ),
-                  fieldGroup(
-                    '模型',
-                    isArray(provider.models) && provider.models.length > 0
-                      ? provider.models.map((model, mi) =>
-                          h(
-                            Pill,
-                            { key: 'm' + String(mi) },
-                            isObject(model) ? String(model.id ?? model.label ?? '?') : String(model),
-                          ),
-                        )
-                      : [h('span', { style: skin.muted }, '未声明模型')],
-                  ),
-                  fieldGroup(
-                    '支持尺寸',
-                    isArray(provider.allowedSizes) && provider.allowedSizes.length > 0
-                      ? [h('code', { style: skin.code }, provider.allowedSizes.map(String).join(' / '))]
-                      : [h('span', { style: skin.muted }, '未声明')],
-                  ),
-                ),
-              ),
+          h('div', { style: skin.row }, field('数据目录', String(data.dataDir ?? '—'))),
         ),
 
         h('p', { style: skin.muted }, '插件 ' + PLUGIN + '@' + VERSION + ' · 设置页插槽 settings.section'),
@@ -1595,6 +2007,8 @@ window.__ModuleLoader__.load({
       PreviewCard,
       PreviewBadge,
       ProvidersSection,
+      ProviderCard,
+      DefaultsCard,
       WorkbenchPanel,
       PanelIcon,
       // 状态机 / 轮询器：jsdom lane 用来读快照、推进一次同步

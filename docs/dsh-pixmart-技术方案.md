@@ -718,6 +718,14 @@ GET /pixmart/file/<projectId>/<name>
 
 **通用规则**：入参 JSON 校验 → 业务 → 结构化 `{code, message}` 错误；任何 RPC 都不泄露密钥；长任务（批量导出）带进度事件。
 
+> **已落地的写路由（设置页可写，2026-10-05）**：上表里的 `saveProvider` / `testProvider`
+> 最终以 4 个 POST 路由实现，形状与判据见 [contract-notes §14](./contract-notes.md)：
+> `POST /pixmart/api/providers/<id>/credentials`（写密钥/端点，空串清除）、
+> `.../refresh-models`（GET {baseUrl}/models 并写回 `provider.models`）、
+> `.../test`（只探测不写，成败都是 200）、`POST /pixmart/api/defaults`（默认 provider/model/size/n，
+> model 不在该厂商列表里则 400 `unknown_model`）。请求体上限 64KB，`GET` 命中写路由一律 405。
+
+
 ---
 
 ## 8. Client 面设计

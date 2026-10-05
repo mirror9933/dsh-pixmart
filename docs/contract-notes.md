@@ -442,3 +442,40 @@ F1 取证共发出 **25 次付费调用**，其中**必要 9 次、可避免 16 
 结束打印实际次数；并用三个「不放行」路径验证过（0 / 2 / 8，均零请求）。
 
 **规则**：任何会产生费用的调用，先报数、等用户点头。用量硬计数属 P2 的 `usage.jsonl`。
+
+## 14. 设置页可写（4 个 POST 路由）
+
+设置页从「只读」改为「可写」，新增 4 个写路由，**形状即客户端对接契约**：
+
+| 路由 | body | 成功 | 失败 |
+|---|---|---|---|
+| `POST /pixmart/api/providers/<id>/credentials` | `{apiKey?, apiKeyEnv?, baseUrl?, geminiNativeBaseUrl?}` | `200 {ok:true, provider:ProviderView}` | `404 unknown_provider` / `400 bad_id` / `400 bad_url` |
+| `POST /pixmart/api/providers/<id>/refresh-models` | — | `200 {ok:true, models:string[], count, provider}` | `400 no_api_key` / `401 auth` / `502 bad_response` / `504 timeout` |
+| `POST /pixmart/api/providers/<id>/test` | — | `200 {ok:true, latencyMs, modelCount}` | `200 {ok:false, latencyMs, error:{code,message}}`（成败都是 200） |
+| `POST /pixmart/api/defaults` | `{provider?, model?, size?, n?}` | `200 {ok:true, defaults}` | `400 unknown_model` / `400 unknown_provider` / `400 bad_field` |
+
+**六条实现红线**（都有测试钉住，见 `test/providers-api.test.mjs`）：
+
+1. **任何响应体都不含 apiKey 本体**，只回 `hasApiKey` / `apiKeySource`（`ProviderView`）。
+2. **密钥不进日志、不进错误消息**：401 只说「密钥被拒（HTTP 401）」。
+3. 写路由全部走 `src/routes.ts` 的 `guard`（环回来源校验 + 异常转结构化响应）。
+4. 配置写入一律走 `ConfigStore.update()`（原子写 + 按 key 串行），不直接写文件。
+5. `POST` 才允许写；`GET` 命中写路由 → 405。
+6. 请求体有 64KB 上限（超限 413）、JSON 解析失败 400；`IncomingMessage` 的
+   `error` 事件也会 reject 读体 promise，避免连接中断时永远挂着。
+
+**探测实现**在独立的 `src/vendor/models.ts`（不塞进 `openai-compat.ts`）：
+`GET {baseUrl}/models`（末尾斜杠先去掉），鉴权与生图同源（OpenAI 兼容用
+`Authorization: Bearer`；`gemini-native` 用 `x-goog-api-key` + 原生 baseUrl）；
+响应兼容 `{data:[{id}]}` / `{models:[...]}` / 纯数组三种形状；
+超时取 `min(provider.timeoutMs, 15s)`。
+
+**已知取舍**：
+
+- 写成功后 `runtime.configStore` 的内存副本与工具侧共享，但若 `config.json`
+  被本进程之外的东西改动，内存不会自动重读（与改动前一致）。
+- `refresh-models` 会把探测回来的**全部** id 写进 `provider.models`（契约即如此），
+  包括该厂商的非图像模型。
+- `baseUrl` 只做形状校验（`http(s)://` + 非空主机 + 不内嵌用户名密码），
+  不做联通性判断——那是「测试连接」的事。
+

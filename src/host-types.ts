@@ -124,6 +124,14 @@ export interface HttpRequestLike {
   readonly method?: string
   readonly url?: string
   readonly socket?: { readonly remoteAddress?: string }
+  /**
+   * 读请求体的事件面（Node `IncomingMessage`）。
+   *
+   * 设置页可写之后，`POST /pixmart/api/...` 要解析 JSON body，因此必须能订阅
+   * `data` / `end`；`error` 用于连接中断时把读体 promise reject 掉，
+   * 否则它会永远挂着。这里只声明这三个事件，保持"最小面"的既有风格。
+   */
+  on(event: 'data' | 'end' | 'error', listener: (chunk?: unknown) => void): unknown
 }
 
 export interface HttpResponseLike {
