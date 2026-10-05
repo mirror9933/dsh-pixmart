@@ -8,6 +8,7 @@
  * - 所有注册都归当前 fiber：`ctx.effect(() => disposer, label)`。
  */
 import type { DshPixmartConfig, HostContext } from './host-types.js'
+import { installGuidance } from './guidance.js'
 import { registerRoutes } from './routes.js'
 import { writeSmokeMarker } from './smoke-marker.js'
 import { createRuntime, createToolsFromRuntime } from './tools/index.js'
@@ -54,11 +55,22 @@ export function apply(ctx: HostContext, config: DshPixmartConfig = {}): void {
     }
   }
 
+  /** 系统提示区段：让模型知道该在什么时候用这些工具，以及计费顺序。 */
+  const mountGuidance = (host: HostContext): void => {
+    try {
+      installGuidance(host)
+    } catch {
+      // 没有说明只是"不好发现"，不该影响工具本身。
+    }
+  }
+
   if (typeof lazy.inject === 'function') {
     lazy.inject(['webServer'], mount)
+    lazy.inject(['systemPrompt'], mountGuidance)
   } else {
     // 极旧宿主没有 inject：退回立即尝试，至少不崩。
     mount(ctx)
+    mountGuidance(ctx)
   }
 
   writeSmokeMarker(ctx)

@@ -152,3 +152,20 @@ export interface WebServerLike {
     readonly handler: (request: HttpRequestLike, response: HttpResponseLike) => void | Promise<void>
   }): () => void
 }
+
+/** `ctx.systemPrompt.section()` 的入参（宿主 PromptSection 的结构子集）。 */
+export interface PromptSectionLike {
+  readonly name: string
+  readonly order: number
+  readonly text: string
+}
+
+/**
+ * `ctx.systemPrompt` 的结构子集。
+ *
+ * 用来把插件的使用说明送进系统提示，让模型知道**该在什么时候**用这些工具——
+ * 否则它只能靠工具描述自己推断，而且计费约束全靠自觉。
+ */
+export interface SystemPromptLike {
+  section(section: PromptSectionLike): () => void
+}
