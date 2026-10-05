@@ -15,6 +15,7 @@ import { RunStore } from '../lib/store/run-store.js'
 import { UsageLog } from '../lib/log/usage.js'
 import { createRuntime } from '../lib/tools/runtime.js'
 import { createBatchTool } from '../lib/tools/batch.js'
+import { createGenerateTools } from '../lib/tools/generate.js'
 import { createProjectsTool } from '../lib/tools/projects.js'
 
 const PNG_B64 =
@@ -28,9 +29,17 @@ const stubContext = {
   on: () => () => {},
 }
 
+/**
+ * 用**真实** AbortSignal，不要手搓。
+ *
+ * 假信号（`{ aborted, addEventListener }`）被丢进真实 `fetch` 时会被 Node 拒绝：
+ * `RequestInit: Expected signal (...) to be an instance of AbortSignal`。
+ * `batch` 侥幸没踩到——它传的是 `runStore` 的真实 signal；而 `generate` **直传**
+ * `exec.signal`，于是只有它暴露了这个测试替身的失真。
+ */
 const stubExec = {
   callId: 'test',
-  signal: { aborted: false, addEventListener: () => {} },
+  signal: new AbortController().signal,
   deferContext: () => {},
   concludeTurn: () => {},
 }
@@ -334,6 +343,66 @@ describe('pixmart_projects', () => {
       assert.equal(deleted.ok, true)
       assert.deepEqual([...deleted.deleted], [made.projectId])
       assert.equal(runtime.projectStore.has(made.projectId), false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * 账本必须覆盖 generate/edit。
+ *
+ * 这组用例来自一次**真实漏账**：用户在 P2 之后跑过一次真实的 pixmart_edit，
+ * 设置页「累计用量」却仍是 0 —— 因为 usage.append 只接在 batch.ts 上，
+ * P1 写的 generate.ts 从未被接进去。账本**低报**比不报更糟：它看起来像没花钱。
+ *
+ * 原有测试只覆盖适配器与汇总数学，没有一条断言"生图会写账本"，
+ * 所以这个缺口一直没被抓到。这两条就是补它。
+ */
+describe('账本覆盖 generate（实测曾系统性漏记）', () => {
+  const generateTool = (runtime) => {
+    const found = createGenerateTools(runtime).find((tool) => tool.name === 'pixmart_generate')
+    assert.ok(found, 'createGenerateTools 必须包含 pixmart_generate')
+    return found
+  }
+
+  it('成功后写 1 条账本：requests / ok / images 都 +1', async () => {
+    const { dir, runtime } = makeRuntime()
+    try {
+      const tool = generateTool(runtime)
+      assert.equal(runtime.usage.summary().requests, 0, '起始账本应为空')
+
+      const result = await tool.execute({ module: 'main.white-bg', size: '1:1' }, stubExec)
+      assert.equal(result.ok, true, `生图应成功，实际：${JSON.stringify(result).slice(0, 200)}`)
+
+      const summary = runtime.usage.summary()
+      assert.equal(summary.requests, 1, 'generate 必须写账本（这里曾经是 0）')
+      assert.equal(summary.ok, 1)
+      assert.equal(summary.images, 1, '产出一张图就该记一张')
+      // 账本文件必须真的落盘，而不是只活在内存里——UI 读的就是这个文件
+      assert.equal(existsSync(join(dir, 'usage.jsonl')), true, 'usage.jsonl 必须落盘')
+      assert.equal(runtime.usage.read(10).length, 1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('失败也要记账：失败同样消耗配额，账本不能只记成功', async () => {
+    // 指向一个必然拒绝连接的端口 → 厂商调用失败，走 result.ok === false 分支
+    const { dir, runtime } = makeRuntime({ provider: { baseUrl: 'http://127.0.0.1:1/v1' } })
+    try {
+      const tool = generateTool(runtime)
+      const result = await tool.execute({ module: 'main.white-bg', size: '1:1' }, stubExec)
+      assert.equal(result.ok, false, '厂商不可达时应失败')
+
+      const summary = runtime.usage.summary()
+      assert.equal(summary.requests, 1, '失败的调用也必须留痕')
+      assert.equal(summary.failed, 1)
+      assert.equal(summary.images, 0)
+
+      const record = runtime.usage.read(10)[0]
+      assert.equal(record.ok, false)
+      assert.ok(record.errorCode, '失败记录必须带 errorCode，否则事后无法归因')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
