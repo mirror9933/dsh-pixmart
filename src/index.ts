@@ -36,17 +36,30 @@ export function apply(ctx: HostContext, config: DshPixmartConfig = {}): void {
   }, 'dsh-pixmart: tools')
 
   // client 半 ↔ host 的唯一通道（包式 client 拿不到 host.call）。
-  // 注册形状已与 dshmarket 的 RouteDefinition 对齐：
-  //   { kind: 'exact' | 'prefix', path, handler(request, response) }
-  // webServer 缺失时 registerRoutes 返回 no-op；**注册期任何异常也只降级为 no-op**——
-  // 客户端 UI 拿不到数据可以接受，但工具绝不能因为路由没注册上而整体消失。
-  ctx.effect(() => {
+  //
+  // **必须惰性挂载，不能在 apply 里 ctx.get('webServer')**：P0 实测
+  // （contract-notes §1.3）可选服务在 apply 时刻尚未就绪，webServer 同样如此。
+  // 早先那版正是在 apply 里探测 → 拿到 undefined → 静默跳过注册 → 客户端 UI 一直 404。
+  // dshmarket 的写法也是 `ctx.inject(['webServer', 'loader'], hostCtx => …)`。
+  const lazy = ctx as unknown as {
+    inject?: (services: readonly string[], callback: (child: HostContext) => void) => void
+  }
+
+  /** 注册形状与 dshmarket 的 RouteDefinition 对齐：{ kind, path, handler(request, response) }。 */
+  const mount = (host: HostContext): void => {
     try {
-      return registerRoutes(ctx, runtime)
+      registerRoutes(host, runtime)
     } catch {
-      return () => {}
+      // 注册失败只让客户端 UI 拿不到数据，绝不带走工具。
     }
-  }, 'dsh-pixmart: http routes')
+  }
+
+  if (typeof lazy.inject === 'function') {
+    lazy.inject(['webServer'], mount)
+  } else {
+    // 极旧宿主没有 inject：退回立即尝试，至少不崩。
+    mount(ctx)
+  }
 
   writeSmokeMarker(ctx)
 }
