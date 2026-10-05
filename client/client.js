@@ -101,6 +101,21 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 把宿主的内部错误翻译成**用户能据以行动**的提示。
+     *
+     * 背景：DSH 的两半不对称——客户端刷新即生效，宿主必须重启。宿主还是旧代码时，
+     * 新接口会落到路由兜底并回 `unknown_route`，而它的 message 是内部路由片段
+     * （如 `/providers/ofox/test`）。那条文案看起来像客户端拼错了 URL，
+     * 实际是"宿主没重启"。这个歧义已经让用户白测过一轮，这里翻译掉。
+     */
+    const HOST_STALE_HINT = '宿主未加载此接口，请重启 DeepSeek Harness 后重试'
+
+    function explainHostError(code, message) {
+      if (code === 'unknown_route') return HOST_STALE_HINT
+      return message
+    }
+
     /** 取数助手：no-store + 形状校验 + 不抛异常。 */
     async function apiGet(path, validate) {
       if (BASE === null) return { ok: false, error: '无法解析插件基址' }
@@ -108,7 +123,17 @@ window.__ModuleLoader__.load({
       if (url === null) return { ok: false, error: '无法解析请求地址' }
       try {
         const response = await fetch(url, { cache: 'no-store' })
-        if (!response.ok) return { ok: false, error: 'HTTP ' + String(response.status) }
+        if (!response.ok) {
+          // 失败响应里也可能带结构化 error（例如 unknown_route），先试着读出来，
+          // 否则 GET 只会给一个干巴巴的 "HTTP 404"。
+          const payload = await response.json().catch(() => null)
+          const detail = isObject(payload) && isObject(payload.error) ? payload.error : {}
+          const code = isString(detail.code) ? detail.code : 'http_' + String(response.status)
+          const raw = isString(detail.message)
+            ? detail.message
+            : 'HTTP ' + String(response.status)
+          return { ok: false, error: explainHostError(code, raw), code, status: response.status }
+        }
         const body = await response.json().catch(() => null)
         if (typeof validate === 'function' && !validate(body)) {
           return { ok: false, error: '响应形状不符合预期' }
@@ -143,7 +168,13 @@ window.__ModuleLoader__.load({
           const message = isString(detail.message)
             ? detail.message
             : 'HTTP ' + String(response.status) + '：请求失败'
-          return { ok: false, error: message, code, status: response.status, data: payload }
+          return {
+            ok: false,
+            error: explainHostError(code, message),
+            code,
+            status: response.status,
+            data: payload,
+          }
         }
         if (typeof validate === 'function' && !validate(payload)) {
           return { ok: false, error: '响应形状不符合预期', status: response.status }
@@ -2021,6 +2052,8 @@ window.__ModuleLoader__.load({
       relativeUrl,
       isActive,
       isTerminal,
+      explainHostError,
+      HOST_STALE_HINT,
       POLL_ACTIVE_MS,
       POLL_IDLE_MS,
     }
