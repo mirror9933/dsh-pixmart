@@ -794,13 +794,39 @@ body: { name: string }
 | 排序 | 四种，变化时**重置到第一页** |
 | 分页 | 「加载更多」**追加**而非替换；显示「显示 N / 共 M」 |
 | 懒加载 | 封面 `loading="lazy"` + `decoding="async"`，**每个项目只加载 1 张** |
-| 查看器 | `position: fixed` 覆盖层；`Esc` 关闭；`←/→` 切图；「3 / 8」；提示词可复制；焦点与滚动还原；`prefers-reduced-motion` 关动画 |
+| 查看器 | `position: fixed` 覆盖层；`top` = shell 的 `--dsh-frame-chrome-top`（**不写死 40px**）；固定顶栏 + 唯一滚动区；打开时锁背景滚动；`Esc` 关闭；`←/→` 切图；「3 / 8」；提示词可复制；焦点与滚动还原；`prefers-reduced-motion` 关动画 |
 | 对比 | 同一模块多张时 2-up；**只有 1 张时不出现该开关** |
 | 多选 | 全选**限定当前筛选**且文案写明数量；批量软删需二次确认；批量导出 |
 | 重命名 | 详情内联编辑 |
 
 **查看器刻意不使用 `shell.overlay`**：那个全局座位已被「实时预览卡」占用，
 同一插件抢两个 contributor 会互相覆盖。查看器在面板内自建覆盖层。
+
+### 17.3.1 查看器与窗口 chrome（Windows 桌面外壳）
+
+用户实测：查看器自己的顶栏（模块标签 / 关闭）压在标题栏上、右上角看不到控件。根因是
+**查看器从视口 y=0 起画**，而 Windows 桌面外壳把视口顶部 40px 留给了窗口 chrome：
+
+- `lib/main.js`：窗口用 `titleBarStyle: "hidden"` + `titleBarOverlay: { height: 40 }`，
+  原生最小化/最大化/关闭按钮由 Electron 画在 **web 内容之上**；
+- `lib/preload-app.cjs`：preload 给 `<html>` 打 `data-windows-titlebar`、
+  把标题栏高度写进 `--dsh-windows-titlebar-height`（40px），并把「应用 / 编辑」菜单挂成
+  `position: fixed; top: 0; z-index: 1100` 的宿主（`[data-windows-menu]`）；
+- `ui-layout` 的 `AppFrame`：`padding-top: var(--dsh-windows-titlebar-height)`，
+  即三栏整体在这条带**下面**（`.centerCol` 从 40px 起算）；
+- shell 为模态层发布 `--dsh-frame-chrome-top`（Windows = 标题栏高度，原生全屏归零；
+  普通浏览器文档不发布），`ui-primitives` 的 `Modal` 正是 `inset: var(--dsh-frame-chrome-top, 0px) 0 0`。
+
+因此查看器 `top: var(--dsh-frame-chrome-top, 0px)`，`zIndex` 保持 60（**低于 1100**，
+永不盖窗口 chrome）。顶栏另外从 `overflow: auto` 的根盒子里搬出来，与滚动区并列，
+滚图片/提示词时它不会被滚走。
+
+**背景滚动锁**：查看器打开时把面板滚动层（`.pxm-scroll`）的 `overflow-y` 置 `hidden`
+（`lockBackgroundScroll`），关闭或**卸载**时按**原内联值**精确还原（原来是 `auto` 回
+`auto`，原来没有就回到没有）。只在量到真有经典滚动条（`offsetWidth − clientWidth > 0`）
+时才写 `scrollbar-gutter: stable`，免得锁本身把背景横移一条滚动条宽度。
+注意：`.pxm-scroll` **不是**查看器的祖先（`workbenchFrame` 里覆盖层与滚动区并列），
+所以这条锁是"链式滚动 + 未来的祖先变化"的防线，而不是"事件冒泡回滚动区"的补丁。
 
 ### 17.4 已知边界（诚实记录）
 
@@ -812,6 +838,14 @@ body: { name: string }
   但规则写在两处**——将来宿主改规则时存在只改一处的风险。建议收敛为"宿主权威"
   或共用一个 helper（**尚未做**）。
 - **不做服务端缩略图**（决定②）：网格加载的是原图，靠懒加载与 CSS 限尺寸缓解。
+- **查看器的两条修复只到"结构断言"为止**（§17.3.1）：`overflow-y: hidden` 写进内联样式
+  ≠ 真的滚不动；`top: var(--dsh-frame-chrome-top, 0px)` 只是个待解析的字符串，jsdom 里
+  既不解析变量也不算布局——"背景有没有跟着滚""顶栏有没有真的避开标题栏与原生按钮"
+  **都必须 GUI 目视**。Tab 陷阱能测 activeElement 落点（事件是测试自己派的），
+  测不到浏览器默认 Tab 行为、也测不到焦点框有没有被裁。
+  **macOS 未验证**：`html[data-platform=darwin]` 不发布 `--dsh-frame-chrome-top`
+  （它的顶带是红绿灯那 48px 的 `--dsh-frame-top-clearance`），所以查看器在 macOS 上
+  仍从 y=0 起画（与修复前一致，非回归）——要不要避让红绿灯需要真机确认。
 
 
 

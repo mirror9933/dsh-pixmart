@@ -2024,15 +2024,82 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 查看器里可聚焦的元素（Tab 陷阱用）。
+     *
+     * `:not([disabled])` 是必要的：`← 上一张 / 下一张 →` 在只有一张图时是 disabled，
+     * 浏览器会跳过它们，但 `querySelectorAll` 不会——不排除就会把焦点"交给"一个
+     * 根本聚焦不了的按钮，Tab 看起来像卡住了。
+     */
+    const VIEWER_FOCUSABLE =
+      'button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+
+    /**
+     * 把 `Tab` / `Shift+Tab` 关在查看器内部（模态层的焦点不该游到背后的滚动列表里）。
+     *
+     * 接管**全部** Tab 并自己挑落点：`preventDefault` 之后浏览器不会再移动焦点，落点就
+     * 完全由这里决定——顺序取自 `querySelectorAll` 的文档顺序，正是浏览器默认顺序；
+     * 好处是末尾回绕、焦点已在查看器之外的两种情况都只有一份实现，且在任何宿主里
+     * 结果一致（有些宿主根本没有 Tab 的默认焦点移动）。
+     * 查看器里只有按钮与复选框，没有需要浏览器特判的 `<label>` / shadow 组合。
+     */
+    function trapTabKey(event, scope) {
+      if (!isObject(scope) || typeof scope.querySelectorAll !== 'function') return
+      if (isObject(event) && typeof event.preventDefault === 'function') event.preventDefault()
+      const doc = scope.ownerDocument
+      const active = doc === null || doc === undefined ? null : doc.activeElement
+      const inside = active !== null && active !== undefined && scope.contains(active)
+      const nodes = Array.from(scope.querySelectorAll(VIEWER_FOCUSABLE))
+      const back = isObject(event) && event.shiftKey === true
+      if (nodes.length === 0) {
+        // 一个可聚焦元素都没有：焦点钉在查看器根上，绝不还给背景。
+        if (typeof scope.focus === 'function') scope.focus({ preventScroll: true })
+        return
+      }
+      const first = nodes[0]
+      const last = nodes[nodes.length - 1]
+      if (!inside) {
+        ;(back ? last : first).focus()
+        return
+      }
+      if (back && (active === first || active === scope)) {
+        last.focus()
+        return
+      }
+      if (!back && active === last) {
+        first.focus()
+        return
+      }
+      // 中间位置：上面已经 preventDefault 了，得自己往前/往后挪一格。
+      const at = nodes.indexOf(active)
+      const next = at < 0 ? (back ? last : first) : nodes[back ? at - 1 : at + 1]
+      if (next !== undefined) next.focus()
+    }
+
+    /**
      * 大图查看器（`position: fixed` 覆盖层，**不使用 `shell.overlay`**）。
      *
      * 为什么不用 `shell.overlay`：那个全局座位已经被「实时预览卡」占用，一个插件同一
      * 座位注册两次会互相覆盖。查看器是作品库面板**内部**的模态层，用 fixed 定位即可。
      *
+     * **顶栏锚定**：`top` 取 shell 发布的 `--dsh-frame-chrome-top`，不是 `0`。
+     * 在 Windows 桌面外壳里，视口顶部那条带（40px）属于窗口 chrome：Electron 用
+     * `titleBarOverlay: { height: 40 }` 把原生最小化/最大化/关闭按钮画在 **web 内容之上**，
+     * 桌面 preload 又把「应用 / 编辑」菜单挂成 `position: fixed; top: 0; z-index: 1100`
+     * 的宿主；而 `ui-layout` 的 AppFrame 用 `padding-top: var(--dsh-windows-titlebar-height)`
+     * 把三栏整体压到这条带下面。查看器若从 0 起画，自己的顶栏（模块标签 / 关闭）就会压到
+     * 标题栏上、或被原生按钮盖住。shell 为模态层发布的正是 `--dsh-frame-chrome-top`
+     * （Windows = 标题栏高度，原生全屏归零；普通浏览器文档不发布 → 回退 `0px`，与从前一致）。
+     * **不写死像素高度**：那 40px 是运行时由 preload 写进 `--dsh-windows-titlebar-height` 的。
+     *
+     * **顶栏不跟着内容滚**：查看器内部分成"固定顶栏 + 唯一滚动区"两层（与作品库面板同一
+     * 骨架）。顶栏（标签 / 位置计数 / 并排对比 / 关闭）永远在视口里，滚的只有图片与文案。
+     *
      * 交互：`Esc` 关闭、`←` `→` 在项目内的图片之间切换、多张时显示「3 / 8」。
      * 「并排对比」只在**当前这张图所在模块有多张**时出现（只有 1 张时没有可对比的对象，
      * 出现一个点了没反应的开关比不出现更糟）。
-     * 关闭后把焦点还给打开它的那张缩略图，并把滚动位置放回原处。
+     * 打开时锁定背景滚动（`WorkbenchPanel` 的 effect 负责，见 `lockBackgroundScroll`）、
+     * 把焦点收进查看器并用 Tab 陷阱关住；关闭后把焦点还给打开它的那张缩略图，
+     * 并把滚动位置放回原处。
      */
     function ImageViewer(props) {
       const entries = isArray(props.entries) ? props.entries : []
@@ -2041,6 +2108,8 @@ window.__ModuleLoader__.load({
       const entry = entries[index]
       const canCompare = isObject(entry) && entry.itemImageCount > 1
       const compare = props.compare === true && canCompare
+      /** 查看器根：Tab 陷阱的边界 + 打开时的焦点落点。 */
+      const rootRef = React.useRef(null)
 
       React.useEffect(() => {
         const doc = typeof document === 'undefined' ? null : document
@@ -2060,11 +2129,33 @@ window.__ModuleLoader__.load({
           if (key === 'ArrowRight') {
             event.preventDefault()
             props.onStep(1)
+            return
           }
+          if (key === 'Tab') trapTabKey(event, rootRef.current)
         }
         doc.addEventListener('keydown', onKey)
         return () => doc.removeEventListener('keydown', onKey)
       })
+
+      /**
+       * 打开时把焦点收进查看器（只跑一次：切上一张/下一张不该把焦点抢回来）。
+       *
+       * `preventScroll` 很关键：聚焦本身会触发"滚动到可见"，而查看器是 fixed 的，
+       * 不带这个选项就可能把背后的滚动容器拉一下——正是要避免的"背景动了"。
+       */
+      React.useEffect(() => {
+        const node = rootRef.current
+        if (node === null || node === undefined || typeof node.focus !== 'function') return
+        try {
+          node.focus({ preventScroll: true })
+        } catch {
+          try {
+            node.focus()
+          } catch {
+            /* 聚焦失败不影响查看器打开 */
+          }
+        }
+      }, [])
 
       if (!isObject(entry)) return null
 
@@ -2095,61 +2186,71 @@ window.__ModuleLoader__.load({
               },
             })
 
-      return h(
+      /**
+       * 固定顶栏：模块标签 / 位置计数 / 并排对比 / 关闭。
+       *
+       * 它在滚动区**外面**——"顶栏必须完整可见"这条不能只靠锚定位置，还得保证它不会
+       * 被自己的内容滚走（原来整块查看器是一个 `overflow: auto`，滚一下顶栏就没了）。
+       */
+      const viewerBar = h(
         'div',
         {
-          className: 'pxm-viewer',
-          role: 'dialog',
-          'aria-modal': 'true',
-          'aria-label': '图片查看器',
-          style: {
-            position: 'fixed',
-            inset: 0,
-            zIndex: 60,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            padding: '16px',
-            overflow: 'auto',
-            color: 'inherit',
-            background: 'color-mix(in srgb, Canvas 92%, transparent)',
-            backdropFilter: 'blur(2px)',
-          },
+          className: 'pxm-viewer-bar',
+          style: { ...skin.row, justifyContent: 'space-between', flex: '0 0 auto' },
         },
         h(
           'div',
-          { style: { ...skin.row, justifyContent: 'space-between' } },
-          h(
-            'div',
-            { style: skin.row },
-            h('strong', { style: { fontSize: '13px' } }, entry.label || entry.module || '产出图'),
-            isString(entry.module) && entry.module !== '' ? h('code', { style: skin.code }, entry.module) : null,
-            entries.length > 1
-              ? h(Pill, { key: 'pos' }, String(index + 1) + ' / ' + String(entries.length))
-              : null,
-          ),
-          h(
-            'div',
-            { style: skin.row },
-            canCompare
-              ? h(
-                  'label',
-                  {
-                    className: 'pxm-compare-toggle',
-                    style: { ...skin.row, gap: '4px', fontSize: '12px', cursor: 'pointer' },
-                  },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: compare,
-                    onChange: () => props.onToggleCompare(!compare),
-                    style: { margin: 0, cursor: 'pointer' },
-                  }),
-                  '并排对比',
-                )
-              : null,
-            h(Btn, { className: 'pxm-viewer-close', onClick: props.onClose }, '关闭'),
-          ),
+          { style: skin.row },
+          h('strong', { style: { fontSize: '13px' } }, entry.label || entry.module || '产出图'),
+          isString(entry.module) && entry.module !== '' ? h('code', { style: skin.code }, entry.module) : null,
+          entries.length > 1
+            ? h(Pill, { key: 'pos' }, String(index + 1) + ' / ' + String(entries.length))
+            : null,
         ),
+        h(
+          'div',
+          { style: skin.row },
+          canCompare
+            ? h(
+                'label',
+                {
+                  className: 'pxm-compare-toggle',
+                  style: { ...skin.row, gap: '4px', fontSize: '12px', cursor: 'pointer' },
+                },
+                h('input', {
+                  type: 'checkbox',
+                  checked: compare,
+                  onChange: () => props.onToggleCompare(!compare),
+                  style: { margin: 0, cursor: 'pointer' },
+                }),
+                '并排对比',
+              )
+            : null,
+          h(Btn, { className: 'pxm-viewer-close', onClick: props.onClose }, '关闭'),
+        ),
+      )
+
+      /**
+       * 唯一滚动区：图片 + 元信息卡（`minHeight:0` 是它在 flex 链里真能被压缩的前提）。
+       *
+       * `overscrollBehavior: 'contain'` 把滚轮的链式滚动挡在查看器里：滚到底之后不再
+       * 往背后的滚动容器上传（"背景跟着滚"的那条路）。
+       */
+      const viewerBody = h(
+        'div',
+        {
+          className: 'pxm-viewer-scroll',
+          style: {
+            flex: '1 1 auto',
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            overscrollBehavior: 'contain',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          },
+        },
         h(
           'div',
           {
@@ -2204,6 +2305,45 @@ window.__ModuleLoader__.load({
               ),
           h(CopyPromptButton, { prompt: entry.prompt }),
         ),
+      )
+
+      return h(
+        'div',
+        {
+          className: 'pxm-viewer',
+          ref: rootRef,
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': '图片查看器',
+          // 可聚焦（`tabIndex:-1`）只是为了"打开时把焦点收进来"和 Tab 陷阱有个边界，
+          // 不会被 Tab 顺序选中（陷阱的选择器排除了 `[tabindex="-1"]`）。
+          tabIndex: -1,
+          style: {
+            position: 'fixed',
+            // 顶栏带（Windows 标题栏 / 原生窗口按钮）不归查看器画：见函数头注释。
+            // 用 shell 的变量而不是 40px 这种写死的数：全屏时它归零，普通浏览器里回退 0。
+            top: 'var(--dsh-frame-chrome-top, 0px)',
+            right: '0px',
+            bottom: '0px',
+            left: '0px',
+            // 60 < 标题栏菜单宿主的 1100：查看器永不盖住窗口 chrome。
+            zIndex: 60,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '16px',
+            boxSizing: 'border-box',
+            // 滚动只发生在 .pxm-viewer-scroll 里；根盒子自己不滚，顶栏才不会被滚走。
+            overflow: 'hidden',
+            overscrollBehavior: 'contain',
+            outline: 'none',
+            color: 'inherit',
+            background: 'color-mix(in srgb, Canvas 92%, transparent)',
+            backdropFilter: 'blur(2px)',
+          },
+        },
+        viewerBar,
+        viewerBody,
       )
     }
 
@@ -2768,15 +2908,78 @@ window.__ModuleLoader__.load({
      * `bars` / `content` / `overlays` 都是子节点列表，用展开传参（而不是把数组当
      * 子节点）以避免 React 对"数组子节点缺 key"的警告。
      * 查看器是 `position: fixed` 的模态层，放在滚动区**外面**，不跟着内容滚。
+     *
+     * `scrollRef` 是给**滚动层自己**的 ref：查看器打开时要拿它去锁背景滚动
+     * （`lockBackgroundScroll`）。不靠 `scrollParentOf` 现找——jsdom 里量不到
+     * `scrollHeight`，而且"面板的滚动层"本来就是确定的那个元素。
      */
-    function workbenchFrame(bars, content, overlays) {
+    function workbenchFrame(bars, content, overlays, scrollRef) {
       return h(
         'div',
         { className: 'pxm-workbench', style: skin.panel },
         h('div', { className: 'pxm-workbench-bar', style: skin.bar }, ...bars),
-        h('div', { className: 'pxm-scroll pxm-workbench-scroll', style: skin.scroll }, ...content),
+        h(
+          'div',
+          { ref: isObject(scrollRef) ? scrollRef : null, className: 'pxm-scroll pxm-workbench-scroll', style: skin.scroll },
+          ...content,
+        ),
         ...(isArray(overlays) ? overlays : []),
       )
+    }
+
+    /**
+     * 背景滚动锁：把"背后真的能滚的那个容器"的 `overflow-y` 换成 `hidden`。
+     *
+     * 记的是**每个元素的原内联值**（而不是一个"锁过了"的布尔量）：关闭时要**精确还原**
+     * ——原来是 `auto` 就回到 `auto`，原来没有内联值（`''`）就回到没有，绝不写死一个值。
+     *
+     * 只写 `overflow-y` 长属性，不写 `overflow` 简属性：简属性会连 `overflow-x` 一起改，
+     * 而滚动层的 `overflow-x: hidden` 是它自己的契约（测试有断言），不该被这把锁碰。
+     *
+     * `scrollbar-gutter: stable` 与 `overflow-y` 同一批写入，但**只在量到真的有经典滚动条时**
+     * （`offsetWidth - clientWidth > 0`）：不这么做，锁上的那一瞬间滚动条消失，背后内容会
+     * 横移一条滚动条的宽度——那本身也是一种"背景动了"；反过来，本来就没有滚动条的容器
+     * 去占位，一样会横移那么宽。这个探测同时把 overlay 滚动条（macOS 默认，不占宽度）
+     * 排除在外：量到 0 就不占位，正好。
+     *
+     * 返回的 `locks` 必须交给 `restoreBackgroundScroll`，**包括组件卸载那条路径**。
+     */
+    function lockBackgroundScroll(targets) {
+      const list = isArray(targets) ? targets : [targets]
+      const seen = new Set()
+      const locks = []
+      list.forEach((element) => {
+        if (!isObject(element) || !isObject(element.style) || seen.has(element)) return
+        seen.add(element)
+        const scrollbarWidth = Number(element.offsetWidth) - Number(element.clientWidth)
+        const lock = {
+          element,
+          overflowY: element.style.overflowY,
+          scrollbarGutter: element.style.scrollbarGutter,
+        }
+        locks.push(lock)
+        try {
+          if (scrollbarWidth > 0) element.style.scrollbarGutter = 'stable'
+          element.style.overflowY = 'hidden'
+        } catch {
+          /* 写不进去（只读样式表之类）就当没锁住：还原时同样不会乱写 */
+        }
+      })
+      return locks
+    }
+
+    /** 精确还原 `lockBackgroundScroll` 改过的内联值（卸载与关闭共用这一条路径）。 */
+    function restoreBackgroundScroll(locks) {
+      ;(isArray(locks) ? locks : []).forEach((lock) => {
+        const element = isObject(lock) ? lock.element : null
+        if (!isObject(element) || !isObject(element.style)) return
+        try {
+          element.style.overflowY = isString(lock.overflowY) ? lock.overflowY : ''
+          element.style.scrollbarGutter = isString(lock.scrollbarGutter) ? lock.scrollbarGutter : ''
+        } catch {
+          /* 还原失败不该让"关闭查看器"这个动作失败 */
+        }
+      })
     }
 
     function WorkbenchPanel() {
@@ -2820,6 +3023,8 @@ window.__ModuleLoader__.load({
       const requestSeq = React.useRef(0)
       /** 打开查看器前的现场（滚动位置 + 焦点元素），关闭时复原。 */
       const viewerReturn = React.useRef(null)
+      /** 面板的滚动层（`workbenchFrame` 挂上来的）；查看器打开时要锁住它。 */
+      const scrollRef = React.useRef(null)
 
       const loadTrash = React.useCallback(
         () =>
@@ -2999,6 +3204,39 @@ window.__ModuleLoader__.load({
         })
       }
 
+      /**
+       * 查看器开着的时候锁住背景滚动，关掉或**卸载**时精确还原。
+       *
+       * 依赖只看"开着没开着"（`viewer !== null` 这个布尔量）：切上一张/下一张、开关
+       * 「并排对比」都只是 `viewer` 对象换了个字段，不会重新锁一遍（也无从漏还原）。
+       *
+       * 用 `useLayoutEffect` 而不是 `useEffect`：锁要在**这一帧画出来之前**生效，否则
+       * 会出现"查看器已经打开、背景还能滚"的一帧（滚动条也跟着闪一下）。
+       *
+       * 卸载路径由这个 effect 的 cleanup 兜住：面板被换掉（切视图 / 插件卸载）时，
+       * 那把锁必须跟着消失，不能留在 DOM 上——`scrollRef` 指向的滚动层若是被别人复用，
+       * 残留的 `overflow: hidden` 就成了"再也滚不动"的新 bug。
+       */
+      const viewerOpen = viewer !== null
+      React.useLayoutEffect(() => {
+        if (!viewerOpen) return undefined
+        const doc = typeof document === 'undefined' ? null : document
+        const targets = [scrollRef.current]
+        if (isObject(viewerReturn.current) && viewerReturn.current.container !== null) {
+          targets.push(viewerReturn.current.container)
+        }
+        // 文档本身真的能滚时才锁它（普通浏览器里窗口很矮就可能）：不成立时连写都不写，
+        // 免得把 `html` 的内联样式改脏、还原时又和别人抢同一个属性。
+        const scrolling = doc === null ? null : doc.scrollingElement
+        if (isObject(scrolling) && scrolling.scrollHeight > scrolling.clientHeight) {
+          targets.push(scrolling)
+        }
+        const locks = lockBackgroundScroll(targets)
+        return () => {
+          restoreBackgroundScroll(locks)
+        }
+      }, [viewerOpen])
+
       // ── 多选批量操作 ──────────────────────────────────────────────────────
 
       const toggleSelect = (id) => {
@@ -3157,6 +3395,7 @@ window.__ModuleLoader__.load({
               },
             }),
           ],
+          scrollRef,
         )
       }
 
@@ -3199,6 +3438,7 @@ window.__ModuleLoader__.load({
                     setViewer((prev) => (prev === null ? prev : { ...prev, compare: next })),
                 }),
           ],
+          scrollRef,
         )
       }
 
@@ -3428,7 +3668,7 @@ window.__ModuleLoader__.load({
           : null,
       ]
 
-      return workbenchFrame(bars, content)
+      return workbenchFrame(bars, content, null, scrollRef)
     }
 
     // ── ③ shell.overlay 实时预览卡（§8.5） ──────────────────────────────────
@@ -4091,6 +4331,9 @@ window.__ModuleLoader__.load({
       formatDuration,
       buildViewerEntries,
       scrollParentOf,
+      lockBackgroundScroll,
+      restoreBackgroundScroll,
+      trapTabKey,
       HOST_STALE_HINT,
       POLL_ACTIVE_MS,
       POLL_IDLE_MS,

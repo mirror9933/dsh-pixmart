@@ -397,10 +397,10 @@ async function createLane(options = {}) {
       await settle()
     },
 
-    /** 在 document 上派发一次键盘事件（查看器把 Esc / ← → 挂在 document 上）。 */
-    async key(key) {
+    /** 在 document 上派发一次键盘事件（查看器把 Esc / ← → / Tab 挂在 document 上）。 */
+    async key(key, init = {}) {
       await act(async () => {
-        win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true }))
+        win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true, ...init }))
       })
       await settle()
     },
@@ -1340,5 +1340,172 @@ describe('jsdom lane：面板滚动契约（结构断言，不能证明真的能
     assert.equal(prompt.style.whiteSpace, 'pre-wrap')
     assert.equal(prompt.style.wordBreak, 'break-word')
     assert.equal(prompt.style.overflowWrap, 'anywhere', '超长单词必须有 overflow-wrap 兜底')
+  })
+})
+
+// ── 用户实测 bug：① 背景滚动锁 ② 顶栏锚定 ──────────────────────────────────
+//
+// **这些断言证不了什么**（诚实记录，别当成修好了的证明）：
+//   - jsdom 没有排版引擎：`overflow-y: hidden` 写进内联样式 ≠ 真的滚不动了；
+//     "背景没动"只能在真实浏览器里目视（滚轮 / 触控板）。
+//   - `top: var(--dsh-frame-chrome-top, 0px)` 只是把锚定意图写进内联样式；
+//     变量在真实外壳里解析成多少、查看器顶栏有没有真的避开标题栏与原生窗口按钮，
+//     同样测不到——jsdom 里 `var()` 就是个字符串，也不会算布局。
+//   - 焦点陷阱能测"按 Tab 之后 activeElement 落在谁身上"（事件是我自己派的），
+//     但测不到浏览器的默认 Tab 行为、也测不到"视觉上焦点框有没有被裁"。
+
+describe('jsdom lane：查看器的滚动锁与顶栏锚定（结构断言）', () => {
+  it('lockBackgroundScroll 精确还原内联值：原来 auto 回 auto、原来没有就回到没有', async () => {
+    const lane = await createLane()
+    const { lockBackgroundScroll, restoreBackgroundScroll } = lane.bag
+    assert.equal(typeof lockBackgroundScroll, 'function', '__test__ 必须暴露 lockBackgroundScroll')
+    assert.equal(typeof restoreBackgroundScroll, 'function', '__test__ 必须暴露 restoreBackgroundScroll')
+
+    const doc = lane.window.document
+    const fromAuto = doc.createElement('div')
+    fromAuto.style.overflowY = 'auto'
+    fromAuto.style.overflowX = 'hidden'
+    const fromStyleSheet = doc.createElement('div')
+    // 模拟"真的有经典滚动条"：jsdom 量不到排版，所以显式给一组盒尺寸。
+    const withScrollbar = doc.createElement('div')
+    withScrollbar.style.overflowY = 'auto'
+    Object.defineProperty(withScrollbar, 'offsetWidth', { value: 800, configurable: true })
+    Object.defineProperty(withScrollbar, 'clientWidth', { value: 790, configurable: true })
+
+    const locks = lockBackgroundScroll([fromAuto, fromStyleSheet, withScrollbar, fromAuto, null])
+    assert.equal(locks.length, 3, '同一个元素只锁一次；null / undefined 不进锁表')
+    assert.equal(fromAuto.style.overflowY, 'hidden')
+    assert.equal(fromAuto.style.overflowX, 'hidden', '这把锁只碰 overflow-y，overflow-x 是滚动层自己的契约')
+    assert.equal(fromStyleSheet.style.overflowY, 'hidden')
+    assert.equal(
+      fromAuto.style.scrollbarGutter,
+      '',
+      '量不到滚动条宽度（jsdom / overlay 滚动条）就不占位：占了反而会横移那么多',
+    )
+    assert.equal(withScrollbar.style.scrollbarGutter, 'stable', '真有经典滚动条时才留住它的占位')
+
+    restoreBackgroundScroll(locks)
+    assert.equal(fromAuto.style.overflowY, 'auto', '原来是 auto 就必须回到 auto（不写死一个值）')
+    assert.equal(withScrollbar.style.scrollbarGutter, '', 'scrollbar-gutter 也要一起还原')
+    assert.equal(fromStyleSheet.style.overflowY, '', '原来没有内联值 → 还原后也不能有')
+  })
+
+  it('打开查看器时锁住面板滚动层，Esc 关闭后精确还原（滚动位置与 overflow 都不丢）', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openDetail(lane)
+
+    const scroller = lane.byClass('pxm-workbench-scroll')
+    assert.ok(scroller, '面板滚动层必须存在')
+    assert.equal(scroller.style.overflowY, 'auto', '没开查看器之前是它自己的契约值')
+    assert.equal(scroller.style.scrollbarGutter, '', '没开之前不该有 gutter')
+    // 详情页在真实窗口里基本都是内容超长（有滚动条）的状态：给它一组盒尺寸来模拟。
+    Object.defineProperty(scroller, 'offsetWidth', { value: 800, configurable: true })
+    Object.defineProperty(scroller, 'clientWidth', { value: 790, configurable: true })
+
+    await lane.click(lane.byClass('pxm-thumb'))
+    assert.ok(lane.byClass('pxm-viewer'), '查看器要打开')
+    assert.equal(scroller.style.overflowY, 'hidden', '打开时必须把背景滚动容器锁住')
+    assert.equal(scroller.style.scrollbarGutter, 'stable', '锁的同时要留住滚动条占位，否则背景会横移一条滚动条')
+    assert.equal(scroller.style.overflowX, 'hidden', '锁不该改动 overflow-x')
+    assert.equal(scroller.querySelector('.pxm-viewer'), null, '查看器仍然不在滚动区里（不跟着内容滚）')
+
+    await lane.key('Escape')
+    assert.equal(lane.byClass('pxm-viewer'), null, 'Esc 仍要能关掉查看器')
+    assert.equal(scroller.style.overflowY, 'auto', '关闭后必须精确还原成原值')
+    assert.equal(scroller.style.scrollbarGutter, '', '关闭后不能留下 gutter')
+  })
+
+  it('查看器开着时卸载面板：锁不残留（卸载路径同样走还原）', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openDetail(lane)
+
+    const scroller = lane.byClass('pxm-workbench-scroll')
+    Object.defineProperty(scroller, 'offsetWidth', { value: 800, configurable: true })
+    Object.defineProperty(scroller, 'clientWidth', { value: 790, configurable: true })
+    await lane.click(lane.byClass('pxm-thumb'))
+    assert.equal(scroller.style.overflowY, 'hidden', '前提：这会儿是锁着的')
+    assert.equal(scroller.style.scrollbarGutter, 'stable', '前提：占位也写上了')
+
+    await lane.unmount()
+    // 元素虽然已经脱离文档，但"有没有残留内联锁"这件事仍然可断言。
+    assert.equal(scroller.style.overflowY, 'auto', '卸载时必须还原，不能把锁留在 DOM 上')
+    assert.equal(scroller.style.scrollbarGutter, '', '卸载后也不许剩 gutter')
+    assert.equal(lane.byClass('pxm-viewer'), null, '卸载后查看器不该还在')
+  })
+
+  it('顶栏锚定：top 取 shell 的 chrome 变量（不写死像素），滚动只发生在查看器内部', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openDetail(lane)
+
+    await lane.click(lane.byClass('pxm-thumb'))
+    const viewer = lane.byClass('pxm-viewer')
+    assert.ok(viewer, '查看器要打开')
+    assert.equal(viewer.style.position, 'fixed', '仍是 fixed 覆盖层（不改用 shell.overlay）')
+
+    // 依据：桌面 preload 把「应用 / 编辑」菜单挂成 position:fixed; top:0; z-index:1100 的宿主，
+    // Electron 的 titleBarOverlay(height 40) 又把原生窗口按钮画在 web 内容之上；
+    // shell 为模态层发布的就是 --dsh-frame-chrome-top。
+    assert.equal(viewer.style.top, 'var(--dsh-frame-chrome-top, 0px)', '顶栏要从内容区起点算起')
+    assert.equal(/^[0-9]/.test(viewer.style.top), false, '不许写死像素高度（40px 是运行时变量）')
+    assert.equal(viewer.style.right, '0px')
+    assert.equal(viewer.style.bottom, '0px')
+    assert.equal(viewer.style.left, '0px')
+    assert.equal(viewer.style.overscrollBehavior, 'contain', '查看器自身要挡住滚轮链')
+    assert.equal(Number(viewer.style.zIndex) < 1100, true, 'z-index 必须低于标题栏菜单宿主的 1100：查看器永不盖窗口 chrome')
+
+    const bar = viewer.querySelector('.pxm-viewer-bar')
+    const body = viewer.querySelector('.pxm-viewer-scroll')
+    assert.ok(bar, '固定顶栏必须存在（.pxm-viewer-bar）')
+    assert.ok(body, '查看器内的滚动区必须存在（.pxm-viewer-scroll）')
+    assert.equal(body.contains(bar), false, '顶栏必须在滚动区之外，否则一滚就没了')
+    assert.equal(body.style.overflowY, 'auto', '查看器的内容由内部滚动区负责')
+    assert.equal(body.style.minHeight, '0px', '滚动区要有 min-height:0 才能在 flex 链里被压缩')
+    assert.equal(body.style.overscrollBehavior, 'contain')
+    assert.equal(viewer.style.overflow, 'hidden', '根盒子自己不滚，滚动只发生在内部滚动区')
+
+    // 顶栏的左右两端都得在顶栏里（左侧标签 / 位置计数，右侧关闭）：
+    // **只看 DOM 归属，证不了真的没被窗口按钮盖住**。
+    assert.ok(bar.textContent.includes('白底主图'), '模块标签在顶栏')
+    assert.equal(bar.querySelector('.pxm-viewer-close'), lane.byClass('pxm-viewer-close'), '关闭按钮在顶栏')
+    assert.ok(body.querySelector('.pxm-viewer-prompt'), '提示词在滚动区里（它才是会被截断的那段）')
+  })
+
+  it('打开后焦点收进查看器；Tab / Shift+Tab 只在查看器内循环，不落到背景', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openDetail(lane)
+
+    await lane.click(lane.byClass('pxm-thumb'))
+    const viewer = lane.byClass('pxm-viewer')
+    const doc = lane.window.document
+    // 身份比较一律用 `assert.ok(a === b)`：失败时 node:assert 不会去 inspect 整个
+    // jsdom 元素（那会让"本该秒失败"的用例拖成几分钟）。
+    assert.ok(doc.activeElement === viewer, '打开时焦点要收进查看器（不许留在背后的缩略图上）')
+
+    const closeBtn = viewer.querySelector('.pxm-viewer-close')
+    const copyBtn = viewer.querySelector('.pxm-copy-btn')
+    assert.ok(closeBtn && copyBtn, '顶栏的关闭与滚动区里的复制按钮都要在')
+
+    await lane.key('Tab')
+    assert.ok(doc.activeElement === closeBtn, 'Tab → 顶栏第一个可聚焦元素')
+    await lane.key('Tab')
+    assert.ok(doc.activeElement === copyBtn, 'Tab → 下一个')
+    await lane.key('Tab')
+    assert.ok(doc.activeElement === closeBtn, '最后一个再 Tab → 回绕到第一个，绝不外溢')
+    await lane.key('Tab', { shiftKey: true })
+    assert.ok(doc.activeElement === copyBtn, 'Shift+Tab 从第一个 → 回绕到最后一个')
+
+    assert.equal(viewer.contains(doc.activeElement), true, '焦点始终在查看器内')
+    assert.equal(doc.activeElement === doc.body, false, '焦点不许掉到背景的 body 上')
+
+    await lane.key('Escape')
+    assert.equal(lane.byClass('pxm-viewer'), null)
+    assert.ok(
+      String(doc.activeElement?.className ?? '').includes('pxm-thumb'),
+      '关掉后焦点仍要还给缩略图（新加的陷阱不许抢走还原流程）',
+    )
   })
 })
