@@ -73,11 +73,18 @@ describe('installGuidance', () => {
     assert.match(GUIDANCE_TEXT, /设置 → PixMart/)
     // 参考图场景必须走 edit，而不是文生图
     assert.match(GUIDANCE_TEXT, /pixmart_edit/)
+    // 5) 模块选择映射：实战中曾误用 main.white-bg 做"基于参考图的白底图"，故点名正确模块
+    assert.match(GUIDANCE_TEXT, /tool\.white-bg/)
+    assert.match(GUIDANCE_TEXT, /tool\.style-replica/)
+    assert.match(GUIDANCE_TEXT, /detail\.hero/)
+    // 6) 耗时预期：单张实测达分钟级，避免被误判为卡死而重复调用（重复计费）
+    assert.match(GUIDANCE_TEXT, /1–3 分钟/)
+    assert.match(GUIDANCE_TEXT, /不要重复调用/)
   })
 
   it('文本保持精简（系统提示预算要留给高信号内容）', () => {
     const lines = GUIDANCE_TEXT.split('\n').length
-    assert.ok(lines <= 24, `说明不应超过 24 行，实际 ${lines} 行`)
+    assert.ok(lines <= 36, `说明不应超过 36 行，实际 ${lines} 行`)
   })
 })
 
