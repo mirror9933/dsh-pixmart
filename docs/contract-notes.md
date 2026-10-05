@@ -296,3 +296,39 @@ node tools/asar.mjs grep "ContentBlock" 30 "dsh-(tools|session)/"
 | §7.8 维护 `index.json` | **不维护索引**，列表由扫描 `projects/*/project.json` 得出 | 「扫描即可重建」是索引的超集：没有可损坏的索引，A6 变成结构性成立而不是靠恢复逻辑 |
 | §7.5 `fragments` 五键 | 增加可选 `finish`（材质质感） | 电商图里「质感」是与光影/构图独立的轴 |
 | §6.1 `src/tools/` 每工具一文件 | 合并为 `meta.ts`（3 个只读工具）+ `generate.ts`（generate/edit） | 两者共享大量参数解析与项目落盘逻辑，拆开反而重复 |
+
+## 10. A2 真实链路验收结果（2026-10-05）
+
+**通过。** 用户完成：填入 Key → 重启宿主 → 真实生图一次。
+
+### 10.1 验收记录
+
+| 检查点 | 结果 |
+|---|---|
+| 6 个工具重启后就位 | ✅ `pixmart_ping` 的 `dataDir` = `C:\Users\30461\.dsh\pixmart`，确认 P0 的 `DSH_HOME` 修复生效 |
+| 密钥 | ✅ 长度 70，`resolveApiKey` 来源为 `config` |
+| 零花费预演 | ✅ `check_size` → `尺寸可用：1:1（Gemini 图像模型，gemini-native）`；`prompt` 输出 1120 字提示词 |
+| 真实生图 | ✅ `ok:true`；`ofox / google/gemini-3.1-flash-lite-image / gemini-native`；1 次请求；4655ms；`degraded: []` |
+| 落盘 | ✅ `projects/2026-10-05-A2验收/images/19f5787b-main.white-bg-01.jpg`（77228 字节）；`project.json` 完整 |
+| 内容寻址 | ✅ 文件名前缀与记录 sha256 前缀一致 |
+| **对话卡片内嵌图** | ✅ 图片直接渲染在工具卡片里 |
+
+### 10.2 暴露的四个问题
+
+| # | 问题 | 等级 | 建议 |
+|---|---|---|---|
+| **F1** | **`aspectRatio` 未被遵守**：请求 `1:1`，实际 **1408×768**（≈1.83:1） | 高 | `generationConfig.imageConfig.aspectRatio` 对该端点/模型无效（参考项目同一写法，疑端点已变）。需探测正确字段（可能还要 `imageSize`）。**在此之前 `gemini-native` 的尺寸承诺不可信** |
+| **F2** | 模块文本假设有参考图（`main.white-bg` 含 "of the reference image"），文生图场景语义错位 | 中 | `buildPrompt` 需感知 `hasReferences`，无参考图时改用虚拟产品表述 |
+| **F3** | 无产品描述时模型**自行编造真实品牌包装**（生成了 Clorox 图） | 中 | 商用有 IP 风险。文生图路径应把 `product` 设为必填或注入中性描述 |
+| **F4** | `gemini-native` 实际返回 **JPEG** | 低 | **不是缺陷**：魔数嗅探 + 扩展名映射已正确处理。"请求 png" 只适用于兼容路径的 `output_format` |
+
+### 10.3 遗留
+
+`pixmart_providers` 在**旧进程**里仍会报 schema 校验错；修复 `8bce89c` 需再重启一次才生效。
+`check_size` / `prompt` / `generate` / `edit` 的成功路径不受影响。
+
+### 10.4 新实证结论：宿主工具返回校验是一道真实闸门
+
+`output.schema` 声明 `additionalProperties: false` 而返回值超出声明时，调用**直接失败**
+（`tool "…" returned invalid value`）。P1 的 18 项单测没有覆盖这一点——
+应补一条测试：把每个工具的返回值喂给 `output.schema` 校验器。这属于"真实组合才暴露"的契约。
