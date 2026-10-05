@@ -244,7 +244,8 @@ describe('apply 注册三处插槽', () => {
     assert.ok(found, '必须注册 settings.section')
     assert.equal(found.meta.id, 'pixmart')
     assert.equal(found.meta.order, 30)
-    assert.equal(typeof found.meta.label === 'function' ? found.meta.label() : found.meta.label, '电商生图')
+    // 文案由用户改为产品名 PixMart（原先叫「电商生图」）
+    assert.equal(typeof found.meta.label === 'function' ? found.meta.label() : found.meta.label, 'PixMart')
   })
 
   it('注册了 sidebar.panellist 与配套的 main(keyed)', () => {

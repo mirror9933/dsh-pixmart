@@ -7,7 +7,7 @@
  *     因此与宿主通信**只能**走本插件自己的 HTTP 路由（§3.2 的 RPC 机制修正）。
  *
  * 三处落点（技术方案 §8.2）：
- *   ① settings.section    → 设置面板左导航多一项「电商生图」：厂商/默认值/数据目录/累计用量（只读）
+ *   ① settings.section    → 设置面板左导航多一项「PixMart」：厂商/默认值/数据目录/累计用量
  *   ② sidebar.panellist   → 侧边栏面板图标排多一个图标（id 'pixmart'）
  *      main (keyed)       → 中央主面板作品库（key 'pixmart'，与上面 id 一一对应）
  *   ③ shell.overlay       → 右下角实时预览卡（§8.5）：进度 3/8 + 逐格点亮 + 取消 + 收起徽标
@@ -28,7 +28,11 @@ window.__ModuleLoader__.load({
 
     const PLUGIN = 'dsh-pixmart'
     const VERSION = '0.0.1'
-    const SLOT_LABEL = '电商生图'
+    /**
+     * 两处插槽共用的显示名：设置面板左导航的一项 + 左侧栏面板图标那一项。
+     * 用产品名 `PixMart`（与页面标题、包名一致）。若要两处叫不同名字，拆成两个常量即可。
+     */
+    const SLOT_LABEL = 'PixMart'
     const PANEL_KEY = 'pixmart'
     const SETTINGS_ID = 'pixmart'
     const OVERLAY_ID = 'pixmart-preview'
