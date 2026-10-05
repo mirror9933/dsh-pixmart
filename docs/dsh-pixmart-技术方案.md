@@ -1108,7 +1108,7 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 | 阶段 | 目标 | 交付物 | 出口验证 |
 |---|---|---|---|
 | **P0** 骨架 + 契约 spike ✅ | 打通「能装、能跑、能显示」三件事 | 可安装的最小双面插件（`pixmart_ping` + hello-world 设置页）+ [contract-notes.md](./contract-notes.md) | **全部通过**：A1 ✅；S1 ✅（含 desktop 活宿主实调）；S2 ✅（GUI 目视：设置页 + 侧边栏面板切换）；S3 ✅ |
-| **P1** 宿主核心 | 生图主链路可用 | config / store / 适配器（含 `dialect: ofox` 与 `gemini-native`）/ 提示词模块 / 尺寸表 / `providers·check_size·prompt·generate·edit` | 单测 + **mock 端点**端到端 → **A2 / A3 / A4**（无 Key 也可完成） |
+| **P1** 宿主核心 ⚙ | 生图主链路可用 | config / store / 适配器（`dialect: ofox` + `gemini-native`）/ 24 个提示词模块 / 尺寸表 / `providers·check_size·prompt·generate·edit` + P0 的 `ping` | **代码完成**：`pnpm verify` 18 项测试全绿；6 个工具在真实组合中注册成功。**A2 全链待验**（需重启宿主加载新 host 代码 + 真实 Ofox Key） |
 | **P2** 批量与归档 | 一套图 + 可回溯 + 过程可见（host 半边） | `batch` / `projects` / usage 审计 / **运行注册表（runs）** / 保留期清理 | **A5 / A6** |
 | **P3** 客户端 UI | 人可管理、可浏览、可旁观 | 构建链、设置页、作品库面板、**`shell.overlay` 实时预览卡**、RPC、图片路由 | **A7 / A9** + GUI 实测（宽窄屏 / 刷新 / 焦点 / **布局位移**） |
 | **P4** 打包与文档 | 别人也能装 | README / NOTICE / 全新 profile 安装脚本 / 上架条目 | **A8** + 从零安装全链路 |
@@ -1319,4 +1319,5 @@ Agent 调用 pixmart_batch {
 |---|---|---|
 | v1.0 | 2026-10-05 | 初稿：基于本机实测契约与三项决策（B 方案 / 仅 OpenAI 兼容 / 提示词重写） |
 | v1.1 | 2026-10-05 | 同步 6 项确认决策；锁定首批厂商 **Ofox**（D2 修订，新增 D8 方言 + Gemini 原生端点、D9 密钥由用户填入）；新增 §7.4.1 Ofox 专项契约（两端点 / 五坑 / 路由表 / 尺寸）；§16 由「待确认」改为「已确认决策」；新增风险 R10（方言静默失败）、R11（Key 未就绪）；测试矩阵补 Ofox 方言 golden 与 mock 端点路径 |
+| v1.4 | 2026-10-05 | **P1 落地**（提交 `e83c150`）。新增：`src/config.ts`（容错解析 + 脱敏视图）、`src/store/{paths,atomic,mutex,config-store,project-store}.ts`、`src/vendor/openai-compat.ts`（4 apiMode × 2 方言 + 降级链 + 重试）、`src/prompts/{types,modules,build}.ts`（24 模块）、`src/sizes.ts`、`src/image-info.ts`、`src/tools/*`、`test/vendor.test.mjs`（18 项）。两处实现修正：**降级链只在 `bad_request` 触发**（5xx/429 换档位会重复花钱）、**按哈希前缀扫描真正去重**。三处与方案偏离已记录（不维护索引 / 增加 `finish` 片段 / 工具文件合并）。`pnpm verify` 全绿；A2 全链待宿主重启 + 真实 Key |
 | v1.3 | 2026-10-05 | **P0 落地 + 据实测修订方案**。完成：A1（scratch profile 安装、自动并入 `dsh.profile.bundles`、`--dump-config` 断言）、S1 宿主半边（真实 Loader 组合 + 手写 JSON Schema 被接受 + `schemas()` 投影一致）、S3（图片块 = `{type:'image', attachment}`）。修订：`host.call` → 本插件 HTTP API（§6 / §7.11 / §8.5.4 / 架构图 / 分层铁律）；**可选服务不得在 `apply()` 探测**（§7.1，实测 `fs`/`credentials` 延迟就绪）；`defineTool` 只是编译糖 → 改为手写零运行时依赖定义（§7.2 / §7.7）。新增 [contract-notes.md](./contract-notes.md)、[tools/asar.mjs](../tools/asar.mjs)、`pixmart_ping` 与 `PIXMART_P0_MARKER` 自检钩子。**P0 验收全部通过**：A1（安装）、S1（含 desktop 活宿主实调）、S2（GUI 目视：设置页 + 侧边栏面板切换）、S3；**R2 / R3 关闭**。另据实测修正：`DSH_HOME` 在 GUI 启动的宿主里未设置 → 数据目录回落 `<用户主目录>/.dsh`；插件安装热生效而 host 代码改动需重启 |

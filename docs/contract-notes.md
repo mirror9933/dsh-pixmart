@@ -254,3 +254,45 @@ node tools/asar.mjs grep "ContentBlock" 30 "dsh-(tools|session)/"
 | 2 | ~~设置页 / 侧边栏面板在真实 GUI 渲染~~ | — | ✅ 已闭环（§3.3，R3 关闭） |
 | 3 | 图片块在对话卡片中的实际渲染效果 | P1 验收 A2 | 需要一次真实生图（P1 才有工具） |
 | 4 | host 代码改动需重启 | 每次改 host 都要重启宿主 | 属预期行为（§1.5），无需解决，只需记住 |
+
+## 9. P1 状态与新增结论
+
+**代码完成，验证部分完成。** 提交 `e83c150`。
+
+### 9.1 已验证
+
+| 项 | 证据 |
+|---|---|
+| `pnpm verify` 全绿（typecheck + build + 18 项测试） | `test/vendor.test.mjs`，Node 内置 runner，零额外依赖 |
+| 6 个工具在真实 Loader 组合中注册，且 `required` 投影正确 | `px` profile 的 marker（`tools[]`） |
+| Ofox 方言：`input_images` / `output_format` 而非 `image` / `response_format` | mock 端点断言请求体 |
+| Gemini 原生：端点为 `/gemini/v1beta/models/{m}:generateContent`、`x-goog-api-key`、`aspectRatio`、`inlineData` 解析 | 同上 |
+| 路由表：`gpt-image` + 参考图 → `images-edits`（multipart）；Gemini 图像 + Ofox → `gemini-native` | 同上 |
+| 重试与不重试：429 后成功；审核拒绝 1 次即止；5xx 重试耗尽 | 同上 |
+| 降级链：`quality` 被拒 → 去掉后成功并回报 `degraded:['quality']` | 同上 |
+| 尺寸：`1:1`↔`1024x1024` 双向归一化；不支持时给最近邻且不发请求 | 同上 |
+| 配置容错：脏 JSON 被隔离、不阻断启动 | 同上 |
+| 内容寻址去重：同字节不同 slug → 同一个文件 | 同上 |
+
+### 9.2 未验证（需要宿主重启 + 真实 Key）
+
+| 项 | 原因 |
+|---|---|
+| 真实 desktop 宿主里调用 `pixmart_generate` 产出图片（A2 全链） | 需要 (a) 重启宿主加载新 host 代码，(b) 有效 Ofox Key |
+| 图片在对话工具卡片中的实际渲染效果 | 同上，且需要一次真实生图 |
+| 参考图经 `ctx.fs` 读取的实际行为 | 依赖真实会话工作目录 |
+
+### 9.3 P1 的两个实现修正（重要）
+
+| # | 问题 | 修正 |
+|---|---|---|
+| 1 | **可重试错误走了降级链**：5xx/429 会逐档重试整个链，把同一个请求反复花钱重发 | 降级链**只在 `bad_request`（参数被服务端拒绝）时触发**；其余可重试错误在重试耗尽后直接失败。测试用例 `5xx 重试到耗尽后失败` 锁住这个语义 |
+| 2 | **内容寻址没有真正去重**：文件名含 slug，同图不同 slug → 两个文件 | 落盘前按哈希前缀扫描目录复用已有文件；slug 仅用于可读性 |
+
+### 9.4 与方案的偏离
+
+| 方案 | 实现 | 理由 |
+|---|---|---|
+| §7.8 维护 `index.json` | **不维护索引**，列表由扫描 `projects/*/project.json` 得出 | 「扫描即可重建」是索引的超集：没有可损坏的索引，A6 变成结构性成立而不是靠恢复逻辑 |
+| §7.5 `fragments` 五键 | 增加可选 `finish`（材质质感） | 电商图里「质感」是与光影/构图独立的轴 |
+| §6.1 `src/tools/` 每工具一文件 | 合并为 `meta.ts`（3 个只读工具）+ `generate.ts`（generate/edit） | 两者共享大量参数解析与项目落盘逻辑，拆开反而重复 |
