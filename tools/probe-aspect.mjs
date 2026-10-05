@@ -58,21 +58,29 @@ const shapes = [
 
 const RATIOS = ['1:1', '3:4', '16:9']
 
-const selectedShapes = shapesOnly || ratiosOnly ? (shapesOnly ? shapes : []) : shapes
-const selectedRatios = ratiosOnly ? RATIOS : shapesOnly ? [] : RATIOS
-const filteredShapes = only === undefined ? selectedShapes : selectedShapes.filter((s) => only.has(s.id))
-const budget = filteredShapes.length + selectedRatios.length
+// `--only` 是覆盖**整个计划**的白名单：形状用 id，比例用比例串本身。
+// （首版只过滤了形状，于是 `--only=none --yes` 仍然跑了全部比例——付费测试反而花了钱。）
+const filteredShapes = (shapesOnly ? shapes : ratiosOnly ? [] : shapes).filter(
+  (shape) => only === undefined || only.has(shape.id),
+)
+const filteredRatios = (ratiosOnly ? RATIOS : shapesOnly ? [] : RATIOS).filter(
+  (ratio) => only === undefined || only.has(ratio),
+)
+const budget = filteredShapes.length + filteredRatios.length
 
 console.log(`模型: ${model}`)
 console.log(`端点: ${base}`)
-console.log(`计划: ${filteredShapes.length} 个形状变体 + ${selectedRatios.length} 个比例确认 = ${budget} 次付费请求`)
+console.log(
+  `计划: ${filteredShapes.length} 个形状变体 + ${filteredRatios.length} 个比例确认 = ${budget} 次付费请求`,
+)
 
-if (!allowSpend) {
-  console.log('\n未放行：这 ${budget} 次调用会真实计费。确认后加 --yes 重新运行。'.replace('${budget}', String(budget)))
+if (budget === 0) {
+  console.log('没有选中任何变体，退出（未发出任何请求）。')
   process.exit(0)
 }
-if (budget === 0) {
-  console.log('没有选中任何变体，退出。')
+
+if (!allowSpend) {
+  console.log(`\n未放行：这 ${budget} 次调用会真实计费。确认后加 --yes 重新运行。`)
   process.exit(0)
 }
 
@@ -112,7 +120,7 @@ for (const shape of filteredShapes) {
   )
 }
 
-for (const ratio of selectedRatios) {
+for (const ratio of filteredRatios) {
   spent += 1
   const body = {
     contents: [{ parts: [{ text: PROMPT }] }],
