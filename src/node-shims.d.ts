@@ -43,6 +43,18 @@ declare class FormData {
 declare const Buffer: {
   from(data: Uint8Array): { toString(encoding: string): string }
   from(data: string, encoding: string): Uint8Array
+  byteLength(input: string, encoding?: string): number
+}
+
+declare class URLSearchParams {
+  constructor(init?: string)
+  get(name: string): string | null
+}
+
+declare class URL {
+  constructor(input: string, base?: string)
+  readonly pathname: string
+  readonly searchParams: URLSearchParams
 }
 
 interface PixmartFetchResponse {

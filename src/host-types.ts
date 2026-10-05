@@ -118,3 +118,29 @@ export interface FsServiceLike {
   processPath(target: FsTargetLike): string
   readBytes(target: FsTargetLike, signal: unknown, maxBytes: number): Promise<Uint8Array>
 }
+
+/** 宿主 HTTP 请求/响应的结构子集（只声明我们用到的面）。 */
+export interface HttpRequestLike {
+  readonly method?: string
+  readonly url?: string
+  readonly socket?: { readonly remoteAddress?: string }
+}
+
+export interface HttpResponseLike {
+  writeHead(status: number, headers?: Record<string, string>): void
+  end(data?: string | Uint8Array): void
+}
+
+/**
+ * `ctx.webServer` 的结构子集。
+ *
+ * 包式 client 半的 `factory(require)` 只收到 `require`（拿不到 `host.call`），
+ * 因此 client ↔ host 的唯一通道就是这里注册的 HTTP 路由（contract-notes §3.2）。
+ */
+export interface WebServerLike {
+  register(route: {
+    readonly kind: 'exact' | 'prefix'
+    readonly path: string
+    readonly handler: (request: HttpRequestLike, response: HttpResponseLike) => void | Promise<void>
+  }): () => void
+}
