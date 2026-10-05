@@ -518,7 +518,44 @@ window.__ModuleLoader__.load({
     // ── 共享视觉原子 ────────────────────────────────────────────────────────
 
     const skin = {
+      // 设置页（`settings.section`）用：那一层的滚动由设置弹窗自己负责，这里只管排版。
       wrap: { padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px', maxWidth: '880px' },
+      /**
+       * 作品库面板（`main` 插槽）的根。
+       *
+       * 契约在 shell 那一侧：`ui-layout` 的 AppFrame 中栏是
+       * `display:flex; flex-direction:column; overflow:hidden`，高度由网格行锁死
+       * （`grid-template-rows:100%`）——**座位自己不给滚动**。所以面板必须自带滚动：
+       * 根锁住高度，只有内容区滚。
+       *
+       * `minHeight: 0` 是关键：flex 子项默认 `min-height:auto`（= 内容高度），
+       * 不解除这一条，根会被长提示词顶到内容那么高，超出中栏后被 `overflow:hidden`
+       * 裁掉——滚轮没有任何可滚的盒子。
+       * `boxSizing:'border-box'` 让 `height:100%` 把 padding 算在里面（否则超出 36px）。
+       */
+      panel: {
+        padding: '18px',
+        boxSizing: 'border-box',
+        maxWidth: '880px',
+        height: '100%',
+        minHeight: 0,
+        flex: '1 1 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '14px',
+      },
+      /** 固定不滚的一层（表头 / 搜索 / 工具条）：滚动内容时它不动。 */
+      bar: { flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: '14px' },
+      /** 唯一滚动容器；`minHeight: 0` 是它在 flex 链里真能被压缩的前提。 */
+      scroll: {
+        flex: '1 1 auto',
+        minHeight: 0,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '14px',
+      },
       title: { margin: 0, fontSize: '15px', fontWeight: 600 },
       muted: { margin: 0, fontSize: '13px', lineHeight: 1.7, opacity: 0.72 },
       card: {
@@ -1834,7 +1871,7 @@ window.__ModuleLoader__.load({
         'div',
         { style: { display: 'flex', gap: '8px', alignItems: 'baseline', fontSize: '12px' } },
         h('span', { style: { ...skin.key, minWidth: '60px', flex: '0 0 auto' } }, props.label),
-        h('span', { style: { wordBreak: 'break-word', opacity: 0.86 } }, props.children),
+        h('span', { style: { wordBreak: 'break-word', overflowWrap: 'anywhere', opacity: 0.86 } }, props.children),
       )
     }
 
@@ -1905,7 +1942,7 @@ window.__ModuleLoader__.load({
                   style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
                 }),
           ),
-          h('span', { style: { fontSize: '13px', fontWeight: 600 } }, name),
+          h('span', { style: { fontSize: '13px', fontWeight: 600, overflowWrap: 'anywhere' } }, name),
           h(
             'span',
             { style: { fontSize: '12px', opacity: 0.7 } },
@@ -2467,6 +2504,9 @@ window.__ModuleLoader__.load({
                               lineHeight: 1.7,
                               whiteSpace: 'pre-wrap',
                               wordBreak: 'break-word',
+                              // 提示词里常有超长英文单词 / URL：只靠 break-word 会撑宽容器，
+                              // 在窄屏上顶出横向溢出（滚动区是 overflow-x:hidden，撑出去就被切掉）。
+                              overflowWrap: 'anywhere',
                               padding: '6px 8px',
                               borderRadius: '6px',
                               background: 'color-mix(in srgb, currentColor 6%, transparent)',
@@ -2715,6 +2755,28 @@ window.__ModuleLoader__.load({
         node = node.parentElement
       }
       return null
+    }
+
+    /**
+     * 作品库面板的骨架：**固定层 + 唯一滚动层（+ 面板内的模态层）**。
+     *
+     * 为什么必须自己滚：面板坐在 shell 的 `main` 插槽座位里，而那个座位的容器
+     * （`ui-layout` AppFrame 的 `.centerCol`）是 `display:flex; flex-direction:column;
+     * overflow:hidden` 且高度等于窗口——它**不滚**。面板内容一旦超长，超出部分被裁掉，
+     * 滚轮找不到任何可滚动的祖先，表现就是"详情页滚不动"。
+     *
+     * `bars` / `content` / `overlays` 都是子节点列表，用展开传参（而不是把数组当
+     * 子节点）以避免 React 对"数组子节点缺 key"的警告。
+     * 查看器是 `position: fixed` 的模态层，放在滚动区**外面**，不跟着内容滚。
+     */
+    function workbenchFrame(bars, content, overlays) {
+      return h(
+        'div',
+        { className: 'pxm-workbench', style: skin.panel },
+        h('div', { className: 'pxm-workbench-bar', style: skin.bar }, ...bars),
+        h('div', { className: 'pxm-scroll pxm-workbench-scroll', style: skin.scroll }, ...content),
+        ...(isArray(overlays) ? overlays : []),
+      )
     }
 
     function WorkbenchPanel() {
@@ -3079,62 +3141,64 @@ window.__ModuleLoader__.load({
       )
 
       if (showTrash) {
-        return h(
-          'div',
-          { style: skin.wrap },
-          header,
-          h(TrashPanel, {
-            state: trash,
-            onBack: () => {
-              setShowTrash(false)
-              loadProjects(false)
-            },
-            onReload: loadTrash,
-            onChanged: () => {
-              loadTrash()
-              loadProjects(false)
-            },
-          }),
+        return workbenchFrame(
+          [header],
+          [
+            h(TrashPanel, {
+              state: trash,
+              onBack: () => {
+                setShowTrash(false)
+                loadProjects(false)
+              },
+              onReload: loadTrash,
+              onChanged: () => {
+                loadTrash()
+                loadProjects(false)
+              },
+            }),
+          ],
         )
       }
 
       if (selected !== null) {
-        return h(
-          'div',
-          { style: skin.wrap },
-          header,
-          h(ProjectDetail, {
-            state: detail,
-            exportDir,
-            onBack: () => {
-              setViewer(null)
-              selectedProject.set(null)
-            },
-            onOpenImage: openViewer,
-            onRenamed: () => {
-              // 显示名变了：详情要重取，列表也要重取（搜索按名字匹配，改名会影响命中）。
-              setDetailToken((token) => token + 1)
-              loadProjects(false)
-            },
-            onDeleted: (id) => {
-              setViewer(null)
-              selectedProject.set(null)
-              setNotice('已把「' + id + '」移入回收站，可在「回收站」里恢复。')
-              loadProjects(false)
-            },
-          }),
-          viewer === null
-            ? null
-            : h(ImageViewer, {
-                entries: viewerEntries,
-                index: viewer.index,
-                compare: viewer.compare === true,
-                projectId: isObject(detail.data) && isString(detail.data.id) ? detail.data.id : '',
-                onClose: closeViewer,
-                onStep: stepViewer,
-                onToggleCompare: (next) =>
-                  setViewer((prev) => (prev === null ? prev : { ...prev, compare: next })),
-              }),
+        return workbenchFrame(
+          [header],
+          [
+            h(ProjectDetail, {
+              state: detail,
+              exportDir,
+              onBack: () => {
+                setViewer(null)
+                selectedProject.set(null)
+              },
+              onOpenImage: openViewer,
+              onRenamed: () => {
+                // 显示名变了：详情要重取，列表也要重取（搜索按名字匹配，改名会影响命中）。
+                setDetailToken((token) => token + 1)
+                loadProjects(false)
+              },
+              onDeleted: (id) => {
+                setViewer(null)
+                selectedProject.set(null)
+                setNotice('已把「' + id + '」移入回收站，可在「回收站」里恢复。')
+                loadProjects(false)
+              },
+            }),
+          ],
+          [
+            viewer === null
+              ? null
+              : h(ImageViewer, {
+                  entries: viewerEntries,
+                  index: viewer.index,
+                  compare: viewer.compare === true,
+                  projectId: isObject(detail.data) && isString(detail.data.id) ? detail.data.id : '',
+                  onClose: closeViewer,
+                  onStep: stepViewer,
+                  onToggleCompare: (next) =>
+                    setViewer((prev) => (prev === null ? prev : { ...prev, compare: next })),
+                }),
+          ],
         )
       }
 
@@ -3144,9 +3208,11 @@ window.__ModuleLoader__.load({
       const shown = projects.length
       const total = isNumber(list.total) ? list.total : shown
 
-      return h(
-        'div',
-        { style: skin.wrap },
+      /**
+       * 固定不滚的一层：表头 + 提示条 + 搜索 / 排序 + 计数 + 批量工具条。
+       * 项目一多，滚的是下面的卡片网格，不是这一层。
+       */
+      const bars = [
         header,
         notice === null ? null : h(Notice, { role: 'status', title: '已删除', detail: notice }),
         // ── 搜索 + 排序（批次 C） ─────────────────────────────────────────────
@@ -3297,6 +3363,10 @@ window.__ModuleLoader__.load({
         batch.note !== null && batch.note !== undefined
           ? h(Notice, { role: 'status', title: '已完成', detail: batch.note })
           : null,
+      ]
+
+      /** 唯一滚动区：项目卡片网格 + 加载更多 + 加载 / 失败 / 空状态。 */
+      const content = [
         list.phase === 'loading' ? h(LoadingRow, { text: '正在读取项目列表…' }) : null,
         list.phase === 'error'
           ? h(
@@ -3356,7 +3426,9 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
-      )
+      ]
+
+      return workbenchFrame(bars, content)
     }
 
     // ── ③ shell.overlay 实时预览卡（§8.5） ──────────────────────────────────

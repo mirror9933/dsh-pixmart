@@ -1210,3 +1210,135 @@ describe('jsdom lane：项目重命名', () => {
     for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve))
   })
 })
+
+// ── 滚动契约（结构断言） ────────────────────────────────────────────────────
+
+/**
+ * 面板骨架的**结构契约**断言。
+ *
+ * 说清楚这条轨道能证明什么、不能证明什么：
+ *   - **不能**证明"滚轮真的能滚"——jsdom 没有排版引擎，`scrollHeight` / `clientHeight`
+ *     恒为 0，`overflow-y:auto` 在这里跟 `visible` 没有可观测区别；
+ *   - **能**证明的是：滚动容器还在、它的 `minHeight:0` 还在、固定层没被塞进滚动容器里。
+ *     也就是"有人把修复删掉"时会立刻红，而不是回归到"详情页滚不动"还没人发现。
+ *
+ * 契约来源（宿主侧，不是我们的代码）：`@deepseek-ai/dsh-client-ui-layout` 的 AppFrame
+ * 中栏 `.centerCol` 是 `display:flex; flex-direction:column; overflow:hidden`，
+ * 高度由 `grid-template-rows:100%` 锁死——**座位自己不给滚动**，插件必须自带。
+ */
+function assertPanelSkeleton(lane) {
+  const root = lane.byClass('pxm-workbench')
+  assert.ok(root, '面板根必须存在（.pxm-workbench）')
+  assert.equal(root.style.display, 'flex')
+  assert.equal(root.style.flexDirection, 'column')
+  assert.equal(root.style.height, '100%', '面板根必须锁 height:100%（否则内容顶出中栏被裁掉）')
+  assert.equal(
+    root.style.minHeight,
+    '0px',
+    '面板根必须有 min-height:0（flex 子项默认 min-height:auto = 内容高度）',
+  )
+  assert.equal(root.style.boxSizing, 'border-box', 'height:100% + padding 必须 border-box，否则溢出 36px')
+
+  const bar = lane.byClass('pxm-workbench-bar')
+  const scroller = lane.byClass('pxm-workbench-scroll')
+  assert.ok(bar, '固定层必须存在（.pxm-workbench-bar）')
+  assert.ok(scroller, '滚动容器必须存在（.pxm-workbench-scroll）')
+
+  assert.equal(scroller.style.overflowY, 'auto', '内容区必须 overflow-y:auto')
+  assert.equal(scroller.style.overflowX, 'hidden', '内容区不得出现横向滚动')
+  assert.equal(scroller.style.minHeight, '0px', '滚动容器要有 min-height:0 才能在 flex 链里被压缩')
+  assert.equal(scroller.style.flex, '1 1 auto', '滚动容器必须 flex:1 1 auto 吃掉剩余高度')
+
+  assert.equal(scroller.contains(bar), false, '固定层必须在滚动容器之外（不跟着滚走）')
+  assert.equal(bar.contains(scroller), false)
+
+  const kids = [...root.children]
+  assert.ok(kids.length >= 2, '面板根至少要有固定层与滚动区两个子节点')
+  assert.equal(kids[0], bar, '固定层在前')
+  assert.equal(kids[1], scroller, '滚动区在后')
+  return { root, bar, scroller }
+}
+
+describe('jsdom lane：面板滚动契约（结构断言，不能证明真的能滚）', () => {
+  it('列表页：项目网格是唯一滚动区，搜索 / 工具条固定在滚动区之外', async () => {
+    const lane = await createLane({ respond: pagedRespond(makeProjects(30)) })
+    await lane.render()
+
+    const { bar, scroller } = assertPanelSkeleton(lane)
+    assert.equal(scroller.querySelectorAll('.pxm-tile').length, 24, '卡片网格在滚动区里')
+    assert.ok(bar.querySelector('.pxm-search'), '搜索框属于固定层，滚列表时不该跑掉')
+    assert.ok(bar.querySelector('.pxm-list-bar'), '计数 / 全选属于固定层')
+    assert.ok(scroller.contains(lane.byClass('pxm-load-more')), '「加载更多」跟着内容滚')
+
+    // 选中后的批量工具条也在固定层（否则滚下去就点不到删除）
+    await lane.click(lane.container.querySelector('.pxm-select-box'))
+    assert.ok(bar.querySelector('.pxm-select-toolbar'), '批量工具条必须在固定层里')
+    assert.equal(scroller.contains(lane.byClass('pxm-select-toolbar')), false)
+  })
+
+  it('详情页：长提示词与图片在滚动区里，表头固定在滚动区之外', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openDetail(lane)
+
+    const { bar, scroller } = assertPanelSkeleton(lane)
+    assert.ok(scroller.querySelector('.pxm-prompt'), '提示词必须在滚动区里（它就是被截断的那段）')
+    assert.ok(scroller.textContent.includes('白底主图'), '模块卡片在滚动区里')
+    assert.ok(scroller.querySelector('.pxm-thumb'), '图片也在滚动区里')
+    assert.ok(bar.querySelector('.pxm-trash-toggle'), '表头按钮不跟着内容滚走')
+    assert.equal(scroller.querySelector('.pxm-viewer'), null, '查看器不放进滚动区')
+  })
+
+  it('详情页：查看器打开后仍在面板内，但不属于滚动区（position:fixed 与本修无关）', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openDetail(lane)
+
+    const { root, scroller } = assertPanelSkeleton(lane)
+    await lane.click(lane.byClass('pxm-thumb'))
+    const viewer = lane.byClass('pxm-viewer')
+    assert.ok(viewer, '点图必须打开查看器')
+    assert.equal(viewer.style.position, 'fixed', '查看器仍是 position:fixed')
+    assert.equal(root.contains(viewer), true, '查看器仍挂在面板根下（不新增 shell.overlay 座位）')
+    assert.equal(scroller.contains(viewer), false, '查看器不在滚动区里')
+  })
+
+  it('回收站视图：同样是「固定表头 + 滚动内容」', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await lane.click(lane.byClass('pxm-trash-toggle'))
+    assert.ok(lane.text().includes('旧项目'), '回收站要列出来')
+
+    const { bar, scroller } = assertPanelSkeleton(lane)
+    assert.ok(scroller.querySelector('.pxm-restore-btn'), '条目列表在滚动区里')
+    assert.ok(bar.querySelector('.pxm-trash-toggle'), '「返回作品库」固定在表头')
+  })
+
+  it('长提示词段落带 word-break / overflow-wrap（长英文单词不撑破容器）', async () => {
+    const longToken = 'A'.repeat(200)
+    const lane = await createLane({
+      respond(url, init = {}) {
+        const method = String(init.method ?? 'GET').toUpperCase()
+        if (method === 'GET' && url.includes('/api/projects/')) {
+          return jsonResponse({
+            ok: true,
+            project: {
+              ...projectDetail.project,
+              items: [{ ...projectDetail.project.items[0], prompt: longToken }],
+            },
+          })
+        }
+        return defaultRespond(url, init)
+      },
+    })
+    await lane.render()
+    await openDetail(lane)
+
+    const prompt = lane.byClass('pxm-prompt')
+    assert.ok(prompt, '提示词段落必须存在')
+    assert.equal(prompt.textContent, longToken, '长提示词要原样显示')
+    assert.equal(prompt.style.whiteSpace, 'pre-wrap')
+    assert.equal(prompt.style.wordBreak, 'break-word')
+    assert.equal(prompt.style.overflowWrap, 'anywhere', '超长单词必须有 overflow-wrap 兜底')
+  })
+})
