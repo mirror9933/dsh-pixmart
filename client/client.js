@@ -529,14 +529,9 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      const header = h(
-        'div',
-        { style: { ...skin.row, justifyContent: 'space-between' } },
-        h('h2', { style: skin.title }, 'PixMart 电商生图'),
-        typeof props?.close === 'function'
-          ? h(Btn, { onClick: () => props.close(), title: '关闭设置页' }, '关闭')
-          : null,
-      )
+      // 不再自带「关闭」按钮：shell 已在设置面板右上角提供 X（与「打开配置文件」并列），
+      // 页面内再放一个重复且占位。`props.close` 仍然保留可用，留给"跳出设置去开会话"那类流程。
+      const header = h('div', { style: skin.row }, h('h2', { style: skin.title }, 'PixMart 电商生图'))
 
       if (state.phase === 'loading') {
         return h('div', { style: skin.wrap }, header, h(LoadingRow, { text: '正在读取厂商与用量…' }))
