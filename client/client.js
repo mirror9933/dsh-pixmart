@@ -590,6 +590,8 @@ window.__ModuleLoader__.load({
             fontSize: '12px',
             flex: '1 1 180px',
             minWidth: 0,
+            // 允许调用方覆盖布局（例如让某个字段独占一行）
+            ...(isObject(props.style) ? props.style : {}),
           },
         },
         h('span', { style: { opacity: 0.7 } }, props.label),
@@ -899,7 +901,9 @@ window.__ModuleLoader__.load({
 
       const [baseUrl, setBaseUrl] = React.useState(String(provider.baseUrl ?? ''))
       const [nativeUrl, setNativeUrl] = React.useState(String(provider.geminiNativeBaseUrl ?? ''))
-      const [keyEnv, setKeyEnv] = React.useState(String(provider.apiKeyEnv ?? ''))
+      // 不再暴露 `apiKeyEnv`：环境变量会**优先于**本页填写的密钥，只留字段却藏掉输入框
+      // 会变成"哪天环境变量被设上，界面里的 key 就静默失效且无从察觉"。
+      // 因此保存凭据时显式清空它（见 writeCredentials 的调用点）。
       const [keyValue, setKeyValue] = React.useState('')
       const creds = useMutation()
       const models = useMutation()
@@ -927,8 +931,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         setBaseUrl(String(provider.baseUrl ?? ''))
         setNativeUrl(String(provider.geminiNativeBaseUrl ?? ''))
-        setKeyEnv(String(provider.apiKeyEnv ?? ''))
-      }, [provider.id, provider.baseUrl, provider.geminiNativeBaseUrl, provider.apiKeyEnv])
+      }, [provider.id, provider.baseUrl, provider.geminiNativeBaseUrl])
 
       const endpoint = 'api/providers/' + encodeURIComponent(id) + '/'
 
@@ -1067,21 +1070,7 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '密钥环境变量名（可选，优先级高于本页填写）' },
-            h(TextInput, {
-              value: keyEnv,
-              disabled: creds.busy,
-              placeholder: 'OFOX_API_KEY',
-              onChange: (event) => setKeyEnv(event.target.value),
-              onBlur: () => {
-                const next = keyEnv.trim()
-                if (next !== String(provider.apiKeyEnv ?? '')) writeCredentials({ apiKeyEnv: next })
-              },
-            }),
-          ),
-          h(
-            Field,
-            { label: 'API Key（留空表示不修改）' },
+            { label: 'API Key（留空表示不修改）', style: { flex: '1 0 100%' } },
             h(TextInput, {
               type: 'password',
               value: keyValue,
@@ -1099,8 +1088,10 @@ window.__ModuleLoader__.load({
             Btn,
             {
               disabled: disableCredentials || keyValue === '',
-              onClick: () => writeCredentials({ apiKey: keyValue }),
-              title: '把上面填写的密钥写入本机配置',
+              // 同时清空 apiKeyEnv：环境变量优先级高于本页填写的密钥，
+              // 只留字段会变成"哪天环境变量被设上，这里的 key 就静默失效"。
+              onClick: () => writeCredentials({ apiKey: keyValue, apiKeyEnv: '' }),
+              title: '把上面填写的密钥写入本机配置；同时清空配置里的环境变量名，避免它静默覆盖',
             },
             creds.busy ? '保存中…' : '保存',
           ),
@@ -1108,8 +1099,8 @@ window.__ModuleLoader__.load({
             Btn,
             {
               disabled: disableCredentials,
-              onClick: () => writeCredentials({ apiKey: '' }),
-              title: '清除本机配置里的密钥（环境变量里的密钥不受影响）',
+              onClick: () => writeCredentials({ apiKey: '', apiKeyEnv: '' }),
+              title: '清除本机配置里的密钥与环境变量名',
             },
             '清除密钥',
           ),
