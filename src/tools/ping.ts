@@ -8,8 +8,7 @@
  *
  * 无副作用：不写文件、不发网络请求。
  */
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { resolveDataDir } from '../store/paths.js'
 import type {
   HostContext,
   ToolDefinitionLike,
@@ -63,48 +62,6 @@ const PING_OUTPUT_SCHEMA: Record<string, unknown> = {
     degraded: { type: 'array', items: { type: 'string' } },
   },
   required: ['ok', 'plugin', 'version'],
-}
-
-/** 解析数据目录：显式配置 > `$DSH_HOME` > `<用户主目录>/.dsh`。
- *
- * 第三级回落不是保险丝而是**实测必需**：由桌面 GUI 启动的宿主进程并不设置
- * `DSH_HOME`（P0 在真实 desktop 宿主上实测到），若只用环境变量就会退化成
- * `process.cwd()/pixmart`——而 cwd 是 profile 目录，属于「用 cwd 散落用户数据」
- * 的明确反模式。
- */
-export function resolveDataDir(configured: string | undefined): {
-  dataDir: string
-  degraded: string[]
-} {
-  const degraded: string[] = []
-  const explicit = typeof configured === 'string' ? configured.trim() : ''
-  if (explicit !== '') return { dataDir: explicit, degraded }
-
-  const fromEnv = process.env.DSH_HOME?.trim()
-  if (fromEnv !== undefined && fromEnv !== '') {
-    return { dataDir: join(stripTrailingSeparators(fromEnv), 'pixmart'), degraded }
-  }
-
-  const userHome = (() => {
-    try {
-      return homedir()
-    } catch {
-      return ''
-    }
-  })()
-  if (userHome !== '') {
-    degraded.push('DSH_HOME 未设置（GUI 启动的宿主即如此），按约定回落到 <用户主目录>/.dsh')
-    return { dataDir: join(stripTrailingSeparators(userHome), '.dsh', 'pixmart'), degraded }
-  }
-
-  degraded.push('DSH_HOME 与用户主目录都取不到，数据目录退化为进程工作目录下的 pixmart（临时）')
-  return { dataDir: join(process.cwd(), 'pixmart'), degraded }
-}
-
-function stripTrailingSeparators(value: string): string {
-  let end = value.length
-  while (end > 1 && (value[end - 1] === '\\' || value[end - 1] === '/')) end -= 1
-  return value.slice(0, end)
 }
 
 function renderPing(value: ToolOutputValue): { type: string; text: string }[] {

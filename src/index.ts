@@ -9,7 +9,7 @@
  */
 import type { DshPixmartConfig, HostContext } from './host-types.js'
 import { writeSmokeMarker } from './smoke-marker.js'
-import { createPingTool } from './tools/ping.js'
+import { createTools } from './tools/index.js'
 import { PLUGIN_NAME } from './version.js'
 
 export const name = PLUGIN_NAME
@@ -23,10 +23,15 @@ export const inject = ['tools']
  * @param config - cordis.yml 中本行的 `config:` 段。
  */
 export function apply(ctx: HostContext, config: DshPixmartConfig = {}): void {
-  ctx.effect(
-    () => ctx.tools.register(createPingTool(ctx, config.dataDir)),
-    'dsh-pixmart: tools',
-  )
+  const tools = createTools(ctx, config)
+
+  ctx.effect(() => {
+    const disposers = tools.map((tool) => ctx.tools.register(tool))
+    return () => {
+      for (const dispose of disposers) dispose()
+    }
+  }, 'dsh-pixmart: tools')
+
   writeSmokeMarker(ctx)
 }
 

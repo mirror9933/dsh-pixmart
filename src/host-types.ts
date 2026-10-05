@@ -90,3 +90,31 @@ export interface DshPixmartConfig {
   /** 插件数据目录。留空 = `$DSH_HOME/pixmart`。 */
   readonly dataDir?: string
 }
+
+/** `ctx.attachments.saveImages` 返回的持久图片引用（见 contract-notes §2）。 */
+export interface ImageAttachmentRefLike {
+  readonly attachmentId: string
+  readonly mediaType: string
+  readonly bytes: number
+  readonly width: number
+  readonly height: number
+  readonly name?: string
+}
+
+/** `ctx.attachments` 的结构子集。 */
+export interface AttachmentsLike {
+  saveImages(
+    inputs: readonly { readonly data: Uint8Array; readonly mediaType: string; readonly name?: string }[],
+  ): Promise<readonly ImageAttachmentRefLike[]>
+}
+
+/** `ctx.fs` 的结构子集。 */
+export interface FsTargetLike {
+  readonly [key: string]: unknown
+}
+
+export interface FsServiceLike {
+  resolve(path: string, opts?: { readonly cwd?: string; readonly signal?: unknown }): Promise<FsTargetLike>
+  processPath(target: FsTargetLike): string
+  readBytes(target: FsTargetLike, signal: unknown, maxBytes: number): Promise<Uint8Array>
+}

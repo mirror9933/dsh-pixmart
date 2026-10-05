@@ -49,17 +49,22 @@ function probe(ctx: HostContext): { present: string[]; absent: string[] } {
 }
 
 function schemaOf(ctx: HostContext): {
-  schemas: unknown
+  tools: unknown
   schemasError: string
 } {
   try {
-    const projected = ctx.tools.schemas?.()
+    const projected = ctx.tools.schemas?.() ?? []
+    const ours = projected.filter((entry) => entry.name.startsWith('pixmart_'))
     return {
-      schemas: projected?.find((entry) => entry.name === PING_TOOL_NAME) ?? null,
+      tools: ours.map((entry) => ({
+        name: entry.name,
+        parameterKeys: Object.keys(entry.parameters?.properties ?? {}).length,
+        required: Array.isArray(entry.parameters?.required) ? entry.parameters.required : [],
+      })),
       schemasError: '',
     }
   } catch (error) {
-    return { schemas: null, schemasError: error instanceof Error ? error.message : String(error) }
+    return { tools: null, schemasError: error instanceof Error ? error.message : String(error) }
   }
 }
 
@@ -88,7 +93,6 @@ export function writeSmokeMarker(ctx: HostContext): void {
       node: process.version,
       cwd: process.cwd(),
       dshHome: process.env.DSH_HOME ?? '',
-      registered: [PING_TOOL_NAME],
       ...schemaOf(ctx),
       present,
       absent,
