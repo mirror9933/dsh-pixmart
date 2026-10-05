@@ -167,17 +167,22 @@ const MUTATIONS = [
           "              display: 'inline-flex',",
           "              alignItems: 'baseline',",
           "              gap: '6px',",
-          "              whiteSpace: 'nowrap',",
+          "              maxWidth: '100%',",
+          '              minWidth: 0,',
           '            },',
           '          },',
-          "          h('span', { style: skin.key }, label),",
-          "          h('code', { style: skin.code }, value),",
+          "          h('span', { style: { ...skin.key, whiteSpace: 'nowrap', flexShrink: 0 } }, label),",
+          '          h(',
+          "            'code',",
+          "            { style: { ...skin.code, wordBreak: 'normal', minWidth: 0, overflowWrap: 'anywhere' } },",
+          '            value,',
+          '          ),',
           '        )',
         ].join('\n'),
         replace: [
           '      const field = (label, value) => [',
-          "        h('span', { key: 'k', style: skin.key }, label),",
-          "        h('code', { key: 'v', style: skin.code }, value),",
+          "        h('span', { key: 'k', style: { ...skin.key, whiteSpace: 'nowrap', flexShrink: 0 } }, label),",
+          "        h('code', { key: 'v', style: { ...skin.code, wordBreak: 'normal', minWidth: 0, overflowWrap: 'anywhere' } }, value),",
           '      ]',
         ].join('\n'),
       },
@@ -200,6 +205,73 @@ const MUTATIONS = [
       {
         find: "            overflowY: 'auto',\n            overflowX: 'hidden',\n            overscrollBehavior: 'contain',",
         replace: "            overflowY: 'auto',\n            overflowX: 'hidden',",
+      },
+    ],
+  },
+  {
+    id: 'M13-field-group-nowrap',
+    bug: '「标签 + 值」的组重新拿回 whiteSpace:nowrap（上一版为修 bug 1 加在整组上的对策）—— 长路径一个断点都没有，组的 min-content = 整条路径宽度，520px 的设置弹窗被撑出横向滚动条（本次 lane 报的 687 > 520）',
+    expect: ['两条 87 字符的长路径'],
+    edits: [
+      {
+        find: [
+          "              display: 'inline-flex',",
+          "              alignItems: 'baseline',",
+          "              gap: '6px',",
+          "              maxWidth: '100%',",
+          '              minWidth: 0,',
+        ].join('\n'),
+        replace: [
+          "              display: 'inline-flex',",
+          "              alignItems: 'baseline',",
+          "              gap: '6px',",
+          "              maxWidth: '100%',",
+          '              minWidth: 0,',
+          "              whiteSpace: 'nowrap',",
+        ].join('\n'),
+      },
+    ],
+  },
+  {
+    id: 'M14-field-value-unbreakable',
+    bug: '值的断行能力被去掉（overflowWrap:anywhere 撤回）—— 值虽然能靠 minWidth:0 收窄，但长路径在它**内部**一个断点都没有，只能溢出',
+    expect: ['两条 87 字符的长路径'],
+    edits: [
+      {
+        find: "            { style: { ...skin.code, wordBreak: 'normal', minWidth: 0, overflowWrap: 'anywhere' } },",
+        replace: "            { style: { ...skin.code, wordBreak: 'normal', minWidth: 0 } },",
+      },
+    ],
+  },
+  {
+    id: 'M15-field-group-flex-wrap',
+    /**
+     * 信息性**之外**的变异：按"推荐做法"给组加 `flexWrap: 'wrap'`。
+     *
+     * 这条记录的是一个**实测反例**：flex 的行划分用的是子项的假设主轴尺寸
+     * （值的 max-content 574px），于是 wrap 会把值整体推到第二行 ——
+     * 那正是"标签与值被拆散"。既有用例 7b 与本次新用例同时抓住它，
+     * 所以实现里**故意没有**加 flexWrap（见 client.js 该处注释）。
+     */
+    bug: '给「标签 + 值」的组加上 flexWrap:wrap（"推荐做法"）—— 长值被整行推到标签下面（拆散回归）',
+    expect: ['成组的「标签 + 值」', '两条 87 字符的长路径'],
+    edits: [
+      {
+        find: [
+          "              display: 'inline-flex',",
+          "              alignItems: 'baseline',",
+          "              gap: '6px',",
+          "              maxWidth: '100%',",
+          '              minWidth: 0,',
+        ].join('\n'),
+        replace: [
+          "              display: 'inline-flex',",
+          "              flexWrap: 'wrap',",
+          "              alignItems: 'baseline',",
+          "              gap: '6px',",
+          "              maxWidth: '100%',",
+          '              minWidth: 0,',
+        ].join('\n'),
       },
     ],
   },

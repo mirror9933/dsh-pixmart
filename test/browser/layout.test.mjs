@@ -637,9 +637,12 @@ if (launched.browser === null) {
     it('成组的「标签 + 值」（数据目录）在窄屏下仍留在同一行', async () => {
       /**
        * 这一对是 bug 1（标签与值被 flex 拆散）在现产物里**仅存**的成组形态：
-       * 标签与值被 `display:inline-flex` + `white-space:nowrap` 包成一个 flex 子项。
-       * 用一个真实长度的导出路径把这一行压到临界：成组时整对留在同一行，
-       * 退回"两个独立 flex 子项"时值会被换到下一行。
+       * 标签（`white-space:nowrap` + `flex-shrink:0`）与值被 `display:inline-flex`
+       * 包成一个 flex 子项。用一个真实长度的数据目录把这一行压到临界：成组时整对留在
+       * 同一行（长值在**自己内部**换行），退回"两个独立 flex 子项"时值会被换到下一行。
+       *
+       * 注意：**不要**给这一组加 `flexWrap:wrap`——flex 按子项的假设主轴尺寸划行，
+       * 长值会被整行推到标签下面，本条断言会立刻变红（`M15-field-group-flex-wrap`）。
        */
       const longDir = 'C:/Users/Someone/Documents/PixMart/exports/2026-autumn-ceramic-mug-campaign/final-hires'
       const { page, context, problems } = await openLane({
@@ -664,6 +667,85 @@ if (launched.browser === null) {
         assert.deepEqual(problems, [])
       } finally {
         await context.close()
+      }
+    })
+
+    it('两条 87 字符的长路径在 520px / 375px 下都不得把设置弹窗撑出横向滚动条', async () => {
+      /**
+       * lane 实测：`#settingsDialog.scrollWidth 687 > clientWidth 520`（窗口 520px）。
+       *
+       * 逐元素量下来的结论：撑破弹窗的是**「数据目录」那一对**（`field()` 组），
+       * 不是一个笼统的"设置页太宽"。因果链是
+       * `field()` 组上的 `whiteSpace: 'nowrap'`（为修 bug 1「标签与值被 flex 拆散」
+       * 而给**整组**加的对策）→ 组里那条长路径一个断点都没有 →
+       * 组的 min-content 宽度 = 整条路径的宽度（实测 652px）→ 组的父级 flex 行
+       * （`skin.row`）被顶宽到 652px → `skin.wrap` 到 687px → 520px 的弹窗出现横向滚动条。
+       * 对短值（`1:1` / `ofox`）而言这条 nowrap 是对的，只有长值会踩到。
+       *
+       * 「作品库导出路径」的长值走 `<input>`：长文本收在输入框内部自滚
+       * （`scrollWidth > clientWidth` 是 `<input>` 的正常行为），**不会**撑破排版。
+       * 两条路径在这里都设成 87 字符：断言的是「设置页整体没有横向溢出」，
+       * 哪一个元素撑破都会被抓住，而不是只盯住某一个元素。
+       */
+      const longDataDir =
+        'C:\\Users\\Someone\\.dsh\\pixmart\\projects\\2026-autumn-ceramic-mug-campaign\\images-hires-v2'
+      const longExportDir =
+        'C:\\Users\\Someone\\.dsh\\pixmart\\exports\\2026-autumn-ceramic-mug-campaign\\final-hires-2026'
+      assert.equal(longDataDir.length, 87, '夹具必须与 lane 实测的长度一致（87 字符）')
+      assert.equal(longExportDir.length, 87, '夹具必须与 lane 实测的长度一致（87 字符）')
+
+      // 375px 是「窄屏」那条既有用例的宽度；520px 是 lane 报出 687/520 的那一档。
+      for (const width of [520, 375]) {
+        const { page, context, problems } = await openLane({
+          width,
+          height: 900,
+          slot: 'settings.section',
+          fixture: fixture({
+            providers: { ...providersFixture, dataDir: longDataDir, exportDir: longExportDir },
+          }),
+        })
+        try {
+          await page.waitForSelector('select')
+          const dialog = await probe(page, 'box', '#settingsDialog')
+          assert.ok(
+            dialog.scrollWidth <= dialog.clientWidth + 1,
+            String(width) + 'px 下设置弹窗必须是横向不溢出的：' +
+              JSON.stringify({ scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth }),
+          )
+
+          // 目标 1 不能回归，且修复不能是"把溢出的东西裁掉"：
+          // 值要在**自己内部**换行（scrollWidth 不超 clientWidth），标签仍在同一行。
+          const pair = await probe(page, 'groupedPair', '数据目录')
+          assert.ok(pair !== null, '设置页里应有「数据目录」这一对标签 + 值')
+          assert.ok(
+            pair.valueScrollWidth <= pair.valueClientWidth + 1,
+            String(width) + 'px 下长路径必须在值内部换行，而不是被裁掉：' + JSON.stringify(pair),
+          )
+          assert.ok(
+            Math.abs(pair.labelRect.top - pair.valueRect.top) <= 2,
+            String(width) + 'px 下标签与它的值仍必须在同一行（原 bug 不能回归）：' + JSON.stringify(pair),
+          )
+          assert.ok(
+            pair.valueRect.right > pair.labelRect.right,
+            String(width) + 'px 下值必须真的排在标签右边：' + JSON.stringify(pair),
+          )
+          assert.ok(
+            pair.groupRect.right <= dialog.rect.left + dialog.clientWidth + 1,
+            String(width) + 'px 下这一对不得超出弹窗内容区：' + JSON.stringify(pair),
+          )
+
+          // 导出路径输入框必须随容器收窄，不得自己撑破弹窗。
+          const input = await probe(page, 'rect', 'input')
+          assert.ok(input !== null, '设置页里应有导出路径输入框')
+          assert.ok(
+            input.right <= dialog.rect.left + dialog.clientWidth + 1,
+            String(width) + 'px 下导出路径输入框不得超出弹窗内容区：' +
+              JSON.stringify({ input, dialog: dialog.rect, clientWidth: dialog.clientWidth }),
+          )
+          assert.deepEqual(problems, [])
+        } finally {
+          await context.close()
+        }
       }
     })
   })

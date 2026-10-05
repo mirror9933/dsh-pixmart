@@ -714,6 +714,9 @@ window.__ModuleLoader__.load({
       background: 'transparent',
       border: '1px solid color-mix(in srgb, currentColor 24%, transparent)',
       width: '100%',
+      // `width:100%` 只是"想占满"，真正让它随容器**收窄**的是 minWidth:0：
+      // 否则长值（绝对路径）会把输入框顶到自己的固有宽度上。
+      minWidth: 0,
       boxSizing: 'border-box',
     }
 
@@ -1611,10 +1614,24 @@ window.__ModuleLoader__.load({
       const historical = isObject(data.historical) ? data.historical : {}
 
       /**
-       * 把「标签 + 值」包成一个**不可内部断行**的 flex 项。
+       * 把「标签 + 值」包成一个**成组的** flex 项，同时守住两个目标：
        *
-       * 之前两者是行容器里的两个独立子项，换行时会从中间断开——「尺寸」留在上一行、
-       * `1:1` 掉到下一行，看起来像错位。成组之后换行只会整对一起走。
+       *   1. **不拆散**（bug 1，97083a9）：标签 `whiteSpace: 'nowrap'` + `flexShrink: 0`，
+       *      值就永远紧跟在同一行的标签右边；换行只会发生在**组的外侧**
+       *      （外层 `skin.row` 的 wrap），整对一起走。
+       *   2. **不撑破**（本 bug）：组上那条 `whiteSpace: 'nowrap'` 已经去掉，值拿
+       *      `minWidth: 0` + `overflowWrap: 'anywhere'` —— 长路径在**自己内部**换行
+       *      （`1:1` / `ofox` / `D:/pixmart` 这类短值的外观不变）。
+       *
+       * 这里**故意不给组加 `flexWrap: 'wrap'`**：实测（520px + 87 字符路径）下，
+       * flex 的行划分用的是每个子项的**假设主轴尺寸**（= 值的 max-content 574px），
+       * 所以 wrap 会把值整体推到第二行 —— 那正是"标签与值被拆散"本身，
+       * 既有用例 7b 立刻变红（labelRect.top 700.9 vs valueRect.top 724.9）。
+       * 正确做法是 nowrap + 让值可收缩：值一收窄就在自己内部换行。
+       *
+       * `overflowWrap: 'anywhere'`（而不是 `break-word`）还额外把值的
+       * **min-content 宽度**压到一个字符，所以组总是能收窄进容器；断行能力只留这一处
+       * （`word-break` 影响不到 min-content 宽度，留着反而会掩盖"值不可收缩"的回归）。
        */
       const field = (label, value) =>
         h(
@@ -1624,11 +1641,16 @@ window.__ModuleLoader__.load({
               display: 'inline-flex',
               alignItems: 'baseline',
               gap: '6px',
-              whiteSpace: 'nowrap',
+              maxWidth: '100%',
+              minWidth: 0,
             },
           },
-          h('span', { style: skin.key }, label),
-          h('code', { style: skin.code }, value),
+          h('span', { style: { ...skin.key, whiteSpace: 'nowrap', flexShrink: 0 } }, label),
+          h(
+            'code',
+            { style: { ...skin.code, wordBreak: 'normal', minWidth: 0, overflowWrap: 'anywhere' } },
+            value,
+          ),
         )
 
       const providers = data.providers.filter(isObject)

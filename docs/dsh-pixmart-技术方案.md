@@ -1242,10 +1242,10 @@ pnpm verify           # typecheck + build + test(260) + test:browser
 | [test/browser/shell.html](../test/browser/shell.html) | 复刻 shell 的最小真实骨架：`html,body,#root` 高度 100% + `overflow:hidden`、**40px 标题栏带**（模拟 `titleBarOverlay`，`z-index:1100`）并发布 `--dsh-frame-chrome-top: 40px`、`.centerCol`（flex 列 + `overflow:hidden` + 高度锁死），**我们的面板是它的直接 flex 子项**（槽锚点 `display:contents`，无 DOM 包裹）；设置页槽另有自己的滚动弹窗容器 |
 | [test/browser/lane.js](../test/browser/lane.js) | 页面侧 harness：`client.js` 之前定义 `window.__ModuleLoader__` → `factory(require)`（`require('react')` = 页面里的**真 React 18 UMD**）→ 最小假 `ctx` 调 **`apply(ctx)`**（走真实注册路径，不读 `__test__`）→ 挂进槽锚点；并暴露只讲事实的几何探针（rect / scrollTop / scrollWidth / `elementFromPoint` / 计算后 overflow） |
 | [test/browser/lane-server.mjs](../test/browser/lane-server.mjs) | 只读静态服务（白名单路径 + 真 800×800 PNG 顶替图片路由）+ 浏览器解析/启动；默认服务的永远是**仓库原产物 `client/client.js`** |
-| [test/browser/layout.test.mjs](../test/browser/layout.test.mjs) | 10 条断言 |
+| [test/browser/layout.test.mjs](../test/browser/layout.test.mjs) | 11 条断言 |
 | [tools/lane-mutations.mjs](../tools/lane-mutations.mjs) | **反向变异验证**：把实现改坏、确认对应用例真的失败（见下表） |
 
-**覆盖的 10 条断言**（全部基于真实几何 / 真滚轮 `mouse.wheel()`，没有一条是"读内联样式字符串"）：
+**覆盖的 11 条断言**（全部基于真实几何 / 真滚轮 `mouse.wheel()`，没有一条是"读内联样式字符串"）：
 
 | # | 断言 | 手段 |
 |---|---|---|
@@ -1256,9 +1256,9 @@ pnpm verify           # typecheck + build + test(260) + test:browser
 | 4 | 查看器内容滚动时顶栏与根盒子 `top` 不变、`root.scrollTop === 0` | `mouse.wheel` + rect 对比 |
 | 5 | 打开查看器时背景 `.pxm-scroll` 被锁（计算后 `overflow-y: hidden`）、关闭后**精确还原**（回 `auto` 且滚动位置复原） | `getComputedStyle` + `scrollTop` |
 | 6 | 375px 窄屏：文档 `scrollWidth ≤ clientWidth + 1`、长英文提示词/长模型名/超长项目名不被 `overflow-x:hidden` 裁掉 | `scrollWidth` vs `clientWidth` + 按内容定位长串承载元素 |
-| 7 | 设置页「默认值」卡片：标签与值**同列堆叠**（左边界对齐、值在标签下方）；「标签 + 值」成组的那一对在窄屏下**仍留在同一行** | rect 差值 + 左边界 |
+| 7 | 设置页「默认值」卡片：标签与值**同列堆叠**（左边界对齐、值在标签下方）；「标签 + 值」成组的那一对在窄屏下**仍留在同一行**（且长值在**自己内部**换行，不被裁掉）；两条 87 字符的长路径在 **520px / 375px** 下都不把 `#settingsDialog` 撑出横向滚动条，导出路径 `<input>` 随容器收窄 | rect 差值 + 左边界 + `#settingsDialog.scrollWidth` vs `clientWidth` |
 
-**变异对照表**（`node tools/lane-mutations.mjs`，11 条严格变异全部被对应用例抓住；
+**变异对照表**（`node tools/lane-mutations.mjs`，14 条严格变异全部被对应用例抓住；
 脚本自身校验"每处 `find` 恰好命中一次"与"仓库原产物 sha256 前后一致"）：
 
 | 变异 | 改坏的实现 | 抓住它的用例 |
@@ -1275,6 +1275,10 @@ pnpm verify           # typecheck + build + test(260) + test:browser
 | `M10-field-row` | 设置页 `Field` 去掉 `flexDirection:column` | 7（控件与标签并排：左边界差 24px） |
 | `M11-field-ungrouped` | 「标签 + 值」退回两个独立 flex 子项（提交 `97083a9` 的根因） | 7（值被换到下一行：`top` 差 26px） |
 | `M12-no-overscroll-contain`（**信息性，无断言能抓住**） | 只去掉 `overscrollBehavior: contain` | 无 —— 已知观测盲区，见下 |
+| `M13-field-group-nowrap` | 「标签 + 值」的组重新拿回 `whiteSpace:nowrap`（上一版为修 bug 1 加在**整组**上的对策） | 7（长路径无断点 → 组 `min-content` = 整条路径 → `#settingsDialog` `scrollWidth 687 > clientWidth 520`） |
+| `M14-field-value-unbreakable` | 值的断行能力撤回（去掉 `overflowWrap:anywhere`） | 7（520px 下值被裁：`valueScrollWidth > valueClientWidth`；375px 下弹窗 `scrollWidth 403 > clientWidth 375`） |
+| `M15-field-group-flex-wrap` | 给组加 `flexWrap:wrap`（"推荐做法"，**实测反例**） | 7（flex 按假设主轴尺寸划行 → 长值被整行推到标签下面：`top` 差 24px） |
+
 
 **它仍然覆盖不到什么**（不要把这些当成已验证）：
 
@@ -1298,11 +1302,22 @@ pnpm verify           # typecheck + build + test(260) + test:browser
 - **输入方式**：只有鼠标滚轮；触摸/触控板惯性滚动、键盘滚动、拖滚动条都不覆盖。
 - **reduced-motion / 动画**：入场动画只在等待 250ms 后测几何，动画本身（`.pxm-in`）不覆盖。
 
-**本次 lane 抓到的真实观察（未修，不属本次范围）**：设置页「数据目录」这一对是
-`display:inline-flex` + `white-space:nowrap` 的整组，**组内不会换行**；导出路径偏长时
-（实测 87 字符路径 + 窗口 520px）该组宽 652px 而卡片内容区约 437px，设置弹窗因此出现
-**横向滚动条**（`#settingsDialog.scrollWidth 687 > clientWidth 520`，文档本身不受影响）。
-它不是"标签与值被拆散"，但值得后续决定：是允许组内断行，还是给值加省略号。
+**§13.7 抓到的真实缺陷（已修，2026-10-05）**：设置页「数据目录」这一对是
+`display:inline-flex` 的整组，**上一版为了修 bug 1（标签与值被 flex 拆散）把
+`white-space:nowrap` 加在了整组上**——对 `1:1` / `ofox` 这类短值正确，但长值
+（`C:\Users\...\.dsh\pixmart`、长导出路径）**一个断点都没有**，组的 `min-content`
+就等于整条路径宽度（实测 652px），于是 520px 的设置弹窗出现横向滚动条
+（`#settingsDialog.scrollWidth 687 > clientWidth 520`，文档本身不受影响）。
+修法（两个目标同时成立）：组去掉 `whiteSpace:nowrap` 并保持
+`inline-flex` + `alignItems:baseline` + `gap`；**标签** `whiteSpace:nowrap` + `flexShrink:0`
+（它不会被拆散、也不会被压缩）；**值** `minWidth:0` + `overflowWrap:anywhere`
+（长路径在**自己内部**换行，且 `anywhere` 把值的 `min-content` 压到一个字符，
+组因此总能收窄进容器）。导出路径的 `<input>` 另补 `minWidth:0`（配合已有的
+`width:100%` + `boxSizing:border-box`），保证它随容器收窄。
+**两个反例**记在变异表里：①回到 `nowrap`（`M13`）→ 687 > 520 重现；
+②按"推荐做法"给组加 `flexWrap:wrap`（`M15`）→ flex 按子项的**假设主轴尺寸**划行，
+长值被整行推到标签下面，**拆散回归**（用例 7b 立刻变红）。所以实现里**故意没有**
+`flexWrap:wrap`：不拆散靠"标签不可压缩 + 值可收缩"，不撑破靠"值在内部断行"。
 
 ---
 
@@ -1453,3 +1468,4 @@ Agent 调用 pixmart_batch {
 | v1.4 | 2026-10-05 | **P1 落地**（提交 `e83c150`）。新增：`src/config.ts`（容错解析 + 脱敏视图）、`src/store/{paths,atomic,mutex,config-store,project-store}.ts`、`src/vendor/openai-compat.ts`（4 apiMode × 2 方言 + 降级链 + 重试）、`src/prompts/{types,modules,build}.ts`（24 模块）、`src/sizes.ts`、`src/image-info.ts`、`src/tools/*`、`test/vendor.test.mjs`（18 项）。两处实现修正：**降级链只在 `bad_request` 触发**（5xx/429 换档位会重复花钱）、**按哈希前缀扫描真正去重**。三处与方案偏离已记录（不维护索引 / 增加 `finish` 片段 / 工具文件合并）。`pnpm verify` 全绿；A2 全链待宿主重启 + 真实 Key |
 | v1.5 | 2026-10-05 | **P2 + P3 落地，测试 18 → 65 项**。P2（`1eebf72`）：`batch` / `projects` / 运行注册表 / `usage.jsonl` 硬计数。P3：`/pixmart/api/*` + 图片只读路由（`08a0e63`）、设置页 + 作品库 + `shell.overlay` 实时预览卡（`c6b342c`）、client 契约测试 13 项（`4518a7b`）、jsdom lane 10 项（`3ec6cd2`）。**三处真实缺陷**：①路由在 `apply()` 里 `ctx.get('webServer')` → 永不注册（`7a2ca2c`，违反 §7.1 自己定的规则）；②浮层自动展开缺 `isActive` → 结束后不收起（`3ec6cd2`，违反 §8.5.5 / D12，由 jsdom lane 首跑抓出）；③「账本 0 与可见项目对不上」→ **账本保持真实、历史产出另列**（`1671c63`）。新增 §12.2 P4 待办（含剥离 `__test__`）与 §12.3 未执行的付费验证 |
 | v1.6 | 2026-10-05 | **新增浏览器 lane（§13.7）**：`playwright-core`（`devDependencies`，`dependencies` 仍为空）+ 系统 Edge/Chrome，**不下载浏览器**；加载**未经修改的原产物** `client/client.js`（自证断言逐字节比对 sha256），经真实 `apply(ctx)` 注册路径挂进复刻的 shell 骨架（40px 标题栏带 + `--dsh-frame-chrome-top` + `.centerCol` 直系 flex 子项 + `display:contents` 槽锚点）。10 条断言全按几何（`getBoundingClientRect` / `scrollTop` / `scrollWidth` / `elementFromPoint` / 真 `mouse.wheel()`）。新增 `pnpm test:browser` 并挂进 `pnpm verify`；无浏览器时**醒目失败**（`PXM_LANE_ALLOW_SKIP=1` 可显式放行）。新增 [tools/lane-mutations.mjs](../tools/lane-mutations.mjs)：11 条反向变异全部被对应用例抓住，另记 1 条已知观测盲区（`overscroll-behavior` 在本 DOM 拓扑下不可观测） |
+| v1.7 | 2026-10-05 | **修掉 lane 抓到的"长路径撑破设置弹窗"**（`#settingsDialog.scrollWidth 687 > clientWidth 520`，520px + 87 字符路径）。根因是 v1.6 之前为修 bug 1 把 `whiteSpace:nowrap` 加在「标签 + 值」的**整组**上：短值没问题，长路径一个断点都没有 → 组的 `min-content` = 整条路径宽度。改法：组去掉 `nowrap`（保持 `inline-flex` + `baseline` + `gap`）；标签 `nowrap` + `flexShrink:0`（不拆散、不压缩）；值 `minWidth:0` + `overflowWrap:anywhere`（在**自己内部**换行，`min-content` 压到一个字符）；`<input>` 补 `minWidth:0`。**故意不加** `flexWrap:wrap`：实测它会把长值整行推到标签下面（拆散回归，`M15` 为证）。浏览器 lane 10 → **11** 条断言（新增 520px/375px 两条 87 字符路径的无溢出用例），严格变异 11 → **14** 条（`M13`/`M14`/`M15`），`pnpm test` 仍为 **260** 项全绿 |
