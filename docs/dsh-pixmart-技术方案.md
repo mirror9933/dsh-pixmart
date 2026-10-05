@@ -1108,10 +1108,10 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 | 阶段 | 目标 | 交付物 | 出口验证 |
 |---|---|---|---|
 | **P0** 骨架 + 契约 spike ✅ | 打通「能装、能跑、能显示」三件事 | 可安装的最小双面插件（`pixmart_ping` + hello-world 设置页）+ [contract-notes.md](./contract-notes.md) | **全部通过**：A1 ✅；S1 ✅（含 desktop 活宿主实调）；S2 ✅（GUI 目视：设置页 + 侧边栏面板切换）；S3 ✅ |
-| **P1** 宿主核心 ⚙ | 生图主链路可用 | config / store / 适配器（`dialect: ofox` + `gemini-native`）/ 24 个提示词模块 / 尺寸表 / `providers·check_size·prompt·generate·edit` + P0 的 `ping` | **代码完成**：`pnpm verify` 18 项测试全绿；6 个工具在真实组合中注册成功。**A2 全链待验**（需重启宿主加载新 host 代码 + 真实 Ofox Key） |
-| **P2** 批量与归档 | 一套图 + 可回溯 + 过程可见（host 半边） | `batch` / `projects` / usage 审计 / **运行注册表（runs）** / 保留期清理 | **A5 / A6** |
-| **P3** 客户端 UI | 人可管理、可浏览、可旁观 | 构建链、设置页、作品库面板、**`shell.overlay` 实时预览卡**、RPC、图片路由 | **A7 / A9** + GUI 实测（宽窄屏 / 刷新 / 焦点 / **布局位移**） |
-| **P4** 打包与文档 | 别人也能装 | README / NOTICE / 全新 profile 安装脚本 / 上架条目 | **A8** + 从零安装全链路 |
+| **P1** 宿主核心 ✅ | 生图主链路可用 | config / store / 适配器（`dialect: ofox` + `gemini-native`）/ 24 个提示词模块 / 尺寸表 / 6 个工具 | **全部通过**：`pnpm verify` 全绿；**A2 ✅**（真实生图落盘 + 卡片内嵌图）；**F1 ✅**（产出 1024×1024，`sizeMismatch` 为空） |
+| **P2** 批量与归档 ✅ | 一套图 + 可回溯 + 过程可见（host 半边） | `batch` / `projects` / usage 审计 / **运行注册表（runs）** / 保留期清理 | **A5 ✅**（mock 8 项 / 并发 2 / 8 个互不相同文件）、**A6 ✅**（扫描式列表无索引可损坏 + boot 把 running 改判 interrupted） |
+| **P3** 客户端 UI ✅ | 人可管理、可浏览、可旁观 | `/pixmart/api/*` + 图片路由 / 设置页 / 作品库面板 / **`shell.overlay` 实时预览卡** | **A7 ✅**（GUI 目视）、A9 代码完成；**jsdom lane 已补**（10 例），首跑即抓到「结束后不收起」缺陷 |
+| **P4** 打包与文档 ⏳ | 别人也能装 | README / NOTICE / 全新 profile 安装脚本 / 上架条目 / **构建步骤剥离 client bundle 的 `__test__` 测试钩子** | **A8** + 从零安装全链路 |
 
 ### 12.1 P0 的三个 spike
 
@@ -1122,6 +1122,20 @@ dsh --profile px --dump-config      # 确认 patch 行出现
 | **S3** 图片 ContentBlock 形状 | `output.render` 返回的图片块精确结构是什么？ | 读内建 `read_image` 的实现或官方类型；拿不到则降级为路径文本 + 客户端画廊 |
 
 **P0 结束时先交付「契约笔记 + 最小可跑演示」，确认后再推 P1。**
+
+### 12.2 P4 已知待办
+
+| # | 待办 | 说明 | 来源 |
+|---|---|---|---|
+| 1 | **构建步骤剥离 `client/client.js` 的 `__test__` 测试钩子** | 手写无构建阶段，jsdom lane 需要从 bundle 里取到组件，因此 `factory` 返回值上多挂了 `__test__`。宿主只读 `name`/`inject`/`apply`，多一个键无害，但生产包不该带测试入口——P4 引入打包器时一并剥掉 | 提交 `3ec6cd2` |
+| 2 | jsdom 覆盖不到的项转 GUI 目视 | 「高度不撑大」在 jsdom 退化为内联样式 + 元素数快照；reduced-motion、缩略图真实加载、真实 CSS 布局（窄屏底部整宽）只能目视 | §13.5 |
+| 3 | Git 分发形态 | 走 GitHub 分发时把 `lib/` 与 `client/client.js` 一并提交，规避 pnpm ≥10 的构建脚本门禁 | §11.1 |
+
+### 12.3 未执行的验证（需付费，须用户先授权）
+
+| 项 | 代价 | 说明 |
+|---|---|---|
+| 真实批量生图（预览卡"逐格点亮"的端到端） | 每次厂商调用计费，总额 = items × n | 已在 mock 层通过 A5；真实端到端仍待一次授权执行 |
 
 ---
 
@@ -1319,5 +1333,6 @@ Agent 调用 pixmart_batch {
 |---|---|---|
 | v1.0 | 2026-10-05 | 初稿：基于本机实测契约与三项决策（B 方案 / 仅 OpenAI 兼容 / 提示词重写） |
 | v1.1 | 2026-10-05 | 同步 6 项确认决策；锁定首批厂商 **Ofox**（D2 修订，新增 D8 方言 + Gemini 原生端点、D9 密钥由用户填入）；新增 §7.4.1 Ofox 专项契约（两端点 / 五坑 / 路由表 / 尺寸）；§16 由「待确认」改为「已确认决策」；新增风险 R10（方言静默失败）、R11（Key 未就绪）；测试矩阵补 Ofox 方言 golden 与 mock 端点路径 |
-| v1.4 | 2026-10-05 | **P1 落地**（提交 `e83c150`）。新增：`src/config.ts`（容错解析 + 脱敏视图）、`src/store/{paths,atomic,mutex,config-store,project-store}.ts`、`src/vendor/openai-compat.ts`（4 apiMode × 2 方言 + 降级链 + 重试）、`src/prompts/{types,modules,build}.ts`（24 模块）、`src/sizes.ts`、`src/image-info.ts`、`src/tools/*`、`test/vendor.test.mjs`（18 项）。两处实现修正：**降级链只在 `bad_request` 触发**（5xx/429 换档位会重复花钱）、**按哈希前缀扫描真正去重**。三处与方案偏离已记录（不维护索引 / 增加 `finish` 片段 / 工具文件合并）。`pnpm verify` 全绿；A2 全链待宿主重启 + 真实 Key |
 | v1.3 | 2026-10-05 | **P0 落地 + 据实测修订方案**。完成：A1（scratch profile 安装、自动并入 `dsh.profile.bundles`、`--dump-config` 断言）、S1 宿主半边（真实 Loader 组合 + 手写 JSON Schema 被接受 + `schemas()` 投影一致）、S3（图片块 = `{type:'image', attachment}`）。修订：`host.call` → 本插件 HTTP API（§6 / §7.11 / §8.5.4 / 架构图 / 分层铁律）；**可选服务不得在 `apply()` 探测**（§7.1，实测 `fs`/`credentials` 延迟就绪）；`defineTool` 只是编译糖 → 改为手写零运行时依赖定义（§7.2 / §7.7）。新增 [contract-notes.md](./contract-notes.md)、[tools/asar.mjs](../tools/asar.mjs)、`pixmart_ping` 与 `PIXMART_P0_MARKER` 自检钩子。**P0 验收全部通过**：A1（安装）、S1（含 desktop 活宿主实调）、S2（GUI 目视：设置页 + 侧边栏面板切换）、S3；**R2 / R3 关闭**。另据实测修正：`DSH_HOME` 在 GUI 启动的宿主里未设置 → 数据目录回落 `<用户主目录>/.dsh`；插件安装热生效而 host 代码改动需重启 |
+| v1.4 | 2026-10-05 | **P1 落地**（提交 `e83c150`）。新增：`src/config.ts`（容错解析 + 脱敏视图）、`src/store/{paths,atomic,mutex,config-store,project-store}.ts`、`src/vendor/openai-compat.ts`（4 apiMode × 2 方言 + 降级链 + 重试）、`src/prompts/{types,modules,build}.ts`（24 模块）、`src/sizes.ts`、`src/image-info.ts`、`src/tools/*`、`test/vendor.test.mjs`（18 项）。两处实现修正：**降级链只在 `bad_request` 触发**（5xx/429 换档位会重复花钱）、**按哈希前缀扫描真正去重**。三处与方案偏离已记录（不维护索引 / 增加 `finish` 片段 / 工具文件合并）。`pnpm verify` 全绿；A2 全链待宿主重启 + 真实 Key |
+| v1.5 | 2026-10-05 | **P2 + P3 落地，测试 18 → 65 项**。P2（`1eebf72`）：`batch` / `projects` / 运行注册表 / `usage.jsonl` 硬计数。P3：`/pixmart/api/*` + 图片只读路由（`08a0e63`）、设置页 + 作品库 + `shell.overlay` 实时预览卡（`c6b342c`）、client 契约测试 13 项（`4518a7b`）、jsdom lane 10 项（`3ec6cd2`）。**三处真实缺陷**：①路由在 `apply()` 里 `ctx.get('webServer')` → 永不注册（`7a2ca2c`，违反 §7.1 自己定的规则）；②浮层自动展开缺 `isActive` → 结束后不收起（`3ec6cd2`，违反 §8.5.5 / D12，由 jsdom lane 首跑抓出）；③「账本 0 与可见项目对不上」→ **账本保持真实、历史产出另列**（`1671c63`）。新增 §12.2 P4 待办（含剥离 `__test__`）与 §12.3 未执行的付费验证 |
