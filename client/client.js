@@ -179,6 +179,12 @@ window.__ModuleLoader__.load({
       bgLayer2: 'var(--dsw-alias-bg-layer-2)',
       bgLayer3: 'var(--dsw-alias-bg-layer-3)',
       bgOverlay: 'var(--dsw-alias-bg-overlay)',
+      // **模块底槽**：官方厂商卡片里的「编辑块」就是它 ——
+      // `._3nPmjq_editor{background:var(--dsw-alias-bg-module-platform)}`
+      // （`@deepseek-ai/dsh-client-ui-settings-models/lib/client.js:58`）。
+      // 2026-10-11 厂商卡片复刻官方「模型」页时引入（浅色 `#f5f6f7`、深色 `#353638`，
+      // 与 `bg-layer-3` 深色同值、浅色不同值 —— 所以它不是"随便挑一层"）。
+      bgModulePlatform: 'var(--dsw-alias-bg-module-platform)',
       borderL1: 'var(--dsw-alias-border-l1)',
       borderL2: 'var(--dsw-alias-border-l2)',
       borderL4: 'var(--dsw-alias-border-l4)',
@@ -286,6 +292,9 @@ window.__ModuleLoader__.load({
      */
     const S = Object.freeze({
       // 官方圆角变量（会跟随官方主题）
+      // `--dsw-radius-xs` 是 2026-10-11 随厂商卡片引入的：官方厂商标头上的 `._3nPmjq_rowTag`
+      // 就是 `border-radius:var(--dsw-radius-xs)`（`settings-models/lib/client.js:58`）。
+      radiusXs: 'var(--dsw-radius-xs)',
       radiusSm: 'var(--dsw-radius-sm)',
       radiusMd: 'var(--dsw-radius-md)',
       radiusLg: 'var(--dsw-radius-lg)',
@@ -360,6 +369,76 @@ window.__ModuleLoader__.load({
       subheadLineHeight: '20px',
       mutedFontSize: '12px',
       mutedLineHeight: '18px',
+
+      /*
+       * ── 厂商卡片：对齐官方「模型」设置页（2026-10-11）────────────────────────
+       *
+       * 全部出处 = `@deepseek-ai/dsh-client-ui-settings-models/lib/client.js:58` 那一行
+       * 内联 CSS 里的 `._3nPmjq_*` 规则（标记结构在同文件 :2102-2234 / :454-519 / :725-884）。
+       * 逐条对照与偏差记在 `docs/contract-notes.md` §23。
+       */
+      // ._3nPmjq_rows{gap:8px}
+      vendorRowsGap: '8px',
+      // ._3nPmjq_rowHead{gap:10px} / ._3nPmjq_rowIdentity{gap:6px}
+      rowHeadGap: '10px',
+      rowIdentityGap: '6px',
+      // ._3nPmjq_rowName{font-size:14px;font-weight:500;line-height:22px}
+      rowNameFontSize: '14px',
+      rowNameLineHeight: '22px',
+      // ._3nPmjq_rowTag{padding:1px 6px;font-size:11px;line-height:16px}
+      rowTagPad: '1px 6px',
+      rowTagFontSize: '11px',
+      rowTagLineHeight: '16px',
+      // ._3nPmjq_credentialDot{width:8px;height:8px}
+      credentialDotSize: '8px',
+      // ._3nPmjq_rowActions{gap:4px}
+      rowActionsGap: '4px',
+      // ._3nPmjq_editor{padding:14px 16px;gap:14px;border-radius:var(--dsw-radius-lg)}
+      editorPad: '14px 16px',
+      editorGap: '14px',
+      // ._3nPmjq_editorHeader{gap:8px} + ._3nPmjq_editorTitle{14px/22px}
+      editorHeaderGap: '8px',
+      editorTitleFontSize: '14px',
+      editorTitleLineHeight: '22px',
+      // ._3nPmjq_editorRoute{12px/18px}
+      editorRouteFontSize: '12px',
+      editorRouteLineHeight: '18px',
+      // ._3nPmjq_field{gap:6px} + ._3nPmjq_fieldLabel{12px/18px;font-weight:500}
+      stackFieldGap: '6px',
+      stackLabelFontSize: '12px',
+      stackLabelLineHeight: '18px',
+      // ._3nPmjq_editorActions{gap:8px}
+      actionsGap: '8px',
+      // ._3nPmjq_modelCatalog{gap:10px;padding-top:12px}
+      catalogGap: '10px',
+      catalogPadTop: '12px',
+      // ._3nPmjq_modelCatalogTitle{12px/18px;font-weight:500} / …Meta{12px/18px}
+      catalogTitleFontSize: '12px',
+      catalogTitleLineHeight: '18px',
+      catalogMetaFontSize: '12px',
+      catalogMetaLineHeight: '18px',
+      // ._3nPmjq_modelListHead{gap:12px}
+      catalogHeadGap: '12px',
+      /*
+       * 模型列表（多选）取官方**候选列表**那一套 —— 我们这一块是"选择要保留哪些模型"，
+       * 官方同语义的列表是拉取弹层里的 `.candidateList` / `.candidateLabel` / `.candidateId`
+       * （同文件 :88-91），不是卡片里的可编辑 `.modelList` / `.modelEntry`。
+       *   ._3nPmjq_candidateList{gap:2px} / ._3nPmjq_candidateLabel{padding:6px 8px;gap:8px}
+       *   ._3nPmjq_candidate{border-radius:var(--dsw-radius-md)} / ._3nPmjq_candidateId{font-size:13px}
+       */
+      modelListGap: '2px',
+      modelRowPad: '6px 8px',
+      modelRowGap: '8px',
+      modelRowFontSize: '13px',
+      /*
+       * 官方 `.candidateList{max-height:320px}`。本插件**保留 240px**：既有 jsdom 用例
+       * （`test/client-settings-dom.test.mjs`「列表必须放在 max-height: 240px 的滚动容器里」）
+       * 已经把它钉在 240px，且 240 < 320 —— 改大等于放宽"150 项不许把卡片撑爆"这条保证。
+       * 偏差记在 `docs/contract-notes.md` §23。
+       */
+      modelScrollMaxHeight: '240px',
+      // ._3nPmjq_modelEmpty{padding:12px;border-radius:var(--dsw-radius-lg);border:1px dashed …}
+      emptyPad: '12px',
     })
 
     /**
@@ -1158,6 +1237,180 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * **堆叠式**字段：官方 `._3nPmjq_field` / `._3nPmjq_fieldLabel`
+     * （`settings-models/lib/client.js:58`，标记结构见同文件 :1289-1305）——
+     * `{flex-direction:column;gap:6px}` + 标签
+     * `{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500;line-height:18px}`，
+     * **标签在上、控件在下**。
+     *
+     * 为什么设置页里同时存在行式 `Field` 与这个堆叠式：官方本身就是**两类**设置项 ——
+     * 「权限」「字号大小」是行式（`.row` + `.rowText`），而**厂商卡片编辑器里的输入字段**
+     * 是堆叠式（`.field` + `.fieldLabel`，Base URL / API Key 就在里面）。
+     * 2026-10-11 复刻时按官方分工各自取用，不是"两套随便挑"。
+     *
+     * 锚点是 `data-pxm-editor-field` / `-label` / `-control`（语义锚点，浏览器 lane 按它定位），
+     * **刻意不复用** `data-pxm-field`：那个锚点属于行式 `Field`，混用会让
+     * `test/browser/layout.test.mjs` 7.1 的"行式"几何断言把这里的堆叠字段也算进去。
+     */
+    function EditorField(props) {
+      const controlId = isString(props.controlId) ? props.controlId : undefined
+      const describedBy = isString(props.describedBy) ? props.describedBy : undefined
+      return h(
+        'div',
+        {
+          'data-pxm-editor-field': '1',
+          style: {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: S.stackFieldGap,
+            minWidth: 0,
+            ...(isObject(props.style) ? props.style : {}),
+          },
+        },
+        h(
+          'label',
+          {
+            'data-pxm-editor-field-label': '1',
+            ...(controlId === undefined ? {} : { htmlFor: controlId }),
+            ...(describedBy === undefined ? {} : { id: describedBy }),
+            style: {
+              color: T.labelSecondary,
+              fontSize: S.stackLabelFontSize,
+              fontWeight: 500,
+              lineHeight: S.stackLabelLineHeight,
+            },
+          },
+          props.label,
+        ),
+        h(
+          'div',
+          {
+            'data-pxm-editor-field-control': '1',
+            style: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 },
+          },
+          props.children,
+        ),
+      )
+    }
+
+    /**
+     * 厂商标头上的**小标签**：官方 `._3nPmjq_rowTag`
+     * （`settings-models/lib/client.js:58`）——
+     * `{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);
+     * color:var(--dsw-alias-label-secondary);padding:1px 6px;font-size:11px;line-height:16px}`。
+     *
+     * 与 `Pill` 的分工：`Pill` 是官方 `Tag`（胶囊、999px 圆角、1px 8px、11/17），
+     * 用于页面级标签；rowTag 是**厂商标头行**里那一枚方角小标签。官方是两枚不同的类，
+     * 本插件也保持两枚不同的组件。
+     *
+     * 描边用 `T.borderL2`（官方 `--dsw-alias-border-l3` 在浅色 `#0000001f`、深色 `#ffffff29`，
+     * 与 `border-l2` 的 `#0000001a` / `#ffffff1f` 只差 5/255 的 alpha；本插件 token 清单里
+     * 没有 l3，本次不为它扩容 —— 偏差记在 `docs/contract-notes.md` §23）。
+     */
+    function RowTag(props) {
+      return h(
+        'span',
+        {
+          className: 'pxm-row-tag',
+          // 语义锚点：浏览器 lane 按它量这一枚小标签的几何（不按类名）。
+          'data-pxm-row-tag': '1',
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            flex: 'none',
+            padding: S.rowTagPad,
+            border: '0.5px solid ' + T.borderL2,
+            borderRadius: S.radiusXs,
+            color: T.labelSecondary,
+            fontSize: S.rowTagFontSize,
+            lineHeight: S.rowTagLineHeight,
+            whiteSpace: 'nowrap',
+          },
+        },
+        props.children,
+      )
+    }
+
+    /**
+     * 凭据状态点：官方 `._3nPmjq_credentialDot` + `…Configured` / `…Missing`
+     * （`settings-models/lib/client.js:58`，标记结构见同文件 :2176-2186）——
+     * 8px 圆点，已配置 = `state-success-primary`、缺失 = `state-error-primary`。
+     *
+     * 状态**不只靠颜色**：官方给的是 `role="img"` + `aria-label` + `title`，本插件照抄
+     * （读屏与悬停都能拿到"密钥已就位 / 密钥缺失"这句原话）。
+     */
+    function CredentialDot(props) {
+      const ok = props.ok === true
+      const label = String(ok ? props.onLabel : props.offLabel)
+      return h('span', {
+        className: 'pxm-credential-dot',
+        'data-pxm-credential-dot': '1',
+        role: 'img',
+        'aria-label': label,
+        title: label,
+        style: {
+          display: 'inline-block',
+          flex: 'none',
+          boxSizing: 'border-box',
+          width: S.credentialDotSize,
+          height: S.credentialDotSize,
+          borderRadius: '50%',
+          background: ok ? T.success : T.error,
+        },
+      })
+    }
+
+    /**
+     * **链接式**动作按钮：官方 `._3nPmjq_linkButton`
+     * （`settings-models/lib/client.js:58`）——
+     * `{border-radius:var(--dsw-radius-sm);height:28px;padding:0 10px;font-size:12px;
+     * line-height:18px;color:var(--dsw-alias-label-tertiary);background:0 0;border:none}`。
+     *
+     * 官方用它承载「获取模型」（同文件 :749-758 的 `fetchModels`）与「全选 / 全不选」
+     * （`primitives` 的 `Button variant="ghost" size="sm"`，同文件 :851-857）——
+     * 位置与档位都照抄：模型区块标题行右侧那一枚、以及候选列表工具条里那几枚。
+     *
+     * hover 与 focus 环：官方是 `background:var(--dsw-alias-interactive-bg-hover)` +
+     * `box-shadow:0 0 0 2px var(--dsw-focus-ring-color,…)`。那两个 token 不在本插件清单里，
+     * 所以走既有约定（同 `SelectField` 的处理）：hover = `label-tertiary` 派生的 12% 半透明，
+     * focus = `label-tertiary` 的 2px 外描边 —— 颜色仍然只来自 token。
+     * 两条伪类规则在文件末的 `CSS` 里（内联样式写不了 `:hover`）。
+     */
+    function LinkButton(props) {
+      const disabled = props.disabled === true
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'pxm-link-btn',
+          ...(isString(props.role) && props.role !== '' ? { 'data-pxm-role': props.role } : {}),
+          onClick: props.onClick,
+          disabled,
+          title: props.title,
+          style: {
+            font: 'inherit',
+            boxSizing: 'border-box',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: S.buttonHeight,
+            padding: S.buttonPad,
+            border: 'none',
+            background: 'transparent',
+            borderRadius: S.radiusSm,
+            color: T.labelTertiary,
+            fontSize: S.buttonFontSize,
+            lineHeight: S.buttonLineHeight,
+            cursor: disabled ? 'default' : 'pointer',
+            opacity: disabled ? 0.4 : 1,
+            whiteSpace: 'nowrap',
+          },
+        },
+        props.children,
+      )
+    }
+
+    /**
      * 官方图标画法（**手写内联 SVG，不引任何图标库**）。
      *
      * 每条路径逐字抄自官方 primitives 里同一枚图标的 artwork（`size` 默认 16、
@@ -1888,6 +2141,20 @@ window.__ModuleLoader__.load({
      *
      * 列表内部滚动（`max-height: 240px`）：150 项不能把卡片撑爆。
      * 本组件自己**不发请求**：保存交给父级的 mutation，失败原因也在面板内显示。
+     *
+     * **2026-10-11 形态对齐官方**（`settings-models/lib/client.js:58` 的 CSS + 同文件
+     * :840-881 的标记结构）：这一块在官方那边就是拉取结果的选择器 ——
+     *   - 工具条 `.candidateToolbar{align-items:center;gap:8px}`，搜索框 `.candidateSearch{flex:240px}`；
+     *   - 列表 `.candidateList{gap:2px;max-height:320px;padding:0;overflow-y:auto}`；
+     *   - 行 `.candidateLabel{cursor:pointer;align-items:center;gap:8px;padding:6px 8px;display:flex}`
+     *     （外层 `.candidate{border-radius:var(--dsw-radius-md)}`），模型名 `.candidateId`
+     *     `{font-size:13px;text-overflow:ellipsis;white-space:nowrap;flex:auto;overflow:hidden}`。
+     * 所以这里从"带边框的小盒子 + 12px 行"改成官方的**行式列表**：每行 = 复选控件 + 等宽模型名
+     * （本插件的多选能力就落在每行的 checkbox 上）。
+     *
+     * **与官方的一处有意偏差**：官方把候选列表放在 `Modal`（`.fetchDialog{max-width:520px}`）里，
+     * 我们保留"卡片内联展开"的形态（既有 jsdom 用例钉住面板在卡片内展开 / 收起的行为与
+     * 240px 滚动容器）；列表本身的几何按官方取值。记在 `docs/contract-notes.md` §23。
      */
     function ModelPickerPanel(props) {
       const list = isArray(props.models) ? props.models.map(String) : []
@@ -1926,43 +2193,58 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
-          style: {
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            padding: '8px',
-            borderRadius: '8px',
-            border: '1px solid ' + T.borderL1,
-            background: T.bgLayer1,
-          },
+          className: 'pxm-model-picker',
+          style: { display: 'flex', flexDirection: 'column', gap: S.catalogGap, minWidth: 0 },
         },
+        // 头部：面板自己的小标题 + 已选计数（官方 `.modelCatalogHeading` 的 12px 两行结构）。
         h(
           'div',
           { style: { ...skin.row, gap: '8px' } },
           h(
             'span',
-            { style: { fontSize: '12px', fontWeight: 600 } },
+            {
+              style: {
+                color: T.labelSecondary,
+                fontSize: S.catalogTitleFontSize,
+                fontWeight: 500,
+                lineHeight: S.catalogTitleLineHeight,
+              },
+            },
             '选择要保留的模型',
           ),
           h(
             'span',
-            { style: { fontSize: '12px', opacity: 0.8 } },
+            {
+              style: {
+                color: T.labelTertiary,
+                fontSize: S.catalogMetaFontSize,
+                lineHeight: S.catalogMetaLineHeight,
+              },
+            },
             '已选 ' + String(selected.length) + ' / 共 ' + String(list.length) +
               (keyword === '' ? '' : '（筛选后 ' + String(visible.length) + ' 项）'),
           ),
         ),
+        // 工具条：官方 `.candidateToolbar`（gap 8px）+ `.candidateSearch`（flex:240px）。
+        // 三枚动作按钮是官方 `Button variant="ghost" size="sm"`（同文件 :851-857）→ `LinkButton`。
         h(
           'div',
-          { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' } },
-          h('div', { style: { flex: '1 1 160px', minWidth: 0 } },
+          {
+            className: 'pxm-picker-toolbar',
+            style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' },
+          },
+          h(
+            'div',
+            { style: { flex: '240px', minWidth: 0 } },
             h(TextInput, {
               value: search,
               disabled: busy,
               placeholder: '搜索模型…',
               onChange: (event) => setSearch(event.target.value),
-            })),
+            }),
+          ),
           h(
-            Btn,
+            LinkButton,
             {
               disabled: busy || visible.length === 0,
               onClick: selectAllVisible,
@@ -1971,7 +2253,7 @@ window.__ModuleLoader__.load({
             '全选（当前 ' + String(visible.length) + ' 个）',
           ),
           h(
-            Btn,
+            LinkButton,
             {
               disabled: busy || visible.length === 0,
               onClick: clearVisible,
@@ -1980,7 +2262,7 @@ window.__ModuleLoader__.load({
             '全不选（当前 ' + String(visible.length) + ' 个）',
           ),
           h(
-            Btn,
+            LinkButton,
             {
               disabled: busy || imageCount === 0,
               onClick: onlyImage,
@@ -1989,32 +2271,52 @@ window.__ModuleLoader__.load({
             '只选图像模型（' + String(imageCount) + ' 个）',
           ),
         ),
+        // 列表：官方 `.candidateList`（gap 2px / padding 0 / 内部滚动）。
         h(
           'div',
           {
+            'data-pxm-model-list': '1',
+            className: 'pxm-model-list',
             style: {
-              maxHeight: '240px',
-              overflowY: 'auto',
-              border: '1px solid ' + T.borderL1,
-              borderRadius: '6px',
-              padding: '4px 6px',
               display: 'flex',
               flexDirection: 'column',
+              gap: S.modelListGap,
+              maxHeight: S.modelScrollMaxHeight,
+              overflowY: 'auto',
+              padding: 0,
+              margin: 0,
+              minWidth: 0,
             },
           },
           visible.length === 0
-            ? h('span', { style: { fontSize: '12px', opacity: 0.7 } }, '没有匹配的模型')
+            ? h(
+                'p',
+                {
+                  style: {
+                    margin: 0,
+                    color: T.labelSecondary,
+                    fontSize: S.catalogMetaFontSize,
+                    lineHeight: S.catalogMetaLineHeight,
+                    textAlign: 'center',
+                  },
+                },
+                '没有匹配的模型',
+              )
             : visible.map((name) =>
                 h(
                   'label',
                   {
                     key: name,
+                    // 语义锚点：浏览器 lane 按它数"列表里有几行 / 行的几何"，不按类名。
+                    'data-pxm-model-row': '1',
+                    className: 'pxm-model-row',
                     style: {
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      fontSize: '12px',
-                      lineHeight: 1.8,
+                      gap: S.modelRowGap,
+                      padding: S.modelRowPad,
+                      borderRadius: S.radiusMd,
+                      minWidth: 0,
                       cursor: busy ? 'not-allowed' : 'pointer',
                     },
                   },
@@ -2024,14 +2326,35 @@ window.__ModuleLoader__.load({
                     disabled: busy,
                     onChange: () => toggle(name),
                   }),
-                  h('span', { style: { wordBreak: 'break-all' } }, name),
-                  isImageModel(name) ? h(Pill, null, '图像') : null,
+                  h(
+                    'span',
+                    {
+                      className: 'pxm-model-id',
+                      // 语义锚点：浏览器 lane 按它量模型名的字号（不按类名）。
+                      'data-pxm-model-name': '1',
+                      title: name,
+                      style: {
+                        flex: 'auto',
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontFamily: skin.code.fontFamily,
+                        fontSize: S.modelRowFontSize,
+                        color: T.label,
+                      },
+                    },
+                    name,
+                  ),
+                  isImageModel(name) ? h(RowTag, null, '图像') : null,
                 ),
               ),
         ),
+        // 动作行：官方 `.editorActions{justify-content:flex-end;gap:8px}`。
         h(
           'div',
-          { style: { ...skin.row, gap: '8px' } },
+          { style: { display: 'flex', justifyContent: 'flex-end', gap: S.actionsGap, alignItems: 'center' } },
+          busy ? h(Spinner, { label: '保存中' }) : null,
           h(
             Btn,
             {
@@ -2042,7 +2365,6 @@ window.__ModuleLoader__.load({
             busy ? '保存中…' : '保存选择',
           ),
           h(Btn, { disabled: busy, onClick: () => props.onCancel() }, '取消'),
-          busy ? h(Spinner, { label: '保存中' }) : null,
         ),
         h(Msg, { result: props.result }),
       )
@@ -2162,41 +2484,171 @@ window.__ModuleLoader__.load({
 
       const disableCredentials = creds.busy || id === ''
 
+      /*
+       * 卡片几何 = 官方 `._3nPmjq_rowCard`（`settings-models/lib/client.js:58`，标记结构见
+       * 同文件 :2160-2232）：
+       *   `{border:.5px solid var(--dsw-alias-settings-card-stroke);
+       *     background:var(--dsw-alias-settings-card-fill);
+       *     border-radius:var(--dsw-radius-xl);flex-direction:column;gap:12px;padding:12px 14px}`
+       *
+       * 两个别名 token 的**取值**在官方 theme 的 base CSS 里就是本插件已有那两枚
+       * （`--dsw-alias-settings-card-stroke: var(--dsw-alias-border-l4)`、
+       * `--dsw-alias-settings-card-fill: var(--dsw-alias-bg-layer-2)`，见
+       * `@deepseek-ai/dsh-client-ui-theme/lib/client.js`），所以这里直接用 `T.borderL4`
+       * / `T.bgLayer2` —— 是同一个变量的别名目标，不是"近似色"。
+       *
+       * 圆角取 `xl`（20px）：这是官方 **rowCard** 自己的取值；本插件其它卡片
+       * （`skin.card`：默认值 / 导出路径 / 回收站列表项 / 查看器信息卡）仍是 `lg`（16px），
+       * 因为官方 `._3nPmjq_editor` / `_addCard` / `_setupCard` 这些**内容卡片**用的是 `lg`
+       * （那条选择有既有尺寸用例钉着，见 sizes.test.mjs 的 OFFICIAL_CARD）。
+       */
+      const rowCardStyle = {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: S.cardGap,
+        padding: S.cardPad,
+        border: '0.5px solid ' + T.borderL4,
+        background: T.bgLayer2,
+        borderRadius: S.radiusXl,
+        minWidth: 0,
+      }
+
+      const modelCount = isArray(provider.models) ? provider.models.length : 0
+      const routeText =
+        [String(provider.group ?? ''), String(provider.apiMode ?? '')]
+          .filter((part) => part !== '')
+          .join(' · ') || '—'
+
       return h(
-        'div',
+        'li',
         {
-          style: {
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            paddingTop: props.index === 0 ? '0' : '10px',
-            borderTop:
-              props.index === 0
-                ? 'none'
-                : '1px solid ' + T.borderL1,
-          },
+          // 语义锚点：浏览器 lane 按它量这张卡片的几何（不按类名）。
+          'data-pxm-vendor-card': '1',
+          className: 'pxm-vendor-card',
+          style: rowCardStyle,
         },
+        // ── ① 标头行：官方 `.rowHead`（gap:10px）+ `.rowIdentity`（gap:6px）
         h(
           'div',
-          { style: skin.row },
-          h('strong', { style: { fontSize: S.subheadFontSize } }, String(provider.label ?? id ?? '未命名')),
-          h('code', { style: { ...skin.code, opacity: 0.7 } }, String(provider.id ?? '—')),
-          h(Pill, null, String(provider.group ?? '—')),
-          h(Pill, null, String(provider.apiMode ?? '—')),
+          {
+            'data-pxm-vendor-head': '1',
+            style: { display: 'flex', alignItems: 'center', gap: S.rowHeadGap, minWidth: 0 },
+          },
           h(
-            Pill,
-            null,
-            provider.hasApiKey === true
-              ? '密钥已就位' + (provider.apiKeySource ? '（' + String(provider.apiKeySource) + '）' : '')
-              : '密钥缺失',
+            'span',
+            {
+              'data-pxm-vendor-identity': '1',
+              style: {
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: S.rowIdentityGap,
+                minWidth: 0,
+                overflow: 'hidden',
+              },
+            },
+            h(
+              'span',
+              {
+                'data-pxm-vendor-name': '1',
+                style: {
+                  color: T.label,
+                  fontSize: S.rowNameFontSize,
+                  fontWeight: 500,
+                  lineHeight: S.rowNameLineHeight,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                },
+              },
+              String(provider.label ?? id ?? '未命名'),
+            ),
+            // 官方 rowTag（`._3nPmjq_rowTag`）：厂商标识那一枚方角小标签。
+            h(RowTag, null, String(provider.id ?? '—')),
+            // 凭据状态点（官方 `._3nPmjq_credentialDot`）：8px，成功/失败两色 + aria-label。
+            h(CredentialDot, {
+              ok: hasKey,
+              onLabel: '密钥已就位' + (provider.apiKeySource ? '（' + String(provider.apiKeySource) + '）' : ''),
+              offLabel: '密钥缺失',
+            }),
+          ),
+          // 行尾动作：官方 `.rowActions{margin-left:auto;gap:4px}`，按钮是 `Button.sm`（28px）。
+          // 「测试连接」没有官方对应物（官方不做连接探测），落在官方**行尾动作**那一档里。
+          h(
+            'span',
+            {
+              'data-pxm-vendor-actions': '1',
+              style: {
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: S.rowActionsGap,
+                marginLeft: 'auto',
+                flexShrink: 0,
+              },
+            },
+            h(
+              Btn,
+              {
+                role: 'test-connection',
+                className: 'pxm-test-connection',
+                disabled: probe.busy,
+                onClick: onTest,
+                title: '发一次探测请求，不写配置',
+              },
+              probe.busy ? '测试中…' : '测试连接',
+            ),
           ),
         ),
+        // ── ② 编辑块：官方 `.editor`（radius-lg / padding 14px 16px / gap 14px /
+        //      background:bg-module-platform），字段用官方堆叠式 `.field`。
         h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column' } },
+          {
+            'data-pxm-editor': '1',
+            className: 'pxm-vendor-editor',
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: S.editorGap,
+              padding: S.editorPad,
+              borderRadius: S.radiusLg,
+              background: T.bgModulePlatform,
+              minWidth: 0,
+            },
+          },
           h(
-            Field,
-            { label: 'Base URL', description: 'OpenAI 兼容的 /v1 根地址' },
+            'div',
+            { style: { display: 'flex', alignItems: 'baseline', gap: S.editorHeaderGap, flexWrap: 'wrap' } },
+            h(
+              'span',
+              {
+                style: {
+                  color: T.label,
+                  fontSize: S.editorTitleFontSize,
+                  fontWeight: 500,
+                  lineHeight: S.editorTitleLineHeight,
+                },
+              },
+              '凭据与端点',
+            ),
+            // 官方 `.editorRoute`：把"这一条走哪个协议/路由"写成标题旁边的小字。
+            // 我们的 `group` / `apiMode` 正是这个语义（官方没有 group 这一项）。
+            h(
+              'span',
+              {
+                'data-pxm-vendor-route': '1',
+                style: {
+                  color: T.labelTertiary,
+                  fontSize: S.editorRouteFontSize,
+                  lineHeight: S.editorRouteLineHeight,
+                },
+              },
+              routeText,
+            ),
+          ),
+          h(
+            EditorField,
+            { label: 'Base URL', controlId: 'pxm-provider-base-url' },
             h(TextInput, {
               id: 'pxm-provider-base-url',
               value: baseUrl,
@@ -2208,10 +2660,21 @@ window.__ModuleLoader__.load({
                 if (next !== String(provider.baseUrl ?? '')) writeCredentials({ baseUrl: next })
               },
             }),
+            h(
+              'span',
+              {
+                style: {
+                  color: T.labelTertiary,
+                  fontSize: S.catalogMetaFontSize,
+                  lineHeight: S.catalogMetaLineHeight,
+                },
+              },
+              'OpenAI 兼容的 /v1 根地址',
+            ),
           ),
           h(
-            Field,
-            { label: 'Gemini 原生 Base URL（可选）', description: '只有走 Gemini 原生接口时才需要' },
+            EditorField,
+            { label: 'Gemini 原生 Base URL（可选）', controlId: 'pxm-provider-native-url' },
             h(TextInput, {
               id: 'pxm-provider-native-url',
               value: nativeUrl,
@@ -2225,10 +2688,21 @@ window.__ModuleLoader__.load({
                 }
               },
             }),
+            h(
+              'span',
+              {
+                style: {
+                  color: T.labelTertiary,
+                  fontSize: S.catalogMetaFontSize,
+                  lineHeight: S.catalogMetaLineHeight,
+                },
+              },
+              '只有走 Gemini 原生接口时才需要',
+            ),
           ),
           h(
-            Field,
-            { label: 'API Key', description: '留空表示不修改' },
+            EditorField,
+            { label: 'API Key', controlId: 'pxm-provider-api-key' },
             h(TextInput, {
               id: 'pxm-provider-api-key',
               type: 'password',
@@ -2238,83 +2712,205 @@ window.__ModuleLoader__.load({
               autoComplete: 'new-password',
               onChange: (event) => setKeyValue(event.target.value),
             }),
+            h(
+              'span',
+              {
+                style: {
+                  color: T.labelTertiary,
+                  fontSize: S.catalogMetaFontSize,
+                  lineHeight: S.catalogMetaLineHeight,
+                },
+              },
+              keyFromEnv
+                ? '留空表示不修改；当前密钥来自环境变量，清除本页填写不会生效'
+                : '留空表示不修改',
+            ),
           ),
+          // 动作行：官方 `.editorActions{justify-content:flex-end;gap:8px}`。
+          h(
+            'div',
+            {
+              'data-pxm-editor-actions': '1',
+              style: {
+                display: 'flex',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                gap: S.actionsGap,
+                flexWrap: 'wrap',
+              },
+            },
+            creds.busy ? h(Spinner, { label: '保存中' }) : null,
+            h(
+              Btn,
+              {
+                disabled: disableCredentials || keyValue === '',
+                // 同时清空 apiKeyEnv：环境变量优先级高于本页填写的密钥，
+                // 只留字段会变成"哪天环境变量被设上，这里的 key 就静默失效"。
+                onClick: () => writeCredentials({ apiKey: keyValue, apiKeyEnv: '' }),
+                title: '把上面填写的密钥写入本机配置；同时清空配置里的环境变量名，避免它静默覆盖',
+              },
+              creds.busy ? '保存中…' : '保存',
+            ),
+            h(
+              Btn,
+              {
+                disabled: disableCredentials,
+                onClick: () => writeCredentials({ apiKey: '', apiKeyEnv: '' }),
+                title: '清除本机配置里的密钥与环境变量名',
+              },
+              '清除密钥',
+            ),
+          ),
+          h(Msg, { result: creds.result }),
         ),
+        // ── ③ 模型区块：官方 `section.modelCatalog`
+        //      （`{border-top:.5px solid var(--dsw-alias-border-l2);gap:10px;padding-top:12px}`）
         h(
-          'div',
-          { style: skin.row },
-          h(
-            Btn,
-            {
-              disabled: disableCredentials || keyValue === '',
-              // 同时清空 apiKeyEnv：环境变量优先级高于本页填写的密钥，
-              // 只留字段会变成"哪天环境变量被设上，这里的 key 就静默失效"。
-              onClick: () => writeCredentials({ apiKey: keyValue, apiKeyEnv: '' }),
-              title: '把上面填写的密钥写入本机配置；同时清空配置里的环境变量名，避免它静默覆盖',
+          'section',
+          {
+            'data-pxm-model-catalog': '1',
+            className: 'pxm-model-catalog',
+            'aria-label': '模型',
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: S.catalogGap,
+              borderTop: '0.5px solid ' + T.borderL2,
+              paddingTop: S.catalogPadTop,
+              minWidth: 0,
             },
-            creds.busy ? '保存中…' : '保存',
-          ),
+          },
           h(
-            Btn,
+            'div',
             {
-              disabled: disableCredentials,
-              onClick: () => writeCredentials({ apiKey: '', apiKeyEnv: '' }),
-              title: '清除本机配置里的密钥与环境变量名',
+              'data-pxm-model-head': '1',
+              style: {
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                gap: S.catalogHeadGap,
+                flexWrap: 'wrap',
+                minWidth: 0,
+              },
             },
-            '清除密钥',
-          ),
-          h(
-            Btn,
-            {
-              disabled: models.busy,
-              onClick: onRefresh,
-              title: 'GET {baseUrl}/models：只拉取，不写配置（写入要显式保存选择）',
-            },
-            models.busy ? '拉取中…' : '拉取模型',
-          ),
-          // 取消过面板后还能回来接着选，不必再向厂商拉一次。
-          pull !== null && !pickerOpen
-            ? h(
-                Btn,
-                { disabled: picker.busy, onClick: () => setPickerOpen(true) },
-                '选择模型（' + String(pull.models.length) + ' 个）',
-              )
-            : null,
-          h(
-            Btn,
-            { disabled: probe.busy, onClick: onTest, title: '发一次探测请求，不写配置' },
-            probe.busy ? '测试中…' : '测试连接',
-          ),
-          keyFromEnv
-            ? h(
+            h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 } },
+              h(
                 'span',
-                { style: { fontSize: '12px', opacity: 0.7 } },
-                '当前密钥来自环境变量，清除本页填写不会生效',
+                {
+                  // 语义锚点：浏览器 lane 按它量"模型"这个小标题的字号（不按类名）。
+                  'data-pxm-model-title': '1',
+                  style: {
+                    color: T.labelSecondary,
+                    fontSize: S.catalogTitleFontSize,
+                    fontWeight: 500,
+                    lineHeight: S.catalogTitleLineHeight,
+                  },
+                },
+                '模型',
+              ),
+              h(
+                'span',
+                {
+                  'data-pxm-model-meta': '1',
+                  style: {
+                    color: T.labelTertiary,
+                    fontSize: S.catalogMetaFontSize,
+                    lineHeight: S.catalogMetaLineHeight,
+                  },
+                },
+                pull !== null && pickerOpen
+                  ? '已拉取 ' + String(pull.models.length) + ' 个候选：勾选后点「保存选择」'
+                  : modelCount === 0
+                    ? '未声明（拉取或手选后保存）'
+                    : '已配置 ' + String(modelCount) + ' 个',
+              ),
+            ),
+            // 模型区块标题行右侧的动作：官方这里就是「获取模型」那一枚 `linkButton`
+            // （`settings-models/lib/client.js:749-758`），档位 28px / radius-sm / 0 10px / 12px。
+            h(
+              'span',
+              {
+                style: {
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: S.rowActionsGap,
+                  flexShrink: 0,
+                  flexWrap: 'wrap',
+                },
+              },
+              // 取消过面板后还能回来接着选，不必再向厂商拉一次。
+              pull !== null && !pickerOpen
+                ? h(
+                    LinkButton,
+                    { disabled: picker.busy, onClick: () => setPickerOpen(true) },
+                    '选择模型（' + String(pull.models.length) + ' 个）',
+                  )
+                : null,
+              h(
+                LinkButton,
+                {
+                  role: 'fetch-models',
+                  className: 'pxm-fetch-models',
+                  disabled: models.busy,
+                  onClick: onRefresh,
+                  title: 'GET {baseUrl}/models：只拉取，不写配置（写入要显式保存选择）',
+                },
+                models.busy ? '拉取中…' : '拉取模型',
+              ),
+            ),
+          ),
+          h(Msg, { result: models.result }),
+          h(Msg, { result: probe.result }),
+          pull !== null && pickerOpen
+            ? h(ModelPickerPanel, {
+                key: 'pick-' + String(pull.seq),
+                models: pull.models,
+                initial: (isArray(provider.models) ? provider.models.map(String) : []).filter(
+                  (name) => pull.models.indexOf(name) >= 0,
+                ),
+                busy: picker.busy,
+                result: picker.result,
+                onSave: onSaveModels,
+                onCancel: () => setPickerOpen(false),
+              })
+            : null,
+          // 已保存模型的摘要行（保留既有文案「模型：…」，也是"卡片里的模型清单"那一半）。
+          h(
+            'p',
+            {
+              'data-pxm-model-summary': '1',
+              style: {
+                margin: 0,
+                color: T.labelTertiary,
+                fontSize: S.catalogMetaFontSize,
+                lineHeight: S.catalogMetaLineHeight,
+                wordBreak: 'break-word',
+              },
+            },
+            '模型：' + describeModels(provider.models),
+          ),
+          pull === null && modelCount === 0
+            ? h(
+                'p',
+                {
+                  style: {
+                    margin: 0,
+                    padding: S.emptyPad,
+                    border: '1px dashed ' + T.borderL2,
+                    borderRadius: S.radiusLg,
+                    color: T.labelTertiary,
+                    fontSize: S.catalogMetaFontSize,
+                    lineHeight: S.catalogMetaLineHeight,
+                    textAlign: 'center',
+                  },
+                },
+                '这一家还没有模型：点上面的「拉取模型」从厂商拉取，再勾选保存。',
               )
             : null,
         ),
-        h(Msg, { result: creds.result }),
-        h(Msg, { result: models.result }),
-        h(Msg, { result: probe.result }),
         h(Msg, { result: picker.result }),
-        pull !== null && pickerOpen
-          ? h(ModelPickerPanel, {
-              key: 'pick-' + String(pull.seq),
-              models: pull.models,
-              initial: (isArray(provider.models) ? provider.models.map(String) : []).filter(
-                (name) => pull.models.indexOf(name) >= 0,
-              ),
-              busy: picker.busy,
-              result: picker.result,
-              onSave: onSaveModels,
-              onCancel: () => setPickerOpen(false),
-            })
-          : null,
-        h(
-          'span',
-          { style: { fontSize: '12px', opacity: 0.7, lineHeight: 1.6 } },
-          '模型：' + describeModels(provider.models),
-        ),
       )
     }
 
@@ -2718,9 +3314,18 @@ window.__ModuleLoader__.load({
           reload,
         }),
 
+        /*
+         * 厂商区块 = 官方「模型」设置页的 `._3nPmjq_section` + `._3nPmjq_rows`
+         * （`settings-models/lib/client.js:58`；标记结构见同文件 :2102-2234）：
+         *   - 区块 `{flex-direction:column;gap:12px}`（这里 12px 由 `vendorRows` 承担，
+         *     外层 `skin.wrap` 已经是列方向 + 14px 间距）；
+         *   - 列表 `ul.rows{flex-direction:column;gap:8px;margin:12px 0 0;padding:0;list-style:none}`，
+         *     每一家厂商 = 一个 `li.rowCard`（见 `ProviderCard` 的 `rowCardStyle`）。
+         * 这里**不再**用 `skin.card` 套一层壳：官方没有"卡片套卡片"，厂商卡片本身就是卡片。
+         */
         h(
           'div',
-          { style: skin.card },
+          { className: 'pxm-vendors', style: { display: 'flex', flexDirection: 'column', gap: S.catalogGap } },
           h(
             'div',
             { style: skin.row },
@@ -2730,13 +3335,28 @@ window.__ModuleLoader__.load({
           ),
           providers.length === 0
             ? h('p', { style: skin.muted }, '未配置任何厂商。可在插件配置中补充 provider 条目。')
-            : providers.map((provider, index) =>
-                h(ProviderCard, {
-                  key: isString(provider.id) ? provider.id : 'p' + String(index),
-                  provider,
-                  index,
-                  reload,
-                }),
+            : h(
+                'ul',
+                {
+                  className: 'pxm-vendor-rows',
+                  style: {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: S.vendorRowsGap,
+                    margin: '12px 0 0',
+                    padding: 0,
+                    listStyle: 'none',
+                    minWidth: 0,
+                  },
+                },
+                providers.map((provider, index) =>
+                  h(ProviderCard, {
+                    key: isString(provider.id) ? provider.id : 'p' + String(index),
+                    provider,
+                    index,
+                    reload,
+                  }),
+                ),
               ),
         ),
 
@@ -5310,9 +5930,21 @@ window.__ModuleLoader__.load({
       '.pxm-scroll{scrollbar-width:thin;}',
       /* 查看器是本插件在作品库面板内的模态层（position:fixed），入场动画随 reduced-motion 关闭 */
       '.pxm-viewer{animation:pxm-in .16s ease-out;}',
-      '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid ' +
+      '.pxm-link-btn:focus-visible,.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid ' +
         T.labelTertiary +
         ';outline-offset:2px;}',
+      /*
+       * 链接式按钮（LinkButton）的 hover：官方 `._3nPmjq_linkButton:hover:not(:disabled)`
+       * 是 `{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}`
+       * （`settings-models/lib/client.js:58`）。`interactive-bg-hover` 不在本插件清单里，
+       * 所以与 `.pxm-select-option` 同一约定：hover 填充 = `label-tertiary` 派生的 12% 半透明，
+       * 文字色仍走 `label-secondary`（这一枚在清单里）。颜色只来自 token。
+       */
+      '.pxm-link-btn:hover:not(:disabled){background:' +
+        tint(T.labelTertiary, 12) +
+        ';color:' +
+        T.labelSecondary +
+        ';}',
       /*
        * 自绘下拉（SelectField）与步进器（NumberStepper）的交互态。
        *

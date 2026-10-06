@@ -40,6 +40,7 @@ const TEST_FILES = [
   'test/browser/theme.test.mjs',
   'test/browser/sizes.test.mjs',
   'test/browser/controls.test.mjs',
+  'test/browser/vendors.test.mjs',
 ]
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex')
@@ -760,6 +761,139 @@ const MUTATIONS = [
       {
         find: "              placeholder: '搜索项目名 / 模块名',",
         replace: "              placeholder: '搜索',",
+      },
+    ],
+  },
+  // ── 厂商标卡片对齐官方「模型」页（2026-10-11）：三个保留项 + 样式档位 ─────────
+  {
+    id: 'M37-no-fetch-models-button',
+    /**
+     * 样式统一（2026-10-11）的第一形态：**把「拉取模型」按钮删掉**。
+     *
+     * 这正是"改样式时把保留项弄没"的典型事故：卡片按官方结构重排之后，
+     * 那一枚 `linkButton` 很容易在搬家的过程中被落下。用户把它列为硬性保留项，
+     * 所以 `vendors.test.mjs` 的 1.1 是按**行为**写的（存在 + 可点 + 点下去真的发
+     * `POST …/refresh-models`），删掉按钮之后它在第一句就红。
+     *
+     * 期望同时看到 1.3 变红（没有按钮就拉不出列表）—— 那不是"多余的失败"，
+     * 而正是保留项之间的依赖关系被如实报出来。
+     */
+    bug: '把「拉取模型」按钮从卡片上删掉（保留项丢失）',
+    expect: ['1.1 「拉取模型」按钮存在、可点'],
+    edits: [
+      {
+        find: [
+          '              h(',
+          '                LinkButton,',
+          '                {',
+          "                  role: 'fetch-models',",
+          "                  className: 'pxm-fetch-models',",
+          '                  disabled: models.busy,',
+          '                  onClick: onRefresh,',
+          "                  title: 'GET {baseUrl}/models：只拉取，不写配置（写入要显式保存选择）',",
+          '                },',
+          "                models.busy ? '拉取中…' : '拉取模型',",
+          '              ),',
+        ].join('\n'),
+        replace: '              null,',
+      },
+    ],
+  },
+  {
+    id: 'M38-no-test-connection-button',
+    /** 样式统一的第二形态：**把「测试连接」按钮删掉**（另一个硬性保留项）。 */
+    bug: '把「测试连接」按钮从卡片上删掉（保留项丢失）',
+    expect: ['1.2 「测试连接」按钮存在、可点'],
+    edits: [
+      {
+        find: [
+          '            h(',
+          '              Btn,',
+          '              {',
+          "                role: 'test-connection',",
+          "                className: 'pxm-test-connection',",
+          '                disabled: probe.busy,',
+          '                onClick: onTest,',
+          "                title: '发一次探测请求，不写配置',",
+          '              },',
+          "              probe.busy ? '测试中…' : '测试连接',",
+          '            ),',
+        ].join('\n'),
+        replace: '            null,',
+      },
+    ],
+  },
+  {
+    id: 'M39-vendor-card-style-old',
+    /**
+     * 样式统一的第三形态：**把卡片的内边距 / 圆角 / 描边退回改造前的值**。
+     *
+     * 官方的 `._3nPmjq_rowCard` 是 `padding:12px 14px` + `border-radius:var(--dsw-radius-xl)`
+     * + `border:.5px solid var(--dsw-alias-settings-card-stroke)`（= `border-l4`）；
+     * 改造前那一版厂商卡片根本不是卡片（只有一条 `border-top` 分隔线），所以"退回去"
+     * 在这里写成"回到本插件别处卡片那一档"（`10px 12px` + `radius-lg` + `border-l1`）。
+     *
+     * 期望由 `vendors.test.mjs` 的 2.1 抓住 —— 内边距、圆角解析值、描边色三处都对不上。
+     * 它证明那条断言不是"照着实现抄一遍"：改实现必须让它红。
+     */
+    bug: '厂商卡片的内边距 / 圆角 / 描边退回改造前那一档（10px 12px + radius-lg + border-l1）',
+    expect: ['2.1 厂商卡片 = 官方 ._3nPmjq_rowCard'],
+    edits: [
+      {
+        find: [
+          '        gap: S.cardGap,',
+          '        padding: S.cardPad,',
+          "        border: '0.5px solid ' + T.borderL4,",
+          '        background: T.bgLayer2,',
+          '        borderRadius: S.radiusXl,',
+        ].join('\n'),
+        replace: [
+          '        gap: S.cardGap,',
+          "        padding: '10px 12px',",
+          "        border: '0.5px solid ' + T.borderL1,",
+          '        background: T.bgLayer2,',
+          '        borderRadius: S.radiusLg,',
+        ].join('\n'),
+      },
+    ],
+  },
+  {
+    id: 'M40-model-list-style-old',
+    /**
+     * 样式统一的第四形态：**把模型列表退回旧样式**。
+     *
+     * 官方的候选行（`._3nPmjq_candidateLabel`）是 `gap:8px;padding:6px 8px`，
+     * 外层 `._3nPmjq_candidate{border-radius:var(--dsw-radius-md)}`；
+     * 改造前那一版是"12px 字、行高 1.8、没有内边距也没有圆角"的一行文字。
+     *
+     * 期望由 `vendors.test.mjs` 的 2.3 抓住（行内边距 / 圆角 / 由内边距决定的真实行高）。
+     */
+    bug: '模型列表行退回旧样式（无内边距 / 无圆角 / 12px 文字）',
+    expect: ['2.3 模型列表 = 官方候选列表'],
+    edits: [
+      {
+        find: [
+          '                    style: {',
+          "                      display: 'flex',",
+          "                      alignItems: 'center',",
+          '                      gap: S.modelRowGap,',
+          '                      padding: S.modelRowPad,',
+          '                      borderRadius: S.radiusMd,',
+          '                      minWidth: 0,',
+          "                      cursor: busy ? 'not-allowed' : 'pointer',",
+          '                    },',
+        ].join('\n'),
+        replace: [
+          '                    style: {',
+          "                      display: 'flex',",
+          "                      alignItems: 'center',",
+          "                      gap: '6px',",
+          "                      fontSize: '12px',",
+          '                      lineHeight: 1.8,',
+          '                      minWidth: 0,',
+          "                      cursor: busy ? 'not-allowed' : 'pointer',",
+          '                    },',
+        ].join('\n'),
       },
     ],
   },

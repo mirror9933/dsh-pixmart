@@ -1757,3 +1757,158 @@ lane 侧新增探针（`test/browser/lane.js`）：`fieldRow` / `selectFacts` / 
    会在选项变长到把按钮挤下去时变红）。
 4. **点开排序下拉时的原生弹层位置未测**：`<select>` 的弹层由平台绘制，
    在窄屏折行状态下它挂在哪一枚控件下方**没有断言覆盖**。
+
+## 23. 厂商配置卡片对齐官方「模型」设置页（2026-10-11）
+
+用户要求：把设置页的「厂商 / 模型配置」卡片改成 DSH 官方**「模型」设置页**的样子，
+但**不许丢**三样东西 —— 「拉取模型」按钮、「测试连接」按钮、拉取之后的模型列表。
+
+### 23.1 先读官方实现（不是凭印象画）
+
+官方那一页 = `dsh/node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js`
+（app.asar 内的原文件；下面行号即该文件行号，`tools/asar.mjs read` 取出的副本行号一致）。
+
+| 位置 | 证据（文件:行 / 规则原文） |
+|---|---|
+| 页面整体 | `:2102-2112` → `div.section > h2.title + p.intro`；`.section{max-width:720px;flex-direction:column;gap:12px}`、`.title{font-size:16px;font-weight:500;line-height:24px}`、`.intro{color:label-tertiary;font-size:14px;line-height:22px}`（CSS 全在 `:58` 那一行内联串里） |
+| 区块之间怎么分 | 页面不分「卡片套卡片」：`h2` + `intro` 之后直接是 `ul.rows`（`:2123-2124`）。`.rows{flex-direction:column;gap:8px;margin:12px 0 0;padding:0;list-style:none}` |
+| 卡片 | `:2160-2161` `li.rowCard` → `.rowCard{border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);border-radius:var(--dsw-radius-xl);flex-direction:column;gap:12px;padding:12px 14px}` |
+| 厂商标头 | `:2163-2187` → `.rowHead{align-items:center;gap:10px;display:flex}` > `.rowIdentity{align-items:center;gap:6px;min-width:0;display:inline-flex}` > `.rowName{font-size:14px;font-weight:500;line-height:22px}` + `.rowTag{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:label-secondary;padding:1px 6px;font-size:11px;line-height:16px}` + `.credentialDot{width:8px;height:8px;border-radius:50%}`（已配置 `state-success-primary` / 缺失 `state-error-primary`） |
+| 副信息 | 模型数 / 状态**不在**标头行：状态是那枚 8px 圆点（`role="img"` + `aria-label` + `title`，`:2176-2186`）；自定义与否在模型区块的 `.modelCatalogMeta`（`:465-468`）。**没有**「厂商分组 / apiMode」这类字段 —— 官方最接近的是编辑块里的 `.editorRoute`（`:1291-1293`，"这一条走哪个路由/协议"） |
+| 操作按钮放哪 | 两处：① 标头**行尾** `.rowActions{align-items:center;gap:4px;margin-left:auto;display:inline-flex}`（`:2188-2212`，放「编辑」「删除」）；② **模型区块标题行右侧**的 `.modelListHead`（`:729-759`）里放「获取模型」。档位：`.rowActions .secondaryButton{border-radius:var(--dsw-radius-sm);height:28px;padding:0 10px;font-size:12px;line-height:18px}`（= `Button.sm`）；「获取模型」是 `.linkButton{border-radius:var(--dsw-radius-sm);height:28px;padding:0 10px;font-size:12px;line-height:18px;color:label-tertiary;background:0 0;border:none}` |
+| 编辑块（字段） | `:1286-1395` `div.editor > div.editorHeader(editorTitle+editorRoute) + div.field(fieldLabel+input)… + div.editorActions`；`.editor{border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-module-platform);flex-direction:column;gap:14px;padding:14px 16px}`、`.editorHeader{align-items:baseline;gap:8px}`、`.editorTitle{14px/22px;500}`、`.editorRoute{12px/18px;label-tertiary}`、`.field{flex-direction:column;gap:6px}`、`.fieldLabel{color:label-secondary;font-size:12px;font-weight:500;line-height:18px}`、`.editorActions{justify-content:flex-end;gap:8px}` |
+| 输入字段用哪套 | **不是** `settings-form` 的 `.input`：这一页有自己的 `._3nPmjq_input{height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);font-size:14px;line-height:22px}`。**我们没跟这一档**（理由见 §23.5-①） |
+| 模型列表：行式还是 chips | **行式**，两种：① 卡片内可编辑列表 `.modelList{gap:8px}` + `.modelEntry{border:.5px solid border-l4;border-radius:var(--dsw-radius-lg);padding:6px}` + `.modelRow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto auto;gap:6px}`（`:209-277`）；② 拉取弹层里的**多选**列表 `.candidateList{gap:2px;max-height:320px;padding:0;overflow-y:auto}` + `.candidate{border-radius:var(--dsw-radius-md)}` + `.candidateLabel{cursor:pointer;align-items:center;gap:8px;padding:6px 8px;display:flex}` + `.candidateId{font-family:var(--ds-font-family-code);font-size:13px;text-overflow:ellipsis;white-space:nowrap;flex:auto;overflow:hidden}`（`:88-91` / `:862-881`）。**没有 chips**。选中态 / hover 态：官方候选行**没有任何** hover / checked 样式规则（选中靠原生 `<input type="checkbox">`，hover 只有 `cursor:pointer`） |
+| 弹层 | 拉取结果在 `primitives` 的 `Modal` 里（`:824-882`），`.fetchDialog{max-width:520px}`；工具条 `.candidateToolbar{gap:8px}`、搜索框 `.candidateSearch{flex:240px;min-width:0}`，两枚按钮是 `Button ghost size="sm"` |
+
+**token 的一处关键事实**（`@deepseek-ai/dsh-client-ui-theme/lib/client.js` 的 base CSS）：
+`--dsw-alias-settings-card-stroke: var(--dsw-alias-border-l4)`、
+`--dsw-alias-settings-card-fill: var(--dsw-alias-bg-layer-2)` ——
+所以卡片那两个"官方专用 token"就是本插件**已有**的 `border-l4` / `bg-layer-2` 的别名，
+不是近似色。
+
+### 23.2 官方 → 我们（逐项）
+
+| 位置 | 官方 | 我们（2026-10-11 之后） |
+|---|---|---|
+| 厂商区块 | `.section{gap:12px}` + `ul.rows{gap:8px;margin:12px 0 0;padding:0;list-style:none}` | `div.pxm-vendors`（gap 10px，承接外层 `skin.wrap` 的 14px）+ `ul.pxm-vendor-rows`（gap 8px / margin 12px 0 0 / padding 0 / list-style none）**取消了原来"卡片套卡片"的外壳** |
+| 一家厂商 | `li.rowCard`：`.5px settings-card-stroke / settings-card-fill / radius-xl / gap 12px / padding 12px 14px` | `li[data-pxm-vendor-card]`：0.5px `border-l4`（= stroke 的别名目标）/ `bg-layer-2`（= fill 的别名目标）/ `radius-xl` / gap 12px / padding 12px 14px |
+| 标头 | `rowHead` gap10 + `rowIdentity` gap6 + `rowName` 14/22/500 + `rowTag` 1px 6px·11/16·radius-xs + `credentialDot` 8px | 同（`[data-pxm-vendor-head]` / `-identity` / `-name` / `[data-pxm-row-tag]` / `[data-pxm-credential-dot]`）；`id` 落在 rowTag 上 |
+| 副信息 | 密钥状态 = 圆点（aria-label/title）；"自定义"标记 = 模型区块 meta；没有 group/apiMode | 密钥状态 = 同一枚圆点；`group · apiMode` 落在编辑块的 `[data-pxm-vendor-route]`（官方 `.editorRoute` 的同语义位） |
+| 操作按钮 | 行尾 `rowActions`（sm 档）+ 模型区块标题行右侧的 `linkButton`「获取模型」 | 「测试连接」在 `[data-pxm-vendor-actions]`（行尾，sm 档 28px）；「拉取模型」在模型区块标题行右侧（`linkButton` 档：28px / 0 10px / 12-18 / radius-sm / 无描边 / 透明底）；「保存 / 清除密钥」在编辑块行尾的 `[data-pxm-editor-actions]`（右对齐 + gap 8px） |
+| 字段 | `.field` 堆叠式（标签在上）+ `.fieldLabel` 12/18/500 secondary | 新增 `EditorField`（`data-pxm-editor-field`），取值同上；**保留**原有行式 `Field`（默认值 / 导出路径卡片仍在用） |
+| 编辑块 | `.editor` radius-lg / padding 14px 16px / gap 14px / `bg-module-platform` | 同（`[data-pxm-editor]`，底色 = `T.bgModulePlatform`） |
+| 模型区块 | `.modelCatalog{border-top:.5px solid border-l2;gap:10px;padding-top:12px}` + `modelCatalogTitle{12/18/500}` + `modelCatalogMeta{12/18}` | 同（`[data-pxm-model-catalog]` / `[data-pxm-model-title]` / `[data-pxm-model-meta]`） |
+| 模型列表（多选） | `.candidateList` + `.candidateLabel` + `.candidateId` | 同（`[data-pxm-model-list]` / `[data-pxm-model-row]` / `[data-pxm-model-name]`）：行 = checkbox + 等宽 13px 模型名（+「图像」小标签），gap 2px、行 padding 6px 8px、radius-md、列表内部滚动 |
+| 拉取工具条 | `.candidateToolbar{gap:8px}` + `.candidateSearch{flex:240px}` + ghost sm 按钮 | 同（搜索框 240px 基准；「全选 / 全不选 / 只选图像模型」改走 `LinkButton` = ghost sm 档） |
+| 空态 | `.modelEmpty{border:1px dashed border-l3;border-radius:radius-lg;text-align:center;padding:12px}` | 同结构（描边用 `border-l2`，见 §23.5-②） |
+
+### 23.3 三个保留项各自落在哪 + 新断言
+
+| 保留项 | DOM 位置 | 新断言（`test/browser/vendors.test.mjs`） |
+|---|---|---|
+| 「拉取模型」 | 模型区块标题行右侧 `<button class="pxm-link-btn" data-pxm-role="fetch-models">`（`ModelCatalog` 内）；忙碌态文案 `拉取中…` | **1.1**：`vendorFacts().fetchButton` 存在 / `tag==='BUTTON'` / 文案逐字 `拉取模型` / `disabled===false`；再真点一次，断言 lane 记下的请求里**恰好一条** `POST …/refresh-models` |
+| 「测试连接」 | 标头行尾 `[data-pxm-vendor-actions]` 内 `<button class="pxm-btn" data-pxm-role="test-connection">`；忙碌态 `测试中…` | **1.2**：同上（文案 `测试连接`），真点之后**恰好一条** `POST …/test`，且页面出现 `连接正常` |
+| 拉取后的模型列表 | 模型区块内 `[data-pxm-model-list]` > 每行 `label[data-pxm-model-row]`（checkbox + 模型名） | **1.3**：拉取前 `rowCount===0`；点「拉取模型」后列表出现且**行数 == 夹具模型数（5）**，5 个模型名逐个都在，且**每一行都有自己的 checkbox** |
+
+> 请求记录为什么由 lane 交（新探针 `fetchCalls`）：插件的 `window.fetch` 被 lane 换成了
+> 夹具路由，浏览器侧**没有真实网络请求**，`page.on('request')` 什么都看不到
+> （实测第一次跑就是 `posts` 恒为空、1.1/1.2 双双变红）。lane 里同时补了
+> `fixture.posts`（键 = 路径正则）好让「拉取模型」真的回一份模型目录。
+
+### 23.4 调整过的既有断言（逐条）
+
+1. **`test/client-tokens.test.mjs` 的 `REQUIRED_TOKENS` 扩容 19 → 22**（不是削弱）：
+   新增 `--dsw-alias-bg-module-platform`（官方编辑块底色，浅色 `#f5f6f7` 与
+   `bg-layer-3` 的 `#fff` **不同值**）、`--dsw-radius-xs`（官方 rowTag 的圆角 4px）。
+   相应地 `T` / `S` 各进一枚键、`radiusTokens` 局部清单补上 `-xs`。
+   该用例守的是"代码里出现的 `--dsw-*` 种类 == 清单"——**加 token 必须两边一起改**，
+   所以这是它设计好的扩展路径；清单变长之后断言只会更严。
+   （`border-l3` 那枚**没有**扩容，见 §23.5-②。）
+2. **没有其它既有断言被改**：`sizes.test.mjs` / `theme.test.mjs` / `controls.test.mjs` /
+   `layout.test.mjs` 与全部 jsdom 用例**一个字都没动**，42 + 323 的基准数量与内容都不变
+   （新用例只增加在 `test/browser/vendors.test.mjs`）。
+3. `test/browser/lane.js` 是 harness（不是断言）：新增 `fixture.posts` 分支、`fetchCalls`、
+   `vendorFacts` 探针，并给 `boxMetrics` **增量**补了几个计算样式键（gap / alignItems /
+   justifyContent / backgroundColor / borderTopColor / maxHeight / overflowY / margin* 与
+   `border-top` 声明值）。既有用例只比它自己 `expect` 里列出的键，多出来的键不影响它们。
+
+### 23.5 与官方的偏差（每一处都说清代价）
+
+1. **输入控件仍是 `settings-form` 的 `.input`（34px / `0 12px` / 13px / `bg-layer-3`），
+   不是这一页自己的 `.input`（32px / `0 10px` / 14px / `bg-layer-1`）**。
+   官方同一页里两个类并存：`.field` 里的 `<input>` 用的是**页面私有**的
+   `._3nPmjq_input`（`:73`），而 `primitives` 的 `settings-form/fields.module.css` 的
+   `.input` 是**跨页面共享**的表单值控件。本插件从 2026-10-07 起把设置页的全部表单控件
+   对齐到后者，并被两条既有断言钉住（`sizes.test.mjs` 1.1 的 34px/`0 12px`/13px、
+   `theme.test.mjs` 8.9 的 `bg-layer-3`）。改成页面私有的 32px/`bg-layer-1` 必须**改这两条
+   既有断言**（且会把"输入控件层"的语义从 `bg-layer-3` 挪到 `bg-layer-1`），
+   与"不得削弱或删除任何现有断言"冲突 —— 所以本次不动，如实记为偏差。
+2. **`rowTag` / 空态虚线框的描边用 `border-l2`，官方是 `border-l3`**：`border-l3` 官方是
+   `#0000001f`(浅) / `#ffffff29`(深)，`border-l2` 是 `#0000001a` / `#ffffff1f` —— 差 5/255
+   的 alpha。为这一处扩容 token 清单不划算（§23.4-1 的代价是实打实的），故不扩。
+   形状（0.5px / 1px dashed / radius-xs / radius-lg）都按官方。
+3. **模型列表滚动上限保留 240px**（官方 `.candidateList` 是 320px）：既有 jsdom 用例
+   （`test/client-settings-dom.test.mjs`「列表必须放在 max-height: 240px 的滚动容器里」）
+   把它钉在 240px，而 240 < 320 —— 改大等于**放宽**"150 项不许把卡片撑爆"这条保证。
+4. **拉取结果仍在卡片内联展开，官方是 `Modal`**：官方把候选列表放在 `Modal`（`.fetchDialog`
+   `max-width:520px`）里。本插件的面板开合行为（展开 / 取消 / 重开、内部滚动）被既有 jsdom
+   用例逐条钉住，改成 Modal 属于"换交互形态"而不是"统一视觉"，本次不做；列表本身的几何
+   按官方取值。
+5. **编辑块里的提交行是 28px（`Button.sm`）**，官方 `.editorActions` 里那两枚是默认档
+   36px（`.primaryButton{height:36px}`）：本插件全站按钮都是同一枚 `Btn`（`Button.sm`），
+   既有尺寸用例（1.2）钉着 28px。混进一枚 36px 按钮会让"设置页按钮 = 官方 `.sm`"这条
+   断言失去意义。
+6. **模型名的字体族**用本插件既有的 `skin.code.fontFamily`（`ui-monospace, …`），
+   官方是 `var(--ds-font-family-code)`（`SF Mono, JetBrains Mono, …`）。字号（13px）、
+   省略号截断、`flex:auto` 都按官方。
+7. **我们没有的官方字段**：官方那一页有「自定义 / 声明式提供方」标记（`row.entry.declared`
+   → rowTag「自定义」）、凭据点的"缺失"三态（`credentialMissing` 只在配了 `apiKeyEnv`
+   却没凭据时出现）、路由 `editorRoute`（provider 的注册路由 id）、以及每个模型的
+   `contextWindow / maxTokens / inputModalities` 形状。本插件的数据模型里**没有**这些
+   （见 `src/**` 的 provider 视图）：`group` / `apiMode` 是就近塞进 `.editorRoute` 那一格的
+   近似，其余一概没有画。这是**能力差异**，不是样式差异。
+
+### 23.6 反向变异（`tools/lane-mutations.mjs` 新增 4 条，全部 ✔）
+
+| 变异 | 改坏什么 | 抓住它的用例 | 真实报错 |
+|---|---|---|---|
+| `M37-no-fetch-models-button` | 删掉「拉取模型」按钮 | 1.1（+1.3 / 2.3 / 2.4 连带） | `AssertionError: 卡片上必须有「拉取模型」按钮` |
+| `M38-no-test-connection-button` | 删掉「测试连接」按钮 | 1.2 | `AssertionError: 卡片上必须有「测试连接」按钮` |
+| `M39-vendor-card-style-old` | 卡片 `padding:12px 14px→10px 12px`、`radius-xl→radius-lg`、描边 `border-l4→border-l1` | 2.1 | `厂商卡片与官方 rowCard 不一致：`<br>`厂商卡片 的 paddingTop：实测 10px，官方 12px`<br>`… paddingRight：实测 12px，官方 14px`（paddingBottom/Left 同）<br>`厂商卡片 的 borderRadius：实测 16px，官方 var(--dsw-radius-xl) 的解析值 20px`<br>`厂商卡片 的 borderTopColor：实测 rgba(0, 0, 0, 0.04)，官方 var(--dsw-alias-border-l4) 的解析值 rgba(0, 0, 0, 0.16)` |
+| `M40-model-list-style-old` | 模型行退回旧样式（去掉 padding / radius，gap 8→6px） | 2.3 | `模型行与官方 .candidateLabel 不一致：`<br>`模型行「google/gemini-3.1-flash-image图像」 的 gap：实测 6px，官方 8px`<br>`… 的 paddingTop：实测 0px，官方 6px` / `paddingRight：实测 0px，官方 8px`（paddingBottom/Left 同）<br>`… 的 borderRadius：实测 0px，官方 var(--dsw-radius-md) 的解析值 12px` |
+
+**M37 的连带失败是如实记录而不是噪声**：没有那一枚按钮就拉不出候选列表，
+1.3（列表条目数）与 2.3 / 2.4（列表行 / linkButton 的几何）都无从谈起。
+
+### 23.7 结果
+
+`pnpm verify`（`typecheck + build + test + test:browser`）：**323 + 49**，全绿。
+`pnpm test` 仍是 **323**（基准不变：只有 `client-tokens` 的 token 清单扩容，`it` 数量不变）；
+`pnpm test:browser` **42 → 49**（+7，全部在新增的 `test/browser/vendors.test.mjs`）。
+
+### 23.8 没做到 / 没把握（诚实记录）
+
+1. **没做成 `Modal`**（§23.5-4）：官方的拉取候选是在弹层里选的，我们是卡片内展开。
+   视觉上"列表行 / 工具条 / 搜索框"都对齐了，但"弹层"这一层没有复刻。
+2. **官方 `._3nPmjq_input` 的 32px / `bg-layer-1` 没跟**（§23.5-1）：这是本次唯一一处
+   属于"官方同页有明确取值、我们**故意**没跟"的地方，代价是与官方那张页面的输入框
+   差 2px 高度、底色差一层。
+3. **没有 hover / 选中态的自定义样式**：官方候选行本身就没有（只有 `cursor:pointer`），
+   所以这一条是"照抄官方 = 什么都不加"；但观感上"鼠标划过没有反馈"，
+   将来若要加，得先决定用哪个 token 表达"选中"（官方在这一页没有给）。
+4. **`group · apiMode` 这行小字是我给的位置**：官方 `.editorRoute` 放的是 provider 的
+   注册路由（如 `anthropic-messages`），我们没有那个字段，用 `group · apiMode` 顶上；
+   语义相近但**不是同一个东西**。
+5. **窄屏（375px）下这张卡片没有专门用例**：`layout.test.mjs` 7.3 管的是"设置弹窗不横向
+   溢出"（两条 87 字符长路径），厂商卡片在 375px / 520px 下只是被它**顺带覆盖**
+   （弹窗 `scrollWidth ≤ clientWidth`），没有针对卡片的窄屏断言。
+6. **本插件加的防溢出偏离**（官方没有，都是为了让长厂商名 / 长模型名不撑破卡片）：
+   `.rowIdentity` 多一条 `overflow:hidden`、`.rowName` 多一组
+   `overflow:hidden;text-overflow:ellipsis;white-space:nowrap`（官方只在父级写 `min-width:0`）；
+   编辑块标头 / 模型区块标头 / 编辑块动作行这三处加了 `flexWrap:'wrap'`（官方都不换行）。
+   列表行那组 `white-space:nowrap + text-overflow:ellipsis` 是官方 `.candidateId` 本来就有的。
+7. **「拉取模型」现在是官方的 `linkButton`（tertiary 文字色、无描边），比改造前那枚描边按钮
+   在视觉上"轻"**：这是官方「获取模型」的真实档位（§23.1），位置也照搬（模型区块标题行右侧）。
+   若用户更看重"显眼"而不是"和官方一致"，把它换成 `Btn`（描边、`Button.sm`）是一行的事 ——
+   本次按"与官方一致"取，如实标出这处取舍。

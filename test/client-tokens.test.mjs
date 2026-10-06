@@ -76,6 +76,15 @@ const REQUIRED_TOKENS = [
   '--dsw-alias-bg-layer-1',
   '--dsw-alias-bg-layer-2',
   '--dsw-alias-bg-layer-3',
+  /*
+   * 2026-10-11 厂商卡片复刻官方「模型」设置页时进的一枚：官方那一页的**编辑块**
+   * （Base URL / API Key 那一段）底槽就是它 ——
+   * `._3nPmjq_editor{background:var(--dsw-alias-bg-module-platform)}`
+   * （`@deepseek-ai/dsh-client-ui-settings-models/lib/client.js:58`）。
+   * 它与 `bg-layer-3` 深色同值（`#353638`）、**浅色不同值**（`#f5f6f7` vs `#fff`），
+   * 所以不是"随便挑一层"，也不能用 `bg-layer-3` 顶替。
+   */
+  '--dsw-alias-bg-module-platform',
   '--dsw-alias-bg-overlay',
   '--dsw-alias-border-l1',
   '--dsw-alias-border-l2',
@@ -93,8 +102,13 @@ const REQUIRED_TOKENS = [
    * `client/client.js` 的圆角一律写 `var(--dsw-radius-*)`，于是官方改圆角时本插件自动跟随
    * ——与色 token 同理。它们**不在** `T` 那张表里（`T` 只收颜色），而在 `S`（尺寸表）里，
    * 所以本清单是"**T 的颜色 token ∪ S 的尺寸 token**"，与下面那条"代码里出现的 token 种类
-   * == 清单"一一对应。`--dsw-radius-xs` / `-panel` 官方有定义但本插件没用，故不在清单内。
+   * == 清单"一一对应。
+   * 2026-10-11 再进 `--dsw-radius-xs`：官方**厂商标头那一枚 rowTag** 的圆角就是它
+   * （`._3nPmjq_rowTag{border-radius:var(--dsw-radius-xs)}`）——4px 与 `-sm` 的 8px
+   * 在一枚 11px 小标签上是看得出来的差别，所以不复用 `-sm`。
+   * `--dsw-radius-panel`（28px）官方有定义但本插件没用，故不在清单内。
    */
+  '--dsw-radius-xs',
   '--dsw-radius-sm',
   '--dsw-radius-md',
   '--dsw-radius-lg',
@@ -299,7 +313,13 @@ describe('客户端配色：只走官方 --dsw-* token（静态契约）', () =>
       .map((entry) => entry.key + ' → ' + entry.token)
     assert.deepEqual(colorOnly, [], '颜色表 T 里混进了非颜色 token：' + colorOnly.join(', '))
 
-    const radiusTokens = ['--dsw-radius-sm', '--dsw-radius-md', '--dsw-radius-lg', '--dsw-radius-xl']
+    const radiusTokens = [
+      '--dsw-radius-xs',
+      '--dsw-radius-sm',
+      '--dsw-radius-md',
+      '--dsw-radius-lg',
+      '--dsw-radius-xl',
+    ]
     const notConsumed = radiusTokens.filter((token) => !code.includes('var(' + token + ')'))
     assert.deepEqual(
       notConsumed,

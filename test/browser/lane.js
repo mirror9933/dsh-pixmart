@@ -28,6 +28,14 @@
   var exported = null
   var registrations = []
   var roots = {}
+  /**
+   * 假宿主收到的请求（方法 + URL）。
+   *
+   * 为什么必须在 lane 自己这里记：`window.fetch` 被替换成了夹具路由，**没有真实网络请求**
+   * ——Playwright 的 `page.on('request')` 因此什么都看不到。用例要断言"某个按钮点下去
+   * 真的发了某个请求"，就只能由这一层交事实。
+   */
+  var calls = []
 
   // ── 假宿主：路由 → 夹具（零真实网络；图片走静态服务的真 PNG） ─────────────────
 
@@ -77,7 +85,25 @@
     var u = new URL(url, window.location.href)
     var p = u.pathname
     var method = String((init && init.method) || 'GET').toUpperCase()
-    if (method !== 'GET') return jsonResponse({ ok: true })
+    if (method !== 'GET') {
+      /*
+       * 写请求：**默认仍然是 `{ok:true}`**（既有用例只数"发没发请求"，不依赖响应体）。
+       *
+       * 需要"写请求真的回一份结构化数据"的用例（厂商卡片的「拉取模型」要把 models 画出来、
+       * 「测试连接」要看成功文案）在夹具里给 `posts`：键是**路径正则字符串**，值是该请求的
+       * 响应体（或一个拿到 `{path, body}` 后返回响应体的函数）。
+       * 仍然只有事实：路由本身不做任何判断。
+       */
+      var table = fixture.posts || {}
+      var hit = Object.keys(table).filter(function (pattern) {
+        return new RegExp(pattern).test(p)
+      })[0]
+      if (hit === undefined) return jsonResponse({ ok: true })
+      var entry = table[hit]
+      return jsonResponse(
+        typeof entry === 'function' ? entry({ path: p, body: init && init.body }) : entry,
+      )
+    }
     if (p === '/pixmart/api/projects') return jsonResponse(projectPage(u))
     if (p.indexOf('/pixmart/api/projects/') === 0) return jsonResponse(fixture.detail)
     // 回收站：默认空（既有用例不受影响）；要测"回收站里有项目"时夹具给 `trash` 即可
@@ -139,7 +165,14 @@
       },
     }
     exported.apply(ctx)
+    calls = []
     window.fetch = function (input, init) {
+      var method = String((init && init.method) || 'GET').toUpperCase()
+      calls.push({
+        method: method,
+        url: String(input),
+        body: init && typeof init.body === 'string' ? init.body : null,
+      })
       return Promise.resolve(route(String(input), init))
     }
     return {
@@ -779,6 +812,7 @@
       'fontWeight',
       'borderRadius',
       'border',
+      'borderTop',
       'borderTopWidth',
       'boxSizing',
       'display',
@@ -796,6 +830,12 @@
      */
     var declaredBorder = {
       shorthand: el.style.getPropertyValue('border'),
+      /*
+       * `border-top` 单独取一次：只写了上边线的地方（模型区块的那根分隔线）不会出现在
+       * `border` 简写里；而带 `var(...)` 的简写是**待替换值**，浏览器在替换之前
+       * 不会把宽度展开到 `border-top-width` 上 —— 于是只能读简写原文。
+       */
+      topShorthand: el.style.getPropertyValue('border-top'),
       topWidth: el.style.getPropertyValue('border-top-width'),
     }
     return {
@@ -814,9 +854,125 @@
       fontWeight: cs.fontWeight,
       borderRadius: cs.borderRadius,
       borderTopWidth: cs.borderTopWidth,
+      /*
+       * 布局 / 表面那几项：2026-10-11 起由「厂商卡片对齐官方模型页」的尺寸用例消费
+       * （卡片与区块的 gap / 对齐 / 底色 / 滚动上限都是官方取值的一部分）。
+       * 纯增量：既有用例的 `sizeDiff` 只比它自己 `expect` 里列出的键，多出来的键不影响它们。
+       */
+      gap: cs.gap,
+      rowGap: cs.rowGap,
+      columnGap: cs.columnGap,
+      alignItems: cs.alignItems,
+      justifyContent: cs.justifyContent,
+      flexDirection: cs.flexDirection,
+      flexWrap: cs.flexWrap,
+      overflowY: cs.overflowY,
+      maxHeight: cs.maxHeight,
+      backgroundColor: cs.backgroundColor,
+      borderTopColor: cs.borderTopColor,
+      margin: cs.margin,
+      marginTop: cs.marginTop,
+      marginRight: cs.marginRight,
+      marginBottom: cs.marginBottom,
+      marginLeft: cs.marginLeft,
+      listStyleType: cs.listStyleType,
       declared: declared,
       declaredBorder: declaredBorder,
       rect: rectOf(el),
+    }
+  }
+
+  /**
+   * 厂商卡片 / 模型列表的事实（2026-10-11「对齐官方模型设置页」那一版）。
+   *
+   * 只交事实：卡片与各区块的盒模型、三个保留项（拉取模型 / 测试连接 / 拉取后的模型列表）
+   * 的存在与可点性、以及列表行的行数与几何。判断全在用例里。
+   *
+   * 全部按**语义锚点**找（`data-pxm-*`），不按类名 —— 类名是实现细节。
+   */
+  function vendorFacts() {
+    var card = document.querySelector('[data-pxm-vendor-card]')
+    if (card === null) return null
+    var pick = function (selector) { return card.querySelector(selector) }
+    var box = function (selector) { return boxMetrics(selector) }
+    var button = function (selector) {
+      var el = pick(selector)
+      if (el === null) return null
+      return {
+        present: true,
+        tag: el.tagName,
+        text: (el.textContent || '').trim(),
+        disabled: el.disabled === true,
+        rect: rectOf(el),
+        metrics: boxMetrics(selector),
+      }
+    }
+    var listEl = pick('[data-pxm-model-list]')
+    var listStyle = listEl === null ? null : window.getComputedStyle(listEl)
+    var rows = Array.prototype.map.call(
+      card.querySelectorAll('[data-pxm-model-row]'),
+      function (row) {
+        var cs = window.getComputedStyle(row)
+        var input = row.querySelector('input[type="checkbox"]')
+        var nameEl = row.querySelector('[data-pxm-model-name]')
+        var nameStyle = nameEl === null ? null : window.getComputedStyle(nameEl)
+        return {
+          text: (row.textContent || '').trim(),
+          hasCheckbox: input !== null,
+          checked: input === null ? null : input.checked === true,
+          checkboxRect: input === null ? null : rectOf(input),
+          rect: rectOf(row),
+          display: cs.display,
+          alignItems: cs.alignItems,
+          gap: cs.gap,
+          paddingTop: cs.paddingTop,
+          paddingRight: cs.paddingRight,
+          paddingBottom: cs.paddingBottom,
+          paddingLeft: cs.paddingLeft,
+          borderRadius: cs.borderRadius,
+          fontSize: nameStyle === null ? null : nameStyle.fontSize,
+          lineHeight: nameStyle === null ? null : nameStyle.lineHeight,
+          fontFamily: nameStyle === null ? null : nameStyle.fontFamily,
+          nameOverflow: nameStyle === null ? null : nameStyle.overflow,
+          nameTextOverflow: nameStyle === null ? null : nameStyle.textOverflow,
+        }
+      },
+    )
+    return {
+      card: box('[data-pxm-vendor-card]'),
+      head: box('[data-pxm-vendor-head]'),
+      identity: box('[data-pxm-vendor-identity]'),
+      name: box('[data-pxm-vendor-name]'),
+      tag: box('[data-pxm-row-tag]'),
+      dot: box('[data-pxm-credential-dot]'),
+      actions: box('[data-pxm-vendor-actions]'),
+      editor: box('[data-pxm-editor]'),
+      editorActions: box('[data-pxm-editor-actions]'),
+      catalog: box('[data-pxm-model-catalog]'),
+      catalogHead: box('[data-pxm-model-head]'),
+      catalogTitle: box('[data-pxm-model-title]'),
+      catalogMeta: box('[data-pxm-model-meta]'),
+      rowsRoot: box('.pxm-vendor-rows'),
+      fetchButton: button('[data-pxm-role="fetch-models"]'),
+      testButton: button('[data-pxm-role="test-connection"]'),
+      list: listEl === null
+        ? null
+        : {
+            rect: rectOf(listEl),
+            display: listStyle.display,
+            flexDirection: listStyle.flexDirection,
+            gap: listStyle.gap,
+            maxHeight: listStyle.maxHeight,
+            overflowY: listStyle.overflowY,
+            paddingTop: listStyle.paddingTop,
+            paddingRight: listStyle.paddingRight,
+            paddingBottom: listStyle.paddingBottom,
+            paddingLeft: listStyle.paddingLeft,
+            scrollHeight: listEl.scrollHeight,
+            clientHeight: listEl.clientHeight,
+          },
+      rowCount: rows.length,
+      rows: rows,
     }
   }
 
@@ -884,6 +1040,12 @@
     viewerSlots: viewerSlots,
     overlaySlots: overlaySlots,
     boxMetrics: boxMetrics,
+    // 厂商卡片 / 模型列表（2026-10-11）：三个保留项 + 卡片与列表行的几何
+    vendorFacts: vendorFacts,
+    /** 假宿主收到的请求（方法 / URL / body）。fetch 被替换成夹具，所以真实网络事件看不到。 */
+    fetchCalls: function () {
+      return calls.slice()
+    },
     resolveSize: resolveSize,
     titlebarTop: function () {
       var el = document.getElementById('dsh-titlebar')
