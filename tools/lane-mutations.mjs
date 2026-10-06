@@ -383,6 +383,55 @@ const MUTATIONS = [
       },
     ],
   },
+  {
+    id: 'M20-input-surface-is-bg-base',
+    /**
+     * 输入控件侧的变异（19.5 的缺陷形态）：把 `inputStyle` 的底色从**官方表单控件那一层**
+     * `--dsw-alias-bg-layer-3` 退回 `--dsw-alias-bg-base`（**应用最底层**，深色 `#151517`）。
+     *
+     * 这正是用户肉眼确认的那处偏差：`TextInput` / `Select` 共用 `inputStyle`，嵌在设置面板
+     * （`bg-layer-2`，深色 `#2c2c2e`）里却比面板本身还暗一层，观感是"输入框塌进去了"。
+     * 官方设置页的表单控件（`primitives` 的 `settings-form/fields.module.css` 的 `.input`，
+     * `SettingsValueField` 与 `SettingsSecretField` **同一个类**）用的是 `bg-layer-3`。
+     *
+     * 预期被 **8.9** 抓住：判据是"最近色必须命中 `bg-layer-3`"，所以变异体报的是
+     * 「底色是 bg-base —— 那是误差形态」，而不是笼统的"颜色不等"。注意 8.9 只在**深色**
+     * 那一次判"等于哪一层"（浅色下官方四层表面都是 `#fff`，写哪层都同色），与 8.8 同纪律。
+     *
+     * 注：变异体只把**内联样式**退回 bg-base，`T.bgLayer3` 键仍在（仍被 textarea 引用），
+     * 所以变异产物照样能跑起来 —— 这是"被断言抓住"而不是"崩了"的前提。
+     */
+    bug: '输入控件底色从官方表单控件那一层 bg-layer-3 退回应用最底层 bg-base（深色下比设置面板还暗，"输入框塌进去"）',
+    expect: ['8.9 input / password / select 的底色与描边逐个等于官方解析值'],
+    edits: [
+      {
+        // 锚点：`inputStyle` 里 `background: T.bgLayer3` 与紧随其后的边框注释一起出现，
+        // 在文件里**只此一处**（textarea 那处的 bg 行紧跟 `color: T.label,`，不匹配）。
+        find: '      background: T.bgLayer3,\n      // 边框同样照抄官方表单控件那一处',
+        replace: '      background: T.bgBase,\n      // 边框同样照抄官方表单控件那一处',
+      },
+    ],
+  },
+  {
+    id: 'M21-input-surface-is-bg-layer-2',
+    /**
+     * 输入控件侧的第二形态：把 `inputStyle` 的底色退回**设置面板自己那一层**
+     * `--dsw-alias-bg-layer-2`。
+     *
+     * 这一条的存在意义是证明 8.9 里那句"**不等于** `bg-layer-2`"**不是空转**：
+     * `bg-layer-2` 与 `bg-layer-3` 只差一档（深色 `#2c2c2e` vs `#353638`），肉眼几乎看不出，
+     * 但"输入框与它所在的卡片同色"就意味着控件边界只剩一根描边 —— 官方不是这么画的
+     * （官方表单控件比它所在的设置面板**亮一档**）。若删掉那条 notEqual，这条变异就不会红。
+     */
+    bug: '输入控件底色退回设置面板那一层 bg-layer-2（与卡片同色，控件只剩描边、看不出是输入面）',
+    expect: ['8.9 input / password / select 的底色与描边逐个等于官方解析值'],
+    edits: [
+      {
+        find: '      background: T.bgLayer3,\n      // 边框同样照抄官方表单控件那一处',
+        replace: '      background: T.bgLayer2,\n      // 边框同样照抄官方表单控件那一处',
+      },
+    ],
+  },
 ]
 
 function applyMutation(source, mutation) {

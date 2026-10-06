@@ -50,12 +50,18 @@ const source = readFileSync(CLIENT_PATH, 'utf8')
  * （`requiresLightAndDark: true`）—— 这正是"配色能自动与官方主题一致"的前提。
  * 加/减 token 时要显式改这里，避免悄悄漂移。
  *
- * 清单**是 14 项**：早先版本误把「进行中/进度」映射到 `--dsw-alias-brand-primary`
- * （那是主按钮填充色），现换成官方的 `--dsw-alias-label-tertiary`
- * （`StateDot` 的 `ongoing` 用的就是它），因此这一进一出后仍不用 brand-primary。
+ * 清单**是 16 项**。历史沿革：
+ *   - 早先版本误把「进行中/进度」映射到 `--dsw-alias-brand-primary`（那是主按钮填充色），
+ *     换成官方的 `--dsw-alias-label-tertiary`（`StateDot` 的 `ongoing` 用的就是它），
+ *     一进一出后仍不用 brand-primary（13 项）；
+ *   - 2026-10-07 输入控件对齐官方（`docs/contract-notes.md` 19.5）再进三枚：
+ *     `--dsw-alias-bg-layer-3`（官方设置页表单字段 `.input` 的底色）、
+ *     `--dsw-alias-border-l4`（同一处的描边：`.input{border:.5px solid var(--dsw-alias-border-l4)}`），
+ *     以及**保留**的 `--dsw-alias-border-l2`（输入控件不再用它，但按钮描边仍在用，
+ *     所以它**不是**"只声明没引用"的僵尸键）。13 + 3 = 16。
  *
- * 注意：`client/client.js` 里另有一份 `OFFICIAL_SURFACES` 清单（6 层官方表面的 token 名与
- * 官方用法，含本插件**尚未使用**的 `bg-layer-3` / `bg-module-platform`）。它是**合同文本**、
+ * 注意：`client/client.js` 里另有一份 `OFFICIAL_SURFACES` 清单（官方表面层的 token 名与
+ * 官方用法，含本插件**尚未使用**的 `bg-module-platform`）。它是**合同文本**、
  * 不是取色来源，本文件因此**不**把它算进 `REQUIRED_TOKENS` ——
  * 这份清单只收"源码里真的画出来的那些 token 的 var(...)"，混进合同文本会让
  * 下面那条「代码里出现的 token 种类 == 清单」的断言失去意义。
@@ -64,9 +70,11 @@ const REQUIRED_TOKENS = [
   '--dsw-alias-bg-base',
   '--dsw-alias-bg-layer-1',
   '--dsw-alias-bg-layer-2',
+  '--dsw-alias-bg-layer-3',
   '--dsw-alias-bg-overlay',
   '--dsw-alias-border-l1',
   '--dsw-alias-border-l2',
+  '--dsw-alias-border-l4',
   '--dsw-alias-label-primary',
   '--dsw-alias-label-secondary',
   '--dsw-alias-label-tertiary',

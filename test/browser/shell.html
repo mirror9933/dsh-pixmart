@@ -45,6 +45,13 @@
         --dsw-alias-bg-overlay: #e9ecf2;
         --dsw-alias-border-l1: #0000000a;
         --dsw-alias-border-l2: #0000001a;
+        /*
+         * 官方**输入控件描边**：`primitives` 的 `settings-form/fields.module.css` 里
+         * `.input{border:.5px solid var(--dsw-alias-border-l4)}`（`Input.module.css` 的
+         * `.wrap`、`settings-plugin-inventory` 的搜索框也是它）。
+         * 8.9 用它断言"我们的输入框描边 == 官方表单控件那一枚"。
+         */
+        --dsw-alias-border-l4: #00000029;
         --dsw-alias-brand-primary: #0f1115;
         --dsw-alias-label-primary: #0f1115;
         --dsw-alias-label-secondary: #61666b;

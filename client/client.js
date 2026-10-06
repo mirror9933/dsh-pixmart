@@ -114,7 +114,7 @@ window.__ModuleLoader__.load({
      *
      * **表面层到底挂哪一个 token，是 2026-10-06 那次修正的核心**：光名字对不算对，
      * 语义对才算对。完整清单（含官方用法）见下面的 `OFFICIAL_SURFACES`，共 6 层；
-     * 本插件实际画出来的是其中 4 层：
+     * 本插件实际画出来的是其中 5 层：
      *   - `bg-base`（深色 `#151517`）＝ **应用最底层**。官方用于 `ui-layout` 的
      *     `AppFrame.frame` / `centerCol` / `rightbarCol`、`body`，以及整页级面板
      *     （`schedule` 的 `S0jZwq_page`）。**不是**面板/弹窗的底色。
@@ -125,19 +125,22 @@ window.__ModuleLoader__.load({
      *     `settings-general` 的 `.wCInkW_panel`（设置弹窗那一块）、`primitives` 的 Modal、
      *     以及 `--dsw-alias-settings-card-fill`（设置卡片填充）。**设置页 section 显示的就是它**
      *     ——官方 section 自己不画表面（`.wCInkW_options` 没有 `background`），继承弹窗那一层。
+     *   - `bg-layer-3`（深色 `#353638`）＝ **输入控件层**。官方设置页的表单控件用它
+     *     （`fields.module.css` 的 `.input`，见下）。输入框 / 下拉 / 提示词大段文本都用它。
      *   - `bg-overlay`（深色 `#61666b`）＝ 浮层/弹出层底（tooltip 类）。
-     * 这几个值在深色下互不相同（#151517 / #232324 / #2c2c2e / #61666b），因此
-     * "挂错一个"是可以用色彩断言抓出来的（`test/browser/theme.test.mjs` 8.5 与 8.8）。
+     * 这几个值在深色下互不相同（#151517 / #232324 / #2c2c2e / #353638 / #61666b），因此
+     * "挂错一个"是可以用色彩断言抓出来的（`test/browser/theme.test.mjs` 8.5、8.8 与 8.9）。
      */
     /**
      * 官方**表面层**清单：每层表面的 token 名 + 它在官方那侧的用途。
      *
      * 这是**合同文本**，不是取色来源（取色一律用下面 `T` 里的 `var(...)`）：
      * 它记下"官方一共这几层表面、各自用在哪"，好让"我们这一处该挂哪一层"有据可查。
-     * 浏览器 lane 的 8.5 用**官方实际解析值**断言 `bg-base` / `layer-1` / `layer-2`
-     * 在深色下两两不同色（浅色下官方三层同为 `#fff`，区分不出来），8.8 再用这些解析值
-     * 判断设置页 section 显示的是哪一层。色值**故意不写在这里**：本文件有"不得出现任何
-     * 十六进制色值"的静态红线（`test/client-tokens.test.mjs`），要色值就去 lane 里量。
+     * 浏览器 lane 的 8.5 用**官方实际解析值**断言 `bg-base` / `layer-1` / `layer-2` / `layer-3`
+     * 在深色下两两不同色（浅色下官方这几层同为 `#fff`，区分不出来），8.8 / 8.9 再用这些解析值
+     * 判断设置页 section 显示的是哪一层、以及输入控件挂的是哪一层。色值**故意不写在这里**：
+     * 本文件有"不得出现任何十六进制色值"的静态红线（`test/client-tokens.test.mjs`），
+     * 要色值就去 lane 里量。
      *
      * 已核对的官方用法（原文都在 app.asar 里）：
      *   - `bg-base`      `ui-layout` 的 AppFrame.frame / centerCol / rightbarCol、`body`、
@@ -146,17 +149,27 @@ window.__ModuleLoader__.load({
      *                    `primitives` 的 HoverCard → **抬起的表面**
      *   - `bg-layer-2`   `settings-general` 的 `.wCInkW_panel`（设置弹窗）、`Modal`、
      *                    `--dsw-alias-settings-card-fill` → **弹窗/嵌套表面**
-     *   - `bg-layer-3`   `primitives` 的 `fields.module.css` 里 `.input` → **输入控件**
-     *                    （本插件**目前不画**这一层：设置页的输入框仍用 `bg-base`，
-     *                    见 docs/contract-notes.md 的 19.4；所以它不是本文件的 token 表条目，
-     *                    只在此备案）
-     *   - `bg-module-platform` 分段控件/胶囊的底槽（`SegmentedControl`）—— 同上，未使用
+     *   - `bg-layer-3`   **输入控件层**。官方设置页的表单控件就是它：
+     *                    `primitives` 的 `settings-form/fields.module.css` 里
+     *                    `.input{background:var(--dsw-alias-bg-layer-3)}` —— 该文件是
+     *                    `SettingsValueField`（`<input type="text">`）与 `SettingsSecretField`
+     *                    （`<input type="password">`）唯一的样式来源，两者**同一个类**；
+     *                    `settings-plugin-inventory` 的 `.RotMhW_search input`、
+     *                    `plugin-manager` 的 `.fO69Vq_installField input[type=text]` 也都是它。
+     *                    本插件的输入类控件（`inputStyle` → `TextInput` / `Select`、提示词
+     *                    `<textarea>`）自 2026-10-07 起挂这一层，见 docs/contract-notes.md 19.5。
+     *                    （注意**别**把它与 `primitives/Input.module.css` 的 `.input` 混起来：
+     *                    那是原子 `<Input>` 的**内层**无背景输入，它外层 `.wrap` 挂的是
+     *                    `bg-layer-1`；README 的 "Input 没有设计源" 一条说的就是它，
+     *                    与设置页表单控件不是同一处。）
+     *   - `bg-module-platform` 分段控件/胶囊的底槽（`SegmentedControl`）—— 未使用
      *   - `bg-overlay`   tooltip 一类浮层底
      */
     const OFFICIAL_SURFACES = Object.freeze({
       bgBase: { token: '--dsw-alias-bg-base', officialUse: '应用最底层 / 窗口底 / body / 整页级面板' },
       bgLayer1: { token: '--dsw-alias-bg-layer-1', officialUse: '抬起的表面（浮层预览、卡片、HoverCard）' },
       bgLayer2: { token: '--dsw-alias-bg-layer-2', officialUse: '弹窗面板（设置弹窗）与设置卡片填充' },
+      bgLayer3: { token: '--dsw-alias-bg-layer-3', officialUse: '输入控件（设置页表单字段 / 搜索框 / 安装字段）' },
       bgOverlay: { token: '--dsw-alias-bg-overlay', officialUse: '浮层 / 弹出层底（tooltip 类）' },
     })
 
@@ -164,9 +177,11 @@ window.__ModuleLoader__.load({
       bgBase: 'var(--dsw-alias-bg-base)',
       bgLayer1: 'var(--dsw-alias-bg-layer-1)',
       bgLayer2: 'var(--dsw-alias-bg-layer-2)',
+      bgLayer3: 'var(--dsw-alias-bg-layer-3)',
       bgOverlay: 'var(--dsw-alias-bg-overlay)',
       borderL1: 'var(--dsw-alias-border-l1)',
       borderL2: 'var(--dsw-alias-border-l2)',
+      borderL4: 'var(--dsw-alias-border-l4)',
       label: 'var(--dsw-alias-label-primary)',
       labelSecondary: 'var(--dsw-alias-label-secondary)',
       labelTertiary: 'var(--dsw-alias-label-tertiary)',
@@ -851,9 +866,21 @@ window.__ModuleLoader__.load({
       padding: '3px 6px',
       borderRadius: '6px',
       color: T.label,
-      // 输入控件落在「页面底色」上（浅色下与卡片同色，深色下自然成为一层内凹表面）。
-      background: T.bgBase,
-      border: '1px solid ' + T.borderL2,
+      // **输入控件层**：官方设置页的表单字段（`primitives` 的
+      // `settings-form/fields.module.css` 里 `.input`）挂的是 `--dsw-alias-bg-layer-3`；
+      // 那是 `SettingsValueField`（text）与 `SettingsSecretField`（password）**同一个类**，
+      // `TextInput` / `Select` 因此一起挂这一层（下拉没有官方对应物：官方 client 侧
+      // 没有任何 `<select>`，语义上它是"同一枚表单控件"，所以用同一层）。
+      //
+      // 早先这里是 `T.bgBase`（深色 #151517）—— 那是**应用最底层**（窗口底 / body），
+      // 嵌在设置面板里比面板本身还暗，观感是"输入框塌进去了"。深色下四层互不相同
+      // （bg-base / layer-1 / layer-2 / layer-3），浏览器 lane 的 8.9 用**官方解析值**
+      // 钉住这一点，并断言它既不是 bg-base 也不是 bg-layer-2。
+      background: T.bgLayer3,
+      // 边框同样照抄官方表单控件那一处：`.input{border:0.5px solid var(--dsw-alias-border-l4)}`
+      // （`primitives/Input.module.css` 的 `.wrap`、`settings-plugin-inventory` 的搜索框
+      // 也都是 `border-l4`；`border-l1/l2` 在官方那边是分隔线与卡片描边，不是控件描边）。
+      border: '1px solid ' + T.borderL4,
       width: '100%',
       // `width:100%` 只是"想占满"，真正让它随容器**收窄**的是 minWidth:0：
       // 否则长值（绝对路径）会把输入框顶到自己的固有宽度上。
@@ -2024,8 +2051,10 @@ window.__ModuleLoader__.load({
                   padding: '6px 8px',
                   borderRadius: '6px',
                   color: T.label,
-                  background: T.bgBase,
-                  border: '1px solid ' + T.borderL2,
+                  // 大段文本（提示词）是**输入类控件**，与上面的 `inputStyle` 同层同边框：
+                  // 官方 `.input` 就是 `bg-layer-3` + `border-l4`（见 `inputStyle` 的注释）。
+                  background: T.bgLayer3,
+                  border: '1px solid ' + T.borderL4,
                 },
               }),
             )

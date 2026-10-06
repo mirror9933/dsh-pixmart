@@ -1059,11 +1059,11 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 
 | 层 | token | 深色取值 | 官方用在哪 | 我们用在哪 |
 |---|---|---|---|---|
-| 应用最底层 | `--dsw-alias-bg-base` | `#151517` | `AppFrame.frame` / `centerCol` / `rightbarCol`、`body`、整页级面板（`schedule` 的 `S0jZwq_page`） | shell 的 `body`；**设置页的输入控件底色**（见 19.4 的"未改"说明） |
+| 应用最底层 | `--dsw-alias-bg-base` | `#151517` | `AppFrame.frame` / `centerCol` / `rightbarCol`、`body`、整页级面板（`schedule` 的 `S0jZwq_page`） | shell 的 `body`；缩略图的占位底（`bg-layer-2` 的卡片里那一格） |
 | 抬起的表面 | `--dsw-alias-bg-layer-1` | `#232324` | `chat` 的 turn-preview（带 `elevation-panel`）、`deliverables` 的卡片、`primitives` 的 HoverCard | **作品库面板**（`main` 槽）、模型选择盒 |
 | 弹窗 / 嵌套表面 | `--dsw-alias-bg-layer-2` | `#2c2c2e` | `settings-general` 的 `.wCInkW_panel`（设置弹窗）、`Modal`、`--dsw-alias-settings-card-fill` | 卡片 / 列表盒 / 缩略图占位；**设置页 section 显示的就是这一层**（自己不再画一层） |
-| 输入控件 | `--dsw-alias-bg-layer-3` | `#353638` | `primitives` 的 `fields.module.css` 里 `.input` | 未使用（备案在 `OFFICIAL_SURFACES` 注释里） |
-| 分段控件底槽 | `--dsw-alias-bg-module-platform` | `#353638` | `SegmentedControl` | 未使用（同上） |
+| 输入控件 | `--dsw-alias-bg-layer-3` | `#353638` | `primitives` 的 `settings-form/fields.module.css` 里 `.input`（`SettingsValueField` / `SettingsSecretField` 同一个类）、`settings-plugin-inventory` 的 `.RotMhW_search input`、`plugin-manager` 的 `.fO69Vq_installField input[type=text]` | **全部输入类控件**：`inputStyle`（`TextInput` / `Select`）、提示词 `<textarea>`（2026-10-07 对齐，见 19.5） |
+| 分段控件底槽 | `--dsw-alias-bg-module-platform` | `#353638` | `SegmentedControl` | 未使用（备案在 `OFFICIAL_SURFACES` 注释里） |
 | 浮层底 | `--dsw-alias-bg-overlay` | `#61666b` | tooltip 一类浮层 | 查看器 / 预览卡 / 徽标 |
 
 其余非表面 token：
@@ -1071,7 +1071,8 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 | 用途 | token |
 |---|---|
 | 分隔线（发丝级） | `--dsw-alias-border-l1` |
-| 控件与卡片描边 | `--dsw-alias-border-l2` |
+| 卡片 / 按钮描边 | `--dsw-alias-border-l2` |
+| **输入控件描边** | `--dsw-alias-border-l4`（官方 `.input{…border:0.5px solid var(--dsw-alias-border-l4)}`；`primitives/Input.module.css` 的 `.wrap` 与 `settings-plugin-inventory` 搜索框同） |
 | 品牌强调（**主按钮填充**） | `--dsw-alias-brand-primary`（官方 `--dsw-alias-button-primary-fill` 就是它；浅色近黑 / 深色近白）**本插件不用** |
 | 主文字 / 次文字 / 三级文字 | `--dsw-alias-label-primary` / `--dsw-alias-label-secondary` / `--dsw-alias-label-tertiary` |
 | 状态色（对齐官方 `StateDot`） | `--dsw-alias-state-success-primary`（完成）· `-state-error-primary`（失败）· `-state-warn-primary`（警告 / 数据过期）· `-state-idle-primary`（待机 / 进度条底槽）· **`--dsw-alias-label-tertiary`（进行中 —— 官方 `StateDot` 的 `ongoing` 用的正是它）** |
@@ -1110,15 +1111,15 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 1. **静态扫描**（`test/client-tokens.test.mjs`，9 项，`pnpm test`）：先按字符串/注释状态机剥掉
    注释（注释里会**提到**被禁的写法），再对代码断言——没有十六进制色值、没有系统色关键字、
    没有 `rgb()`/`hsl()`、没有「当前颜色」关键字。三条**正向**断言：`--dsw-` 出现次数 ≥ 清单长度
-   （阈值 = 清单长度，现为 14）；从源码里**读出** `const T = {…}` 表，断言它与清单一一对应、
+   （阈值 = 清单长度，现为 16）；从源码里**读出** `const T = {…}` 表，断言它与清单一一对应、
    且每个 token 键都真的被样式引用过（只声明不引用 = 那处多半被换回硬编码了）；以及
    「进行中/进度」那几处必须走 `labelTertiary`（逐处正则钉住，换成 `T.brand` 或硬编码 hex 直接红）。
-2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3 / 8.7 / 8.8，`pnpm test:browser`）：
+2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3 / 8.7 / 8.8 / 8.9，`pnpm test:browser`）：
    在 `test/browser/shell.html` 里**定义**官方浅色取值，然后按**计算样式**
    （`getComputedStyle`，不是内联字符串）断言元素某个属性 == 该 token 在**当前页面**里的解析值
    （解析由浏览器现场完成，`__pxmLane.resolveCss` 按目标属性本身解析，两边同一个序列化器）。
    夹具里刻意放一条失败项，否则 `.pxm-item-error` 根本不渲染，"失败文字走 error token"就是空转。
-   8.8 是**表面映射**那一类（"挂的是哪一层"），判据与证据见 19.4。
+   8.8 / 8.9 是**表面映射**那一类（"挂的是哪一层"），判据与证据见 19.4 / 19.5。
 3. **深浅色跟随**（8.2 / 8.4 / 8.7）：在**同一个页面**里把同一批 token 换成官方深色取值
    （`__pxmLane.setTokens`），断言每个被断言的颜色**都变了**、且等于新的解析值。
    这是"能与官方深浅色主题一致"的唯一硬证据——只断言浅色下相等，可能是硬编码巧合同色
@@ -1179,14 +1180,15 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 | `skin.wrap` `bg-base` | **不画表面**（继承 `bg-layer-2`）← 已改 | 官方 `.wCInkW_options` 无 `background` |
 | `skin.panel` `bg-layer-1` | `bg-layer-1` ✅ 不动 | 官方"抬起的表面"层（chat turn-preview / deliverables 卡片） |
 | `skin.card` `bg-layer-2` | `bg-layer-2` ✅ 不动 | `--dsw-alias-settings-card-fill` = `bg-layer-2` |
-| `inputStyle` / 提示词 `<textarea>` `bg-base` | 官方同类控件是 `bg-layer-3` → **本次未改**（见下） | `primitives` 的 `fields.module.css` `.input{background:var(--dsw-alias-bg-layer-3)}` |
+| `inputStyle` / 提示词 `<textarea>` `bg-base` | 官方同类控件是 `bg-layer-3` → **19.5 已改** | `primitives` 的 `settings-form/fields.module.css` `.input{background:var(--dsw-alias-bg-layer-3)}` |
 | `.pxm-viewer` / 预览卡 / 徽标 `bg-overlay`（92% / 100%） | ✅ 不动 | 浮层底 |
 | 状态点/进度 `label-tertiary` | ✅ 不动（8.7 守着） | `StateDot` 的 `ongoing` |
 
-**没改的那一处（诚实记录）**：输入控件严格对齐官方应当是 `bg-layer-3`。本次没动它，原因有两条：
-（a）`bg-layer-3` 尚未进入本插件的 token 表，加进去会牵动静态用例的"一一对应"断言与 token 计数，
-属于另一处独立改动；（b）本次用户报的是**面板底色**，输入框底色不在报告范围内。已在
-`OFFICIAL_SURFACES` 与 19.1 的表里备案"官方是 `bg-layer-3`、我们是 `bg-base`"，将来要改有据可依。
+**当时没改的那一处（已在 19.5 补齐）**：输入控件严格对齐官方应当是 `bg-layer-3`。本次没动它，
+原因有两条：（a）`bg-layer-3` 尚未进入本插件的 token 表，加进去会牵动静态用例的"一一对应"
+断言与 token 计数，属于另一处独立改动；（b）本次用户报的是**面板底色**，输入框底色不在报告
+范围内。已在 `OFFICIAL_SURFACES` 与 19.1 的表里备案"官方是 `bg-layer-3`、我们是 `bg-base`"，
+随后按这份备案改掉了（见 19.5）。
 
 #### 问题②：2560 全屏下作品库挤在左侧、右边一大片空白
 
@@ -1239,3 +1241,77 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 
 `pnpm verify`（typecheck + build + `pnpm test` + `pnpm test:browser`）：
 **322 + 21**，全绿；`client/client.js` 的 sha256 在变异脚本前后一致（脚本只写临时副本）。
+
+### 19.5 输入控件底色对齐官方 `bg-layer-3`（2026-10-07）
+
+19.4 备案的偏差（"官方输入控件是 `bg-layer-3`、我们是 `bg-base`"）本次补齐。用户肉眼确认的
+现象是：设置页的输入框比官方**暗一层**，看起来像"塌进面板里"。
+
+#### 先在 app.asar 里逐类核实官方用法（不照抄结论）
+
+| 官方控件 | 挂的 token | 出处（app.asar 原文） |
+|---|---|---|
+| 设置页 `SettingsValueField`（`<input type="text">`） | `background: var(--dsw-alias-bg-layer-3)` + `border: .5px solid var(--dsw-alias-border-l4)` | `dsh-client-ui-primitives/lib/settings-form/fields.module.css:110-112` 的 `.input` |
+| 设置页 `SettingsSecretField`（`<input type="password">`） | **同一个类** `css$25.input` ⇒ 同 token | `dsh-client-ui-primitives/lib/index.js`：`jsx("input",{className: css$25.input, type:"password"})` |
+| 设置页搜索框 | `bg-layer-3` + `border-l4` | `dsh-client-ui-settings-plugin-inventory/lib/client.js` 的 `.RotMhW_search input` |
+| 插件安装字段 `input[type=text]` | `bg-layer-3` + `border-l4` | `dsh-client-ui-plugin-manager/lib/client.js` 的 `.fO69Vq_installField input[type=text]` |
+| 原子 `<Input>`（**不是**表单字段） | 外层 `.wrap`: `bg-layer-1` + `border-l4`；内层 `.input`: `background: transparent` | `dsh-client-ui-primitives/lib/Input.module.css` |
+| `<select>` / `<textarea>` | **官方 client 侧一处都没有**（全 asar grep `<select` / `<textarea` 只命中 domino 与 renderer 的模板） | 因此下拉与大段文本按"同一枚表单控件"的**最接近语义**对齐到 `.input` 那一处 |
+| checkbox | 不画底色（`accent-color: var(--dsw-alias-brand-primary)`） | `Checkbox.module.css` |
+| switch | 不画输入底色（轨道 `border-l3` / 选中 `brand-primary`） | `Switch.module.css` |
+
+浅/深实测色值（由 `dsh-client-ui-theme/lib/client.js` 的 `body{}` / `body[data-ds-dark-theme]{}`
+两份定义逐层解析）：
+
+| token | 浅色 | 深色 |
+|---|---|---|
+| `--dsw-alias-bg-base` | `#fff` | `#151517` |
+| `--dsw-alias-bg-layer-1` | `#fff` | `#232324` |
+| `--dsw-alias-bg-layer-2` | `#fff` | `#2c2c2e` |
+| `--dsw-alias-bg-layer-3` | `#fff` | `#353638` |
+| `--dsw-alias-border-l4` | `#00000029` | `#fff3` |
+
+即：**浅色下官方四层表面同色（都是 `#fff`），"挂错一层"只有深色能区分** —— 与 8.5 / 8.8
+的既有做法一致，8.9 因此把"等于哪一层"的判定也放在深色那一次。
+
+#### 改法（只改样式值，不动结构 / 尺寸 / 行为）
+
+| 处 | 现在 → 应为 |
+|---|---|
+| `inputStyle`（`TextInput` 共用） | `background: T.bgBase` → `T.bgLayer3`；`border: 1px solid T.borderL2` → `T.borderL4` |
+| `Select`（厂商 / 模型 / 尺寸 / 排序下拉） | 复用 `inputStyle` ⇒ 同上（无独立代码） |
+| 密码框 | 走 `TextInput` + `type:'password'` ⇒ 同上（无独立代码） |
+| 提示词 `<textarea>`（`.pxm-copy-fallback`） | `background: T.bgBase` → `T.bgLayer3`；`border: T.borderL2` → `T.borderL4` |
+| `T` 表 | 新增 `bgLayer3` / `borderL4`（`OFFICIAL_SURFACES` 同步加 `bgLayer3`，清单 4 → 5 层） |
+| `test/client-tokens.test.mjs` 的 `REQUIRED_TOKENS` | 13 → 16 项（加上述三枚：`bg-layer-3` / `border-l4`；`bg-base` 仍在表内） |
+
+**`bg-base` 没有被弃用**：它仍被缩略图占位底（`T.bgBase`，卡片里那一格）引用，所以静态用例的
+"每个 token 键都被样式引用过"照旧成立，**没有变成空转**。`borderL2` 也仍被按钮描边引用。
+
+#### 新增断言（浏览器 lane，1 条用例 / 12 处断言）
+
+- **`theme.test.mjs` 8.9**：在 `settings.section` 里对 `.pxm-settings input[type="text"]`、
+  `input[type="password"]`、`select` 逐个断言**计算背景色 == `var(--dsw-alias-bg-layer-3)` 的
+  当页解析值**，且**不等于** `bg-base` / `bg-layer-2` 的解析值（四层在**深色**下互不相同，
+  浅色下官方同色，故"等于哪一层 / 不等于哪一层"只在深色判，浅色只核对"官方确实同色"这条前提
+  ——与 8.8 同一做法）；同时断言这三类的**边框色 == `border-l4`** 的解析值，且 != `border-l1`。
+  提示词 `<textarea>`（详情页里"复制失败才渲染"的 `.pxm-copy-fallback`）量同一套：用
+  `addInitScript` 把 `navigator.clipboard.writeText` 换成必然 reject 的 Promise（走的是真实的
+  降级分支，不是伪造 DOM），点「复制提示词」后等它出现再量。
+- **静态**：`test/client-tokens.test.mjs` 的清单与 `T` 表一一对应、`--dsw-` 种类数 == 16。
+
+#### 反向变异（`tools/lane-mutations.mjs`，两条新变异）
+
+- `M20-input-surface-is-bg-base`：把 `inputStyle` 的 `background: T.bgLayer3` 改回 `T.bgBase`
+  （缺陷形态）。实测 **8.9 红**：
+  「深色：input.text 的底色是 bg-base（rgb(21, 21, 23)，源码挂在 `inputStyle.background`）……」
+- `M21-input-surface-is-bg-layer-2`：改回 `T.bgLayer2`（与所在卡片同色，只差一档、肉眼几乎
+  看不出）。实测 **8.9 红**：「深色：input.text 的底色是 bg-layer-2（rgb(44, 44, 46)）……」
+  —— 这一条证明 8.9 里"**不等于** `bg-layer-2`"那句不是空转（删掉它这条变异就不会红）。
+
+`pnpm verify`（typecheck + build + `pnpm test` + `pnpm test:browser`）：
+**322 + 22**，全绿。基准是 **322 + 21**（在 HEAD `ae5a6bf` 的临时 worktree 里实测 node 322 /
+浏览器 21），本次浏览器 lane **+1**（新用例 8.9），静态用例**条数不变**（只改了清单内容与一处
+用例标题里的数字：14 → 16）；`git diff` 里没有任何被删掉的 `it(` / `describe(`。
+`client/client.js` 的 sha256（`916c6dff5d88…`）在变异脚本前后一致（脚本只写临时副本），
+21 条变异（20 严格 + 1 信息性）全部被对应用例抓住。

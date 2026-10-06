@@ -64,6 +64,7 @@ const TOKENS = [
   '--dsw-alias-bg-overlay',
   '--dsw-alias-border-l1',
   '--dsw-alias-border-l2',
+  '--dsw-alias-border-l4',
   '--dsw-alias-brand-primary',
   '--dsw-alias-label-primary',
   '--dsw-alias-label-secondary',
@@ -91,6 +92,7 @@ const LIGHT = {
   '--dsw-alias-bg-overlay': '#e9ecf2',
   '--dsw-alias-border-l1': '#0000000a',
   '--dsw-alias-border-l2': '#0000001a',
+  '--dsw-alias-border-l4': '#00000029',
   '--dsw-alias-brand-primary': '#0f1115',
   '--dsw-alias-label-primary': '#0f1115',
   '--dsw-alias-label-secondary': '#61666b',
@@ -116,6 +118,7 @@ const DARK = {
   '--dsw-alias-bg-overlay': '#61666b',
   '--dsw-alias-border-l1': '#ffffff0f',
   '--dsw-alias-border-l2': '#ffffff1f',
+  '--dsw-alias-border-l4': '#fff3',
   '--dsw-alias-brand-primary': '#f9fafb',
   '--dsw-alias-label-primary': '#f9fafb',
   '--dsw-alias-label-secondary': '#cfd3d6',
@@ -572,7 +575,7 @@ if (launched.browser === null) {
   // ── 8.0 token 表自证 ─────────────────────────────────────────────────────
 
   describe('8.0 token 表自证：shell 骨架发布的确实是官方 token 与浅色取值', () => {
-    it('14 个 --dsw-* 都能在 :root 上读到，且等于官方浅色取值', async () => {
+    it('16 个 --dsw-* 都能在 :root 上读到，且等于官方浅色取值', async () => {
       const { page, context, problems } = await openThemedLane()
       try {
         const declared = await probe(page, 'tokenVar', TOKENS)
@@ -984,6 +987,301 @@ if (launched.browser === null) {
         await probe(page, 'setTokens', DARK)
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))))
         check(await readOnce(), '深色', true)
+
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.9 输入控件的底色 / 描边：与官方表单控件同层 ─────────────────────────
+
+  /**
+   * 「官方输入控件 → 我们输入控件」的对照（每一处在 app.asar 里核过原文，
+   * 逐条证据见 `docs/contract-notes.md` 19.5）：
+   *
+   * | 控件 | 官方 | 我们 |
+   * |---|---|---|
+   * | 设置页文本字段 | `settings-form/fields.module.css` 的 `.input` → `bg-layer-3` + `border-l4` | `inputStyle`（`TextInput`）← **本用例钉住** |
+   * | 设置页密钥字段 | `SettingsSecretField` 用的是**同一个** `css$25.input`（`type="password"`） | 同上（`TextInput` + `type:'password'`） |
+   * | 下拉 | 官方 client 侧**没有** `<select>`；语义上同为"表单控件"，对齐最接近的 `.input` | `Select`（复用 `inputStyle`） |
+   * | 大段文本 | 官方 client 侧**没有** `<textarea>`；同上 | 提示词降级文本域 `.pxm-copy-fallback` |
+   * | 原子 `<Input>`（**不是**表单字段） | 外层 `.wrap` 是 `bg-layer-1` + `border-l4`（README：它"没有设计源"） | 不适用（我们画的是表单控件，不是这枚原子） |
+   *
+   * 判据与 8.8 同构，两条：
+   *   1. **语义层（深色下判）**：背景色必须等于 `bg-layer-3` 的解析值 —— 用**最近色**判定，
+   *      失败信息才会直接说"实际是哪一层"；同时必须**不等于** `bg-base` / `bg-layer-2`
+   *      （"输入框塌进面板"正是挂 `bg-base` 的形态）。
+   *   2. **浅色下只核前提**：官方四层表面浅色都是 `#fff`，写哪一层都同色 ⇒ 浅色那次不判
+   *      "等于哪一层"，只断言"官方确实同色"（与 8.8 完全一致的纪律，不是放宽）。
+   *
+   * 描边那一半（`border-l4`）浅深都可判：浅色 `#00000029`、深色 `#fff3`，与 `border-l1`
+   * （发丝分隔线）不同色，所以两套主题都断言"== border-l4 且 != border-l1"。
+   */
+  describe('8.9 输入控件：底色 == 官方表单控件那一层（bg-layer-3）而不是应用底色，描边 == border-l4', () => {
+    it('8.9 input / password / select 的底色与描边逐个等于官方解析值；提示词 textarea 同', async () => {
+      const { page, context, problems } = await openThemedLane({ mountSlot: 'settings.section' })
+      try {
+        await page.waitForSelector('.pxm-settings select', { timeout: 15000 })
+
+        /**
+         * 三类控件的选择器 + 它们在源码里挂的那个**内联样式键**。
+         *
+         * `expect` 用 token 表达式、`prop` 是目标属性本身，交给浏览器现场解析（同 8.1/8.3），
+         * 而不是测试自己把 hex 换算成 rgb。
+         */
+        const CONTROLS = [
+          {
+            key: 'input.text',
+            selector: '.pxm-settings input[type="text"]',
+            bgKey: 'inputStyle.background',
+            borderKey: 'inputStyle.border',
+          },
+          {
+            key: 'input.password',
+            selector: '.pxm-settings input[type="password"]',
+            bgKey: 'inputStyle.background',
+            borderKey: 'inputStyle.border',
+          },
+          {
+            key: 'select',
+            selector: '.pxm-settings select',
+            bgKey: 'inputStyle.background',
+            borderKey: 'inputStyle.border',
+          },
+          {
+            key: 'textarea.prompt',
+            selector: '.pxm-copy-fallback',
+            bgKey: 'copyFallback.background',
+            borderKey: 'copyFallback.border',
+            state: 'detail',
+          },
+        ]
+
+        /** 官方表面 / 描边的解析值（按属性本身解析）。 */
+        const OFFICIAL = [
+          { key: 'bgBase', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-base)' },
+          { key: 'bgLayer2', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-layer-2)' },
+          { key: 'bgLayer3', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-layer-3)' },
+          { key: 'borderL1', prop: 'borderTopColor', value: 'var(--dsw-alias-border-l1)' },
+          { key: 'borderL4', prop: 'borderTopColor', value: 'var(--dsw-alias-border-l4)' },
+        ]
+
+        const targets = CONTROLS.filter((control) => control.state !== 'detail')
+
+        /** 量一次：这些控件的计算背景/描边 + 官方各 token 的解析值。 */
+        const readOnce = async () =>
+          page.evaluate(
+            ({ controlList, officialList }) => {
+              const root = document.querySelector('.pxm-settings')
+              const read = (selector) => {
+                const nodes = document.querySelectorAll(selector)
+                const element = nodes[nodes.length - 1]
+                if (element === undefined) return null
+                const style = window.getComputedStyle(element)
+                return { background: style.backgroundColor, border: style.borderTopColor }
+              }
+              const measured = {}
+              controlList.forEach((control) => {
+                measured[control.key] = read(control.selector)
+              })
+              return { measured, official: window.__pxmLane.resolveCss(officialList) }
+            },
+            { controlList: CONTROLS, officialList: OFFICIAL },
+          )
+
+        const rgbParts = (value) => {
+          const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(String(value))
+          if (m === null) return null
+          if (m[4] !== undefined && Number(m[4]) !== 1) return null
+          return [Number(m[1]), Number(m[2]), Number(m[3])]
+        }
+        const nearest = (value, candidates) => {
+          const a = rgbParts(value)
+          if (a === null) return { key: null, distance: Number.POSITIVE_INFINITY }
+          let best = { key: null, distance: Number.POSITIVE_INFINITY }
+          for (const key of Object.keys(candidates)) {
+            const b = rgbParts(candidates[key])
+            if (b === null) continue
+            const distance = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])
+            if (distance < best.distance) best = { key, distance }
+          }
+          return best
+        }
+
+        const controlsOf = (list) => list.filter((control) => control.state !== 'detail')
+
+        /**
+         * @param reading  上面 `readOnce` 的结果。
+         * @param label    '浅色' / '深色'，进失败信息。
+         * @param list     这一轮要判的控件（详情态那一条只在深色那一轮之后另量）。
+         * @param distinct 官方这几层表面在**这一套主题**下是否两两不同色（浅色为 false）。
+         */
+        const check = (reading, label, list, distinct) => {
+          const backgroundSurfaces = {
+            'bg-base': reading.official.bgBase,
+            'bg-layer-2': reading.official.bgLayer2,
+            'bg-layer-3': reading.official.bgLayer3,
+          }
+
+          // 前提：没有"四层互不相同"这条前提，"挂错一层"在数值上就抓不出来。
+          if (distinct) {
+            assert.equal(
+              new Set(Object.values(backgroundSurfaces)).size,
+              3,
+              label +
+                '：官方 bg-base / bg-layer-2 / bg-layer-3 必须两两不同色（否则判据无效）：' +
+                JSON.stringify(reading.official),
+            )
+            assert.notEqual(
+              reading.official.borderL4,
+              reading.official.borderL1,
+              label + '：官方 border-l4 与 border-l1 必须不同色（否则"描边挂错"抓不出来）',
+            )
+          } else {
+            // 浅色下的**已核前提**（与 8.8 同一条纪律）：官方这几层表面本来就是同一个色，
+            // 所以浅色那一次**不判**"等于哪一层"——不是放宽判据，而是那一层信息在这种
+            // 主题下根本不存在。这里把这个前提也钉住，免得将来有人以为浅色漏测了。
+            assert.equal(
+              new Set(Object.values(backgroundSurfaces)).size,
+              1,
+              label +
+                '：浅色下官方这几个表面本就同色（本 lane 的已核前提）：' +
+                JSON.stringify(reading.official),
+            )
+          }
+
+          for (const control of list) {
+            const got = reading.measured[control.key]
+            assert.ok(got !== null, label + '：必须能取到 ' + control.key + '（' + control.selector + '）')
+
+            const hit = nearest(got.background, backgroundSurfaces)
+            if (distinct) {
+              // 语义：现在显示的那一层必须就是官方表单控件那一层。
+              assert.equal(
+                hit.key,
+                'bg-layer-3',
+                label +
+                  '：' +
+                  control.key +
+                  ' 的底色是 ' +
+                  String(hit.key) +
+                  '（' +
+                  got.background +
+                  '，源码挂在 `' +
+                  control.bgKey +
+                  '`）。官方设置页的表单控件（`settings-form/fields.module.css` 的 `.input`，' +
+                  '`SettingsValueField` 与 `SettingsSecretField` 同一个类）用的是 `--dsw-alias-bg-layer-3`：' +
+                  JSON.stringify({ measured: got, official: reading.official }),
+              )
+              // 反证：两处被修掉的缺陷形态（"输入框塌进应用底色" / "与卡片同层、看不出是控件"）。
+              for (const [name, wrongKey] of [
+                ['bg-base', 'bgBase'],
+                ['bg-layer-2', 'bgLayer2'],
+              ]) {
+                assert.notEqual(
+                  nearest(got.background, { wrong: reading.official[wrongKey] }).distance,
+                  0,
+                  label +
+                    '：' +
+                    control.key +
+                    ' 的底色等于 ' +
+                    name +
+                    ' —— 那是误差形态（官方同类控件是 bg-layer-3）：' +
+                    JSON.stringify(got),
+                )
+              }
+            }
+
+            // 描边：浅深都可判（border-l4 与 border-l1 两套主题都不同色）。
+            assert.equal(
+              got.border,
+              reading.official.borderL4,
+              label +
+                '：' +
+                control.key +
+                ' 的描边应当是官方控件描边 `--dsw-alias-border-l4`（源码挂在 `' +
+                control.borderKey +
+                '`）：实测 ' +
+                got.border +
+                ' / 官方解析值 ' +
+                reading.official.borderL4,
+            )
+            assert.notEqual(
+              got.border,
+              reading.official.borderL1,
+              label + '：' + control.key + ' 的描边不该退化成分隔线 border-l1：' + JSON.stringify(got),
+            )
+          }
+        }
+
+        // ── 浅色：官方四层同色，"等于哪一层"判不了，只核前提 + 描边 ──────────────
+        check(await readOnce(), '浅色', targets, false)
+
+        // ── 深色：这一轮才判"挂的是哪一层"（四层互不相同） ──────────────────────
+        await probe(page, 'setTokens', DARK)
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))))
+        check(await readOnce(), '深色', targets, true)
+
+        // ── 详情页的提示词 `<textarea>`（只在"复制失败"的降级分支里渲染） ────────
+        //
+        // 这里**不是**造 DOM：把 `navigator.clipboard.writeText` 换成一个必然 reject 的
+        // Promise，正是 `CopyPromptButton` 那条真实降级路径（复制失败 → 展开可选中文本）。
+        // 不这么做就量不到 `<textarea>`，那条断言就是空转。
+        const detailPage = await context.newPage()
+        try {
+          await detailPage.addInitScript(() => {
+            Object.defineProperty(navigator, 'clipboard', {
+              configurable: true,
+              value: {
+                writeText: () => Promise.reject(new Error('lane：剪贴板被显式拒绝（用例注入）')),
+              },
+            })
+          })
+          await detailPage.goto(server.origin + '/shell.html', { waitUntil: 'load' })
+          await detailPage.evaluate((payload) => window.__pxmLane.install(payload), fixture())
+          await detailPage.evaluate((slot) => window.__pxmLane.mount(slot), 'main')
+          await detailPage.waitForSelector('.pxm-tile')
+          await detailPage.click('.pxm-tile')
+          await detailPage.waitForSelector('.pxm-copy-btn')
+          await detailPage.click('.pxm-copy-btn')
+          await detailPage.waitForSelector('.pxm-copy-fallback', { timeout: 15000 })
+
+          const readTextarea = () =>
+            detailPage.evaluate(
+              ({ officialList }) => {
+                const nodes = document.querySelectorAll('.pxm-copy-fallback')
+                const element = nodes[nodes.length - 1]
+                if (element === undefined) return null
+                const style = window.getComputedStyle(element)
+                return {
+                  measured: {
+                    'textarea.prompt': {
+                      background: style.backgroundColor,
+                      border: style.borderTopColor,
+                    },
+                  },
+                  official: window.__pxmLane.resolveCss(officialList),
+                }
+              },
+              { officialList: OFFICIAL },
+            )
+
+          const textareaControls = CONTROLS.filter(
+            (control) => control.key === 'textarea.prompt',
+          )
+          assert.equal(textareaControls.length, 1, 'CONTROLS 里应当有且只有一条 textarea.prompt')
+
+          check(await readTextarea(), '浅色', textareaControls, false)
+          await probe(detailPage, 'setTokens', DARK)
+          await detailPage.evaluate(
+            () => new Promise((resolve) => requestAnimationFrame(() => resolve(null))),
+          )
+          check(await readTextarea(), '深色', textareaControls, true)
+        } finally {
+          await detailPage.close()
+        }
 
         assert.deepEqual(problems, [])
       } finally {
