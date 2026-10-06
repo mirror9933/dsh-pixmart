@@ -275,16 +275,44 @@ function dialectFields(dialect: Dialect): DialectFields {
 }
 
 /**
- * Agnes 的 `size` 是**档位**（`1K`/`2K`/`3K`/`4K`），比例另用 `ratio`。
+ * Agnes 的 32 个**官方精确尺寸**（8 比例 × 4 档位），用于把像素输入反解成档位。
  *
- * 我们只发 `1K`：官方价目表里 1K–4K 同价，而档位越高单张耗时越长；把档位写死
- * 而把**比例**交给用户/Agent 选，语义更清楚（`checkSize` 归一化出来的就是比例）。
- * 像素输入（如 `1024x1024`）回落到 `1K` —— 官方文档说"确切的像素值也会被接受"，
- * 但档位化之后语义才确定。
+ * 出处：官方文档「Output Dimension Reference」（agnes-image-2.5-flash 页；
+ * 2.1-flash 同表，2.5 明言"request 与 size 与 2.1 完全一致"）。
+ * 有了它，用户/Agent 说 `2048x2048` 才能真的拿到 2K（此前一律回落 1K）。
  */
+const AGNES_SIZE_TABLE: readonly (readonly [string, string])[] = [
+  ['1024x1024', '1K'], ['2048x2048', '2K'], ['3072x3072', '3K'], ['4096x4096', '4K'],
+  ['864x1152', '1K'], ['1728x2304', '2K'], ['2592x3456', '3K'], ['3456x4608', '4K'],
+  ['1152x864', '1K'], ['2304x1728', '2K'], ['3456x2592', '3K'], ['4608x3456', '4K'],
+  ['1312x736', '1K'], ['2624x1472', '2K'], ['3936x2208', '3K'], ['5248x2944', '4K'],
+  ['736x1312', '1K'], ['1472x2624', '2K'], ['2208x3936', '3K'], ['2944x5248', '4K'],
+  ['832x1248', '1K'], ['1664x2496', '2K'], ['2496x3744', '3K'], ['3328x4992', '4K'],
+  ['1248x832', '1K'], ['2496x1664', '2K'], ['3744x2496', '3K'], ['4992x3328', '4K'],
+  ['1568x672', '1K'], ['3136x1344', '2K'], ['4704x2016', '3K'], ['6272x2688', '4K'],
+]
+
 function agnesSizeTier(size: string): string {
   const tier = /^\s*([1-4])K\s*$/i.exec(size)
-  return tier === null ? '1K' : `${tier[1]}K`
+  if (tier !== null) return `${tier[1]}K`
+
+  const trimmed = size.trim()
+  for (const entry of AGNES_SIZE_TABLE) {
+    if (entry[0] === trimmed) return entry[1]
+  }
+
+  // 表外像素：按**最长边**就近归档位。官方原文："If you request an unsupported exact
+  // size … the service may map it to the nearest supported tier and aspect ratio."
+  const pixel = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(trimmed)
+  if (pixel !== null) {
+    const longest = Math.max(Number(pixel[1]), Number(pixel[2]))
+    if (longest <= 1024) return '1K'
+    if (longest <= 2048) return '2K'
+    if (longest <= 3072) return '3K'
+    return '4K'
+  }
+
+  return '1K'
 }
 
 /** Agnes 支持的 8 种比例；不在表内时退回 `1:1`（官方文档：默认 `1:1`）。 */
