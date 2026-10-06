@@ -5,7 +5,13 @@
  * 损坏的配置不阻断启动：隔离成 `.corrupt-<ts>` 后以默认值继续，用户仍能进设置页改回来。
  */
 import { join } from 'node:path'
-import { defaultConfig, parseConfig, type PixmartConfig } from '../config.js'
+import {
+  applyFactoryPresets,
+  defaultConfig,
+  factoryPresetWarning,
+  parseConfig,
+  type PixmartConfig,
+} from '../config.js'
 import { quarantineFile, readJsonFile, writeFileAtomic } from './atomic.js'
 import { createKeyedMutex, type KeyedMutex } from './mutex.js'
 import { assertContained } from './paths.js'
@@ -47,14 +53,38 @@ export class ConfigStore {
     this.current = defaultConfig()
   }
 
-  /** 读取落盘配置；缺失或损坏都返回可用配置而不是抛错。 */
+  /**
+   * 读取落盘配置；缺失或损坏都返回可用配置而不是抛错。
+   *
+   * **读盘的最后一步是出厂预设补齐**（`applyFactoryPresets`）：`parseConfig` 以文件为准，
+   * 于是代码里后加的厂商（实测是 agnes）对已有安装**永远不可见**——文件建于旧版本，
+   * 里面根本没有那个 id。所以这里补入文件里没有的出厂预设，并把 id 记进 `warnings`
+   * （既有告警通道 → `configWarnings()` → 设置页与 `pixmart_providers`），**不静默**。
+   *
+   * 三条边界（都有测试钉着，见 test/factory-presets.test.mjs）：
+   *   - 已存在的厂商**一个字段都不覆盖**（用户填的 baseUrl / apiKey / models 逐字节不变）；
+   *   - `defaults` / `limits` 完全以文件为准（尤其 `defaults.provider`，不会被工厂值改掉）；
+   *   - **只改内存、不碰磁盘**：补齐不做任何写盘，文件只在用户显式保存时才落盘。
+   *     代价是"在文件里删掉某厂商，下次 load 会被补回来"——彻底移除需要"禁用列表"或
+   *     "添加厂商"UI，本次不做（docs/contract-notes.md §26.4 已知限制）。
+   *
+   * 幂等：每次 load 都从文件重新解析再补，所以连续两次 load 的厂商集合完全一致。
+   * 缺失/损坏分支**不需要**补齐：那两条路径本来就返回 `defaultConfig()`。
+   */
   async load(): Promise<ConfigLoadResult> {
     const read = readJsonFile<unknown>(this.configPath)
 
     if (read.ok) {
       const parsed = parseConfig(read.value)
-      this.current = parsed.config
-      return { config: parsed.config, warnings: parsed.warnings }
+      const merged = applyFactoryPresets(parsed.config)
+      this.current = merged.config
+      return {
+        config: merged.config,
+        warnings:
+          merged.added.length === 0
+            ? parsed.warnings
+            : [...parsed.warnings, factoryPresetWarning(merged.added)],
+      }
     }
 
     if (read.reason === 'missing') {

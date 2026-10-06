@@ -158,7 +158,12 @@ export function defaultAgnesProvider(): ProviderConfig {
   }
 }
 
-/** 出厂配置：一个未填密钥的 Ofox，方便用户直接进设置页填。 */
+/**
+ * 出厂配置：一个未填密钥的 Ofox，方便用户直接进设置页填。
+ *
+ * `providers` 是**出厂预设清单**：这里每加一个厂商，`applyFactoryPresets` 就会在
+ * 下一次 `ConfigStore.load()` 时把它补进已有配置（见该函数）。
+ */
 export function defaultConfig(): PixmartConfig {
   const provider = defaultOfoxProvider()
   return {
@@ -175,6 +180,62 @@ export function defaultConfig(): PixmartConfig {
     attachmentInConversation: true,
     exportDir: '',
   }
+}
+
+// ------------------------------------------------------------ 出厂预设补齐
+
+export interface FactoryPresetMerge {
+  readonly config: PixmartConfig
+  /** 本次被补入的厂商 id（按出厂顺序）；空数组 = 一个字段都没动。 */
+  readonly added: readonly string[]
+}
+
+/**
+ * 把出厂预设里**文件里没有的**厂商补进配置（设计缺口修复，2026-10-12）。
+ *
+ * 为什么需要它：`parseConfig` 以文件为准，于是**新增的厂商预设对已有安装永远不可见**——
+ * 实测就是这样，用户磁盘上的 `config.json` 建于只有 ofox 的年代，代码里后加的 agnes
+ * 因此一直没出现在设置页。这不是 agnes 的特例，以后每加一个厂商都会重现。
+ *
+ * 规则（顺序即优先级）：
+ *   1. **文件为准**：已存在的 id 一个字段都不碰——用户填的 baseUrl / apiKey / models
+ *      必须逐字节保持原样，哪怕它和出厂预设已经不一样（那正是用户自己的选择）；
+ *   2. **只追加缺的**：`factory.providers` 里文件没有的 id 追加到**末尾**，用出厂预设、
+ *      `apiKey` 为空（"尚未配置"状态）。追加在末尾，文件里的厂商顺序与 `providers[0]` 不变；
+ *   3. **defaults / limits / 其它字段完全不动**：它们来自文件，包括 `defaults.provider`。
+ *      补齐厂商**不会**顺带改默认厂商——用户原来用 ofox，就还是 ofox；
+ *   4. **不改写磁盘**：本函数是纯函数，`ConfigStore.load()` 只在内存里用它；文件只会在
+ *      用户后续显式保存（设置页）时才落盘。
+ *
+ * 取舍（**明说，不粉饰**）：因为出厂预设每次 load 都补齐，用户在文件里删掉某个厂商后
+ * 它下次 load 会被**补回来**。要"彻底移除"需要"禁用列表"或"添加厂商"UI——**本次不做**，
+ * 记在 `docs/contract-notes.md` §26.4 的已知限制里。好处是：补齐只发生在内存，
+ * 用户没保存之前磁盘上的文件一个字节都没变，"删掉"这个动作仍然保留着最后可能。
+ *
+ * @param config - 已解析的落盘配置（用户为准）。
+ * @param factory - 出厂预设，默认 `defaultConfig()`。
+ */
+export function applyFactoryPresets(
+  config: PixmartConfig,
+  factory: PixmartConfig = defaultConfig(),
+): FactoryPresetMerge {
+  const present = new Set(config.providers.map((provider) => provider.id))
+  const missing = factory.providers.filter((provider) => !present.has(provider.id))
+  if (missing.length === 0) return { config, added: [] }
+
+  return {
+    // 只动 `providers`：`defaults` / `limits` / `promptOverrides` / `exportDir` 原样引用。
+    config: { ...config, providers: [...config.providers, ...missing] },
+    added: missing.map((provider) => provider.id),
+  }
+}
+
+/**
+ * 补齐告警文案。`load()` 把它塞进既有的 `warnings` 通道（`configWarnings()` →
+ * `GET api/providers` 与 `pixmart_providers` 工具都会显示），**不静默**补厂商。
+ */
+export function factoryPresetWarning(added: readonly string[]): string {
+  return `已从出厂预设补入厂商：${added.join('、')}（尚未配置密钥）`
 }
 
 // ---------------------------------------------------------------- 容错解析

@@ -116,6 +116,7 @@ dsh --profile px --dump-config
 
 厂商列表由配置里的 `providers` 驱动，**出厂就带两家**（新增一家只需往 `providers` 里加一条）：
 
+
 | 厂商 | `dialect` | 端点 | 密钥 | 状态 |
 |---|---|---|---|---|
 | **Ofox**（默认） | `ofox` | `https://api.ofox.io/v1` | `OFOX_API_KEY` | 已验证（真实出图 / 契约笔记 §11、§18） |

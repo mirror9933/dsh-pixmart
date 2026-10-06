@@ -2227,3 +2227,85 @@ sha256 前后一致"）：
 9. **`return_base64: true`**（官方文本生图专用）：我们没实现该分支，只走 `extra_body.response_format`。
 10. **多图合成**：我们只按文档发了 `extra_body.image` 数组，未验证服务端是否按序理解多图角色。
 
+## 26. 设计缺口修复：出厂厂商预设对**已有配置**补齐（2026-10-12）
+
+### 26.1 缺口是什么（实测，不是推测）
+
+- 用户磁盘 `C:\Users\30461\.dsh\pixmart\config.json` 里**只有 ofox 一个厂商**；
+- 代码里 `defaultConfig().providers` 是 `ofox, agnes`（agnes 已实现，见 §25）；
+- `ConfigStore.load()` 原本是"文件解析成功即采用**文件内容**"，只有文件缺失/解析失败才回落
+  `defaultConfig()`。
+
+→ 后果：**新增的厂商预设对已有安装永远不可见**（agnes 就是这样，用户在设置页里根本看不到它）。
+这不是 agnes 的特例——**以后每加一个厂商都会重现**。根因是"以文件为准"这条正确规则缺少
+一个"补齐出厂预设"的收尾步骤。
+
+### 26.2 修法：`load()` 的最后一步做预设补齐（只补缺的、只改内存）
+
+`src/config.ts` 新增两个纯函数，`ConfigStore.load()` 在 `parseConfig` **之后**调用：
+
+| 函数 | 职责 |
+|---|---|
+| `applyFactoryPresets(config, factory = defaultConfig())` | 把 `factory.providers` 里**文件没有的 id** 追加到 `providers` 末尾；返回 `{ config, added }`。`added` 为空时**原样返回入参对象**（一个字段都没动） |
+| `factoryPresetWarning(added)` | 生成告警文案（见 §26.5） |
+
+四条规则（顺序即优先级）：
+
+1. **文件为准**：已存在的 id 一个字段都不碰。用户填的 `baseUrl` / `apiKey` / `models` /
+   `extraHeaders` / `timeoutMs` 逐字节保持原样，**哪怕它和出厂预设已经不同**——那正是用户的选择；
+2. **只追加缺的**：用出厂预设对象补，`apiKey` 为空（"尚未配置"状态）；追加在**末尾**，
+   文件里的厂商顺序与 `providers[0]` 不变；
+3. **`defaults` / `limits` / 其它字段完全不动**（原样引用文件解析结果），尤其
+   `defaults.provider` 仍是文件里的值——补齐厂商**不会**顺带改默认厂商；
+4. **不改写磁盘**：补齐是纯函数 + 内存赋值，`load()` 不做任何写盘。文件只在用户后续通过
+   设置页保存时才落盘。
+
+补齐走**既有告警通道**（`ConfigStore.load().warnings` → `runtime.configWarnings()` →
+`GET api/providers` 的 `warnings` 字段与 `pixmart_providers` 工具），**不静默**。
+缺失文件与损坏文件两条分支**不需要**补齐：它们本来就返回 `defaultConfig()`。
+
+**幂等**：每次 `load()` 都从文件重新解析再补，所以连续两次 load 的厂商集合完全一致
+（`added` 第二次仍是同一批，因为没有写盘，文件里始终没有那个 id）。
+
+### 26.3 新增断言（`test/factory-presets.test.mjs`，7 条，**零网络**）
+
+走**真实** `ConfigStore` + 真实临时目录（针对 `lib/` 产物），夹具就是实测的用户文件形状
+（只有 ofox、自定 `models`、被用户清空的 `apiKeyEnv`、改过的 `limits`、哨兵密钥）：
+
+1. 只有 ofox 的文件 → load 后出现 agnes（`apiKey` 为空、`dialect`/`baseUrl`/`models` 齐全），
+   且 **ofox 的 JSON 序列化与种下的那份逐字节相同**（含哨兵密钥、空 `apiKeyEnv`、
+   自定 models、`extraHeaders`、`timeoutMs`）；补齐项在末尾、`providers[0]` 仍是 ofox；
+2. `defaults` 与 `limits` **深比较相等**（`defaults.provider` 仍是 `ofox`，
+   `maxConcurrency: 3` / `retentionDays: 30` 没被工厂值顶掉）；
+3. **幂等**：load 两次 → id 序列 `deepEqual`、agnes 恰好 1 个、总数 2；
+4. **告警可见**：文案精确等于 §26.5 那句；
+5. **盘上未改写**：load 前后 `readFileSync` 字符串相等，且盘上的 `providers` 仍只有 ofox；
+6. 反面：文件里已有 agnes（带自己的密钥）→ 不重复补、密钥不被清、无补齐告警；
+7. 反面：文件缺失 → 无告警（那条路径本来就返回出厂配置）。
+
+### 26.4 已知限制（**明说，不粉饰**）
+
+- **用户在文件里删掉某厂商，下次 `load()` 会被补回来**。因为"补齐"的判据是
+  "出厂预设里有、文件里没有"，而我们**刻意不改写磁盘**，所以这个判断每次启动都会重新成立。
+  要真正彻底移除，需要**"禁用列表"**（用户显式声明"我不要这个厂商"）或**"添加厂商"UI**
+  （把出厂预设降级成"可添加项"）——**本次不做**，记在这里当已知限制。
+- 选择这个取舍的理由：不写盘就不会擅自改用户文件，用户手改的 `config.json` 行为可预期
+  （与 §16.6 的立场一致）；代价就是上面那条"删了会回来"。
+- 另一个可见后果：补齐只改内存，所以**只要用户在设置页保存一次任何字段**，被补入的厂商
+  就会跟其它字段一起自然落盘。这正是我们要的（用户看得见、也批准了），但不是"静默落盘"。
+- 顺带一行：用户实测文件里 `apiKeyEnv` 已被清空（`""`）。补齐**不碰**已存在厂商，所以
+  `OFOX_API_KEY` 环境变量对该用户仍然不生效——这是用户自己的设置，我们不去"修"它。
+
+### 26.5 告警文案原文
+
+```
+已从出厂预设补入厂商：agnes（尚未配置密钥）
+```
+
+多个厂商同时补入时用顿号连接：`已从出厂预设补入厂商：agnes、xxx（尚未配置密钥）`。
+
+### 26.6 结果
+
+`pnpm verify` 全绿：typecheck + build 通过，宿主 `pnpm test` **349**（原 342 + 新增 7），
+浏览器 `pnpm test:browser` **56**（**未调整任何既有断言**）。
+
