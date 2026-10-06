@@ -1315,3 +1315,126 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 用例标题里的数字：14 → 16）；`git diff` 里没有任何被删掉的 `it(` / `describe(`。
 `client/client.js` 的 sha256（`916c6dff5d88…`）在变异脚本前后一致（脚本只写临时副本），
 21 条变异（20 严格 + 1 信息性）全部被对应用例抓住。
+
+
+## 20. 组件尺寸对齐：把设置页与作品库的几何对齐到官方（2026-10-08）
+
+§19 解决的是**颜色**（`--dsw-*` token，官方改了自动跟随）。这一节解决**几何**：
+控件多高、内边距多少、字号多大、圆角多少。两者做法**不一样**，原因在下面 20.1。
+
+### 20.1 官方尺寸是怎么表达的：**一半是变量，一半是写死的 px**
+
+先在 `app.asar` 里把官方 CSS 逐条读出来（`tools/asar.mjs` 的 `read` / `grep`）：
+
+| 类别 | 官方有没有变量 | 证据 |
+|---|---|---|
+| **圆角** | **有** | `@deepseek-ai/dsh-client-ui-theme` 的 base CSS `:root{…}` 声明了 `--dsw-radius-xs:4px; --dsw-radius-sm:8px; --dsw-radius-md:12px; --dsw-radius-lg:16px; --dsw-radius-xl:20px; --dsw-radius-panel:28px`，以及 `--dsw-focus-ring-width:2px`。官方控件规则的 `border-radius` **一律**写 `var(--dsw-radius-*)`（`primitives/Button.module.css` / `Input.module.css` / `Menu.module.css` / `SegmentedControl.module.css` / `Modal.module.css` 皆是） |
+| **高度 / 内边距 / 字号 / 行高** | **没有** | 不存在 `--dsw-size-*` / `--dsw-space-*` / `--dsw-control-*`。`--dsw-font-*-{font-size,line-height}` 虽然存在（如 `--dsw-font-xs-13-font-size:13px`），但**官方控件规则自己并不消费它们**：`settings-form/fields.module.css` 的 `.input` 与 `Button.module.css` 的 `.sm` 写的都是裸 px |
+
+**所以做法分两半**（`client/client.js` 的 `S` 常量表，见该表表头注释里逐条的 `文件:行` 出处）：
+
+1. **圆角走官方变量**：`borderRadius: 'var(--dsw-radius-md)'` 这种写法与颜色 token 同理
+   ——官方改圆角，本插件**自动跟随**，不需要改代码。
+2. **高度 / 内边距 / 字号 / 行高照抄 px**：集中成具名常量表 `S`（与颜色表 `T` **分开**，
+   两族不混；`T` 只收颜色，有静态用例钉住）。**这是照抄、不是 token**：
+   官方改了这些数，本插件**不会**自动跟随，只有 `test/browser/sizes.test.mjs` 会变红来提醒。
+   这个风险是**已知且接受**的——DSH 没给尺寸 token，能选的只有"照抄 + 可回归"或"不对齐"。
+
+### 20.2 关键尺寸对照表（我们 → 官方 → 证据）
+
+| 控件 | 我们的取值（`S.*`） | 官方取值 | 证据（`app.asar` 内路径省略 `dsh/node_modules/@deepseek-ai/`） |
+|---|---|---|---|
+| **表单值控件**（设置页 input / password / 搜索框） | `height:34px` `padding:0 12px` `font-size:13px` `line-height:1.5` `border-radius:var(--dsw-radius-md)` `border:.5px solid var(--dsw-alias-border-l4)` | 同左 | `dsh-client-ui-primitives/lib/settings-form/fields.module.css:107-118`（`.input`；`:108` height / `:109` padding / `:110` radius / `:111` border / `:114` font-size / `:115` line-height） |
+| **下拉（`<select>`）** | 与上面**同一组**（`inputStyle` 共用） | 官方 client 侧**没有原生 `<select>`**；语义最近的是 `settings-models` 的 `._3nPmjq_input` 与 `primitives/Input.module.css` 的 `.wrap`，两者都是 `height:32px` | `dsh-client-ui-settings-models/lib/client.js:58`；`dsh-client-ui-primitives/lib/Input.module.css:5` |
+| **按钮（行内动作：刷新 / 回收站 / 全选 / 导出 / 删除 / 查看器翻页）** | `height:28px` `padding:0 10px` `font-size:12px` `line-height:18px` `border-radius:var(--dsw-radius-sm)` `box-sizing:border-box` | 同左（官方 `Button` 的 `.sm`；也是设置页行内动作按钮实际用的那一档） | `dsh-client-ui-primitives/lib/Button.module.css:27-33`（`:29` height / `:30` font-size / `:31` line-height / `:32` padding / `:33` radius）；官方设置页里的同档：`dsh-client-ui-settings-models/lib/client.js:58` 的 `._3nPmjq_rowActions ._3nPmjq_secondaryButton` / `._3nPmjq_dangerButton` |
+| **按钮（默认档，**未采用**）** | — | `height:36px` `font-size:14px` `line-height:22px` `padding:0 14px` | `dsh-client-ui-primitives/lib/Button.module.css:8-25`（`.button` + `.md`） |
+| **Tag / 胶囊小标签**（`.pxm-pill`） | `padding:1px 8px` `font-size:11px` `line-height:17px` `border-radius:999px` | 同左 | `dsh-client-ui-primitives/lib/Tag.module.css:5-13`（`:7` radius / `:9` padding / `:10` font-size / `:11` line-height） |
+| **Pill / 实时预览徽标**（`.pxm-badge`） | `height:24px` `padding:0 8px` `font-size:12px` `line-height:18px` `border-radius:999px` | 同左 | `dsh-client-ui-primitives/lib/Pill.module.css:1-13`（`:5` height / `:6` padding / `:8` radius / `:10` font-size / `:11` line-height） |
+| **卡片**（设置页卡片 / 回收站列表项 / 通知块 / 查看器信息卡） | `padding:12px 14px` `border-radius:var(--dsw-radius-lg)` `border:.5px solid …` | `._3nPmjq_rowCard` 是 `padding:12px 14px; border-radius:var(--dsw-radius-xl); border:.5px solid …`；同文件的内容卡片（`editor` / `addCard` / `setupCard`）是 `border-radius:var(--dsw-radius-lg); padding:14px 16px` | `dsh-client-ui-settings-models/lib/client.js:58` |
+| **节标题**（`skin.title`） | `font-size:16px` `line-height:24px` `font-weight:500` | 同左 | `dsh-client-ui-settings-models/lib/client.js:58` 的 `._3nPmjq_title` |
+| **次级标题**（卡片内的 `strong`：默认值 / 厂商 / 累计用量 …） | `font-size:13px` | 官方 `.label` 是 `font-size:13px; font-weight:500; line-height:1.5` | `dsh-client-ui-primitives/lib/settings-form/fields.module.css:20-26` |
+| **次文字**（`skin.muted`） | `font-size:12px` `line-height:18px` | 同左 | `dsh-client-ui-settings-models/lib/client.js:58` 的 `._3nPmjq_intro` / `_3nPmjq_advancedHint` / `_3nPmjq_modelCatalogMeta` |
+
+**圆角为什么取 `radius-lg(16px)` 而不是 `rowCard` 的 `radius-xl(20px)`**：这是**明确的选择**，
+不是默写——同一份官方 CSS 里"内容卡片"（`editor` / `addCard` / `setupCard`）用的就是 `lg`，
+本插件的卡片是内容卡片。卡片**描边**取官方那根 `0.5px` 发丝线（原来是 `1px`）。
+
+### 20.3 哪些控件**无官方对应物、故意没对齐**
+
+| 处 | 为什么不对齐 | 现状 |
+|---|---|---|
+| **作品库网格卡片**（`.pxm-tile`：`repeat(auto-fill, minmax(180px,1fr))` + 4:3 封面 + 名称/张数/时间三行） | 官方**没有任何同类网格**（设置页只有行卡片列表，没有"图墙"）。硬套一个行卡片的尺寸只会把它做坏 | **保持自身几何协调**：`padding:8px`、`border-radius:10px`、封面圆角 6px。**未对齐，且不打算对齐**——这是一条**已知缺口**，不是漏做 |
+| **缩略图网格**（详情页里的 `repeat(auto-fill,minmax(120px,1fr))`） | 同上（官方没有图片网格） | 未对齐 |
+| **实时预览卡的逐格缩略图**（`.pxm-chip` 56×56） | 官方没有"逐格点亮的生成缩略图"这种东西 | 未对齐（尺寸由卡片自身布局推导） |
+| **进度环 / 状态点 / 徽标里的 Spinner** | 官方 `StateDot` 是 8~20px 的圆点/弧，"36px 的 N/M 圆环"与"56px 缩略图上的小环"都没有对应物 | 未对齐 |
+
+### 20.4 落点（`client/client.js`）
+
+- 新增 `S`（`Object.freeze`）：每个值都带 `文件:行` 出处，**只放尺寸，不放颜色**。
+- 改尺寸的原子：`skin.title` / `skin.muted` / `skin.card`（padding + 圆角 + 0.5px 描边）、
+  `Pill`（Tag 几何）、`Btn`（Button`.sm` + `border-box`）、`inputStyle`
+  （34px / `0 12px` / 13px / `radius-md` / `0.5px`）、`PreviewBadge`（Pill 几何）。
+- 卡片内的次级标题一并收敛到 `S.subheadFontSize`（原来散着写 `'13px'`）。
+- `Pill` 补 `className: 'pxm-pill'`：**只为测试挂钩**（尺寸用例按语义角色定位它）。
+- 提示词 `<textarea>` 与 `inputStyle` 同步改成官方的 `0.5px` 描边。
+- `test/browser/lane.js` 新增四个纯事实探针：`settingsSlots` / `workbenchSlots` / `overlaySlots`
+  （按**语义角色**在 `client.js` 当前的类名上做映射，并给元素打 `data-pxm-role`）、
+  `boxMetrics`（计算样式 + 真实几何 + **内联声明值**）、`resolveSize`（把 `var(--dsw-radius-*)`
+  交给浏览器现场解析成 px）。`route()` 的 `/pixmart/api/trash` 开始认夹具里的 `trash`
+  （在此之前它硬编码返回空回收站，回收站列表项**根本没法测**——这是既有 lane 的一处能力缺口）。
+
+### 20.5 可回归：新增 `test/browser/sizes.test.mjs`（8 条用例）
+
+之前**没有任何用例**管"按钮有多高"——把 28px 写成 40px，页面照样排得下、颜色也照样对。
+新 lane 文件按**语义角色**（而不是类名）在四个面板/模态层上量 `getComputedStyle`：
+
+| 用例 | 覆盖 |
+|---|---|
+| 0. lane 自证 | 服务的是仓库原产物 + 尺寸探针可用 |
+| 1.1 | 设置页 `input[type=text]` / `password` / `select`：height / padding / fontSize / lineHeight / **radius == `var(--dsw-radius-md)` 的当页解析值** / 声明描边 0.5px |
+| 1.2 | 设置页按钮 == 官方 `Button.sm`（含真实几何高度 28px）+ Tag == 官方 `.tag` |
+| 1.3 | 节标题 16/24/500 + 次文字 12/18 |
+| 2.1 | 作品库：工具条按钮 == `Button.sm`；搜索框 / 排序下拉 == 官方表单控件 |
+| 2.2 | 回收站列表项卡片 == 官方设置卡片（`12px 14px` / `radius-lg` / 0.5px） |
+| 3.1 | 大图查看器：「关闭」按钮 == `Button.sm`；信息卡 == 官方设置卡片 |
+| 4.1 | 实时预览徽标 == 官方 `Pill` |
+
+**两处如实记录的平台限制**（都在用例里有注释，不是"绕着走"）：
+
+- **0.5px 描边只能断言内联声明值**：Chromium DPR=1 下 `border:.5px` 的**计算值就是 `1px`**
+  （亚像素被量化），计算样式里 0.5px 与 1px **完全同值**。探针因此额外交回 `declared`
+  （`element.style` 的声明值），断言落在那里；证据强度**弱于**其它尺寸断言。
+- **`<select>` 的 `lineHeight` 不参与断言**：Chromium 不把 `<select>` 的内联 `line-height`
+  落到计算样式上（实测同一个 `inputStyle` 下 `input` 是 `19.5px`、`select` 是 `normal`）；
+  官方 `.input` 规则本身也是写给 `<input>` 的。`select` 只对齐 height / padding / fontSize /
+  radius / 描边。
+
+### 20.6 反向变异（`tools/lane-mutations.mjs`，5 条新变异 + lane 文件 +1）
+
+`TEST_FILES` 增加 `test/browser/sizes.test.mjs`（否则尺寸变异无处落地）。新增：
+
+| 变异 | 改坏的实现 | 实际抓住它的用例（真实断言原文） |
+|---|---|---|
+| `M22-input-height-old` | `S.fieldHeight` 34px → 28px（改造前） | `1.1`：**「textInput 的 height：实测 28px，官方 34px」**；`2.1`：**「searchInput 的 height：实测 28px，官方 34px」** |
+| `M23-button-padding-old` | `S.buttonPad` `0 10px` → `6px 10px` | `1.2`：「设置页按钮的尺寸与官方 Button.sm 不一致」；`2.1`：「作品库工具条按钮与官方 Button.sm 不一致」 |
+| `M24-title-size-old` | `S.titleFontSize` 16px → 15px（改造前） | `1.3`：「设置页标题的字号/行高/字重与官方 ._3nPmjq_title 不一致」 |
+| `M25-tag-padding-old` | `S.tagPad` `1px 8px` → `1px 6px`（改造前） | `1.2`：**「Tag 的 paddingRight：实测 6px，官方 8px」「Tag 的 paddingLeft：实测 6px，官方 8px」** |
+| `M26-radius-hardcoded` | `skin.card` 的 `borderRadius` 从 `S.radiusLg`（走变量）退回硬编码 `10px`（改造前） | `2.2`：「回收站列表项与官方设置卡片尺寸不一致」；`3.1`：「查看器信息卡与官方设置卡片尺寸不一致」 |
+
+五条全部 ✔（`严格变异 5 条全部被对应用例抓住`）；`client/client.js` 的 sha256 在脚本前后一致
+（脚本只写 `os.tmpdir()` 里的副本）。
+
+### 20.7 静态 token 清单的同步改动（**不是**削弱断言）
+
+`client/client.js` 现在会写 `var(--dsw-radius-*)`，于是 `test/client-tokens.test.mjs` 的
+「代码里出现的 `--dsw-*` 种类 == 清单」由 16 → **19 项**（+`--dsw-radius-{sm,md,lg,xl}`）。
+这不是放宽：清单仍然与代码里出现的 token **一一对应**（多一枚少一枚都红），
+只是把"官方尺寸里唯一做成变量的那一族"也纳进契约。同时**新增一条用例**钉住分界：
+`T`（颜色表）里**不得**出现非 `--dsw-alias-*` 的 token、四个圆角 token 必须以 `var(...)`
+被真正消费。静态用例因此 **9 → 10 条**（`pnpm test` 322 → 323）。
+
+### 20.8 结果
+
+`pnpm verify`（typecheck + build + `pnpm test` + `pnpm test:browser`）：
+**323 + 30**，全绿。基准 **322 + 22**，本次 **+1 静态 / +8 浏览器**，
+`git diff` 里没有任何被删掉的 `it(` / `describe(`。

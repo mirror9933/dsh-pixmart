@@ -191,6 +191,107 @@ window.__ModuleLoader__.load({
       warn: 'var(--dsw-alias-state-warn-primary)',
     }
     /**
+     * 官方**尺寸**：控件高度 / 内边距 / 字号 / 圆角。
+     *
+     * 与颜色不同，DSH 官方**没有**把尺寸做成 token。2026-10-08 核对了 app.asar 里的官方 CSS：
+     *   - **有**尺寸变量：`--dsw-radius-{xs,sm,md,lg,xl,panel}`
+     *     （`@deepseek-ai/dsh-client-ui-theme` 的 base CSS `:root{…}`：
+     *     `--dsw-radius-xs:4px;--dsw-radius-sm:8px;--dsw-radius-md:12px;--dsw-radius-lg:16px;`
+     *     `--dsw-radius-xl:20px;--dsw-radius-panel:28px`），
+     *     以及 `--dsw-focus-ring-width:2px`。
+     *     官方 Button / Input / Menu / Modal 的圆角全部走 `var(--dsw-radius-*)`。
+     *   - **没有**尺寸变量：不存在 `--dsw-size-*` / `--dsw-space-*` / `--dsw-control-*`；
+     *     `--dsw-font-*-{font-size,line-height}` 虽然存在（`--dsw-font-xs-13-font-size:13px` 等），
+     *     但官方**控件规则本身并不消费它们**（`settings-form/fields.module.css` 的
+     *     `.input` 与 `Button.module.css` 都写的是裸 `font-size:13px/14px`）。
+     *
+     * 所以这里分成两半，做法不同：
+     *   1. **圆角走官方变量**（`var(--dsw-radius-*)`）——与颜色 token 同理，
+     *      官方改了圆角，本插件自动跟随；
+     *   2. **高度 / 内边距 / 字号/行高照抄官方的 px**，集中在这一张表里，每条注明
+     *      `文件:行` 来源。这是**照抄、不是 token**：官方改了这些数，本插件**不会**自动跟随，
+     *      只能靠浏览器 lane 的 `test/browser/sizes.test.mjs`（按官方同语义值断言）变红来提醒。
+     *
+     * 取值语义（都在设置页那一侧，因为设置页是本插件唯一有官方对照物的面板）：
+     *   - `field`：**表单值控件**。官方
+     *     `@deepseek-ai/dsh-client-ui-primitives/lib/settings-form/fields.module.css:107-118`
+     *     的 `.input` → `height:34px`（:108）`padding:0 12px`（:109）
+     *     `border-radius:var(--dsw-radius-md)`（:110）
+     *     `border:.5px solid var(--dsw-alias-border-l4)`（:111）`font-size:13px`（:114）
+     *     `line-height:1.5`（:115）。
+     *     该文件是 `SettingsValueField`（text）与 `SettingsSecretField`（password）**唯一**的
+     *     样式来源，两者同一个类，所以文本框 / 密码框 / 搜索框都挂它。
+     *   - `selectField`：官方 client 侧没有 `<select>`（设置页的模型/厂商选择在
+     *     `dsh-client-ui-settings-models/lib/client.js:58` 的 `._3nPmjq_input` 上是
+     *     `height:32px; padding:0 10px; font-size:14px; line-height:22px`），
+     *     与 `primitives/lib/Input.module.css:5` 的 `.wrap`（`height:32px; padding:0 8px`）同档。
+     *     本插件的 `<select>` 语义上就是"同一枚表单控件"，因此与 `field` **同一组尺寸**
+     *     （官方那两个 32px 的差值来自各自场景，不另立一套）。
+     *   - `button`：官方 `primitives/lib/Button.module.css:27-33` 的 `.sm`
+     *     → `height:28px`（:29）`font-size:12px`（:30）`line-height:18px`（:31）
+     *     `padding:0 10px`（:32）`border-radius:var(--dsw-radius-sm)`（:33），
+     *     也是设置页里**行内动作按钮**的实际尺寸（`settings-models/lib/client.js:58` 的
+     *     `._3nPmjq_rowActions ._3nPmjq_secondaryButton` / `._3nPmjq_dangerButton`
+     *     就是 28px + `radius-sm` + `0 10px` + 12px/18px）。
+     *     本插件的按钮全是行内动作（刷新 / 回收站 / 全选 / 导出 / 删除 / 查看器翻页），
+     *     所以照 `.sm` 这一档，而不是 36px 的默认档（`.md`，同文件 :24）。
+     *   - `tag`：官方 `primitives/lib/Tag.module.css:5-13` 的 `.tag`
+     *     → `padding:1px 8px`（:9）`font-size:11px`（:10）`line-height:17px`（:11）
+     *     `border-radius:999px`（:7）（胶囊几何固定，只有配色随 tone 变）。
+     *   - `pill`：官方 `primitives/lib/Pill.module.css:1-13` 的 `.pill`
+     *     → `height:24px`（:5）`padding:0 8px`（:6）`border-radius:999px`（:8）
+     *     `font-size:12px`（:10）`line-height:18px`（:11）。
+     *   - `card`：官方设置卡片，`dsh-client-ui-settings-models/lib/client.js:58` 的
+     *     `._3nPmjq_rowCard` → `border:.5px solid var(--dsw-alias-settings-card-stroke);
+     *     background:var(--dsw-alias-settings-card-fill); border-radius:var(--dsw-radius-xl);
+     *     gap:12px; padding:12px 14px`（同文件 `._3nPmjq_editor` / `._3nPmjq_addCard` 是
+     *     `border-radius:var(--dsw-radius-lg); padding:14px 16px`；本插件取前者：卡片 + 12px 间距）。
+     *   - 文字层级：节标题 16px/24px/500 = `settings-models/lib/client.js:58` 的
+     *     `._3nPmjq_title`（`font-size:16px; font-weight:500; line-height:24px`）；
+     *     次文字 12px/18px = 同文件的 `._3nPmjq_intro` / `_3nPmjq_advancedHint` /
+     *     `_3nPmjq_modelCatalogMeta`；次级标题 13px/20px/500 =
+     *     `primitives/lib/settings-form/fields.module.css:20-26` 的 `.label`
+     *     （`font-size:13px`（:23）`font-weight:500`（:24）`line-height:1.5`（:25））。
+     *
+     * **颜色不进这张表**：颜色一律走上面的 `T`（`--dsw-*` 色 token）。
+     */
+    const S = Object.freeze({
+      // 官方圆角变量（会跟随官方主题）
+      radiusSm: 'var(--dsw-radius-sm)',
+      radiusMd: 'var(--dsw-radius-md)',
+      radiusLg: 'var(--dsw-radius-lg)',
+      radiusXl: 'var(--dsw-radius-xl)',
+      // 表单值控件（fields.module.css .input）
+      fieldHeight: '34px',
+      fieldPad: '0 12px',
+      fieldFontSize: '13px',
+      fieldLineHeight: '1.5',
+      // 行内动作按钮（Button.module.css .sm）
+      buttonHeight: '28px',
+      buttonPad: '0 10px',
+      buttonFontSize: '12px',
+      buttonLineHeight: '18px',
+      // Tag / Pill
+      tagPad: '1px 8px',
+      tagFontSize: '11px',
+      tagLineHeight: '17px',
+      pillPad: '0 8px',
+      pillHeight: '24px',
+      pillFontSize: '12px',
+      pillLineHeight: '18px',
+      // 卡片
+      cardPad: '12px 14px',
+      cardGap: '12px',
+      // 文字层级
+      titleFontSize: '16px',
+      titleLineHeight: '24px',
+      subheadFontSize: '13px',
+      subheadLineHeight: '20px',
+      mutedFontSize: '12px',
+      mutedLineHeight: '18px',
+    })
+
+    /**
      * token 的**半透明**变体：颜色仍然是 token 派生的
      * （`color-mix(in srgb, var(--dsw-…) X%, transparent)`），所以深浅色一起跟着变。
      *
@@ -708,15 +809,27 @@ window.__ModuleLoader__.load({
         flexDirection: 'column',
         gap: '14px',
       },
-      title: { margin: 0, fontSize: '15px', fontWeight: 600 },
+      title: {
+        margin: 0,
+        fontSize: S.titleFontSize,
+        lineHeight: S.titleLineHeight,
+        fontWeight: 500,
+      },
       /** 次要文字：用官方次文字 token，而不是"主文字降不透明度"这种本地近似。 */
-      muted: { margin: 0, fontSize: '13px', lineHeight: 1.7, color: T.labelSecondary },
-      /** 卡片：嵌在面板里的一层，所以用 `bg-layer-2`（嵌套层）+ 一级边框。 */
+      muted: { margin: 0, fontSize: S.mutedFontSize, lineHeight: S.mutedLineHeight, color: T.labelSecondary },
+      /**
+       * 卡片：嵌在面板里的一层，所以用 `bg-layer-2`（嵌套层）+ 一级边框。
+       *
+       * 尺寸照抄官方设置卡片 `._3nPmjq_rowCard`（`settings-models/lib/client.js:58`）：
+       * `padding:12px 14px`，圆角取官方的 16px 那一档（`--dsw-radius-lg`，官方 `editor` /
+       * `addCard` 用的就是它），描边取官方那一处的 0.5px 发丝线。
+       * 逐项来源见上面 `S` 的表头注释。
+       */
       card: {
-        border: '1px solid ' + T.borderL1,
+        border: '0.5px solid ' + T.borderL1,
         background: T.bgLayer2,
-        borderRadius: '10px',
-        padding: '14px 16px',
+        borderRadius: S.radiusLg,
+        padding: S.cardPad,
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
@@ -724,19 +837,29 @@ window.__ModuleLoader__.load({
       row: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
       code: {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-        fontSize: '12px',
+        fontSize: S.mutedFontSize,
         wordBreak: 'break-all',
       },
-      key: { fontSize: '12px', color: T.labelSecondary, minWidth: '72px' },
+      key: { fontSize: S.mutedFontSize, color: T.labelSecondary, minWidth: '72px' },
     }
 
+    /**
+     * 胶囊小标签。几何照抄官方 `Tag.module.css` 的 `.tag`
+     * （`padding:1px 8px; font-size:11px; line-height:17px; border-radius:999px`）。
+     *
+     * 类名 `pxm-pill` 只作测试/样式挂钩：尺寸对齐用例要在设置页里按**语义角色**找到它。
+     */
     function Pill(props) {
       return h(
         'span',
         {
+          className: 'pxm-pill',
           style: {
-            fontSize: '11px',
-            padding: '1px 6px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            fontSize: S.tagFontSize,
+            lineHeight: S.tagLineHeight,
+            padding: S.tagPad,
             borderRadius: '999px',
             border: '1px solid ' + T.borderL2,
             background: tint(T.label, 8),
@@ -758,7 +881,7 @@ window.__ModuleLoader__.load({
             background: T.bgLayer2,
           },
         },
-        h('strong', { style: { fontSize: '13px' } }, props.title),
+        h('strong', { style: { fontSize: S.subheadFontSize, lineHeight: S.subheadLineHeight } }, props.title),
         props.detail === undefined || props.detail === null
           ? null
           : h('p', { style: skin.muted }, String(props.detail)),
@@ -783,6 +906,12 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /**
+     * 行内动作按钮：尺寸照抄官方 `Button.module.css` 的 `.sm`（28px / 12px / 18px / 0 10px /
+     * `--dsw-radius-sm`），也就是官方设置页里行内动作按钮实际用的那一档。
+     * `boxSizing:'border-box'` 与官方 `.button` 一致：有高度时那 1px 描边算在 28px 里。
+     * 逐项来源见上面 `S` 的表头注释。
+     */
     function Btn(props) {
       const disabled = props.disabled === true
       return h(
@@ -795,9 +924,15 @@ window.__ModuleLoader__.load({
           title: props.title,
           style: {
             font: 'inherit',
-            fontSize: '12px',
-            padding: '4px 10px',
-            borderRadius: '6px',
+            boxSizing: 'border-box',
+            fontSize: S.buttonFontSize,
+            lineHeight: S.buttonLineHeight,
+            height: S.buttonHeight,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: S.buttonPad,
+            borderRadius: S.radiusSm,
             color: T.label,
             border: '1px solid ' + T.borderL2,
             background: tint(T.label, 8),
@@ -860,11 +995,21 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 表单值控件的**尺寸**：照抄官方 `settings-form/fields.module.css` 的 `.input`
+     * （34px 高 / `0 12px` / 13px / `--dsw-radius-md`）。逐项来源见上面 `S` 的表头注释。
+     *
+     * 这里**只动尺寸**：底色（`bg-layer-3`）与描边（`border-l4`）两条仍然照旧，
+     * 它们的官方出处见下面各自的注释（8.9 用例钉着）。
+     */
     const inputStyle = {
       font: 'inherit',
-      fontSize: '12px',
-      padding: '3px 6px',
-      borderRadius: '6px',
+      boxSizing: 'border-box',
+      height: S.fieldHeight,
+      fontSize: S.fieldFontSize,
+      lineHeight: S.fieldLineHeight,
+      padding: S.fieldPad,
+      borderRadius: S.radiusMd,
       color: T.label,
       // **输入控件层**：官方设置页的表单字段（`primitives` 的
       // `settings-form/fields.module.css` 里 `.input`）挂的是 `--dsw-alias-bg-layer-3`；
@@ -880,7 +1025,8 @@ window.__ModuleLoader__.load({
       // 边框同样照抄官方表单控件那一处：`.input{border:0.5px solid var(--dsw-alias-border-l4)}`
       // （`primitives/Input.module.css` 的 `.wrap`、`settings-plugin-inventory` 的搜索框
       // 也都是 `border-l4`；`border-l1/l2` 在官方那边是分隔线与卡片描边，不是控件描边）。
-      border: '1px solid ' + T.borderL4,
+      // 宽度是官方的 **0.5px 发丝线**（`.input{border:.5px solid …}`，fields.module.css:111）。
+      border: '0.5px solid ' + T.borderL4,
       width: '100%',
       // `width:100%` 只是"想占满"，真正让它随容器**收窄**的是 minWidth:0：
       // 否则长值（绝对路径）会把输入框顶到自己的固有宽度上。
@@ -1320,7 +1466,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: skin.row },
-          h('strong', { style: { fontSize: '13px' } }, String(provider.label ?? id ?? '未命名')),
+          h('strong', { style: { fontSize: S.subheadFontSize } }, String(provider.label ?? id ?? '未命名')),
           h('code', { style: { ...skin.code, opacity: 0.7 } }, String(provider.id ?? '—')),
           h(Pill, null, String(provider.group ?? '—')),
           h(Pill, null, String(provider.apiMode ?? '—')),
@@ -1513,7 +1659,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: skin.row },
-          h('strong', { style: { fontSize: '13px' } }, '默认值'),
+          h('strong', { style: { fontSize: S.subheadFontSize } }, '默认值'),
           h(Pill, null, '生图不带参数时用这一套'),
         ),
         h(
@@ -1553,7 +1699,8 @@ window.__ModuleLoader__.load({
             model !== '' && models.indexOf(model) < 0
               ? h(
                   'span',
-                  { style: { fontSize: '11px', color: T.warn, lineHeight: 1.5 } },
+                  // Tag 化的小字：几何照官方 `Tag.module.css` 的 `.tag`（只有配色是本地的 warn）。
+                  { style: { fontSize: S.tagFontSize, color: T.warn, lineHeight: S.tagLineHeight } },
                   '该模型不在当前厂商的模型列表里（拉取后窄化列表会这样），建议重新选择',
                 )
               : null,
@@ -1646,7 +1793,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: skin.row },
-          h('strong', { style: { fontSize: '13px' } }, '作品库导出路径'),
+          h('strong', { style: { fontSize: S.subheadFontSize } }, '作品库导出路径'),
           h(Pill, null, current === '' ? '未设置' : '已设置'),
         ),
         h(
@@ -1851,7 +1998,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: skin.row },
-            h('strong', { style: { fontSize: '13px' } }, '厂商'),
+            h('strong', { style: { fontSize: S.subheadFontSize } }, '厂商'),
             h(Pill, null, providers.length + ' 个'),
             h(Btn, { onClick: () => reload(), title: '重新读取厂商与模型' }, '刷新'),
           ),
@@ -1870,7 +2017,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: skin.card },
-          h('strong', { style: { fontSize: '13px' } }, '累计用量'),
+          h('strong', { style: { fontSize: S.subheadFontSize } }, '累计用量'),
           h(
             'div',
             { style: skin.row },
@@ -2052,9 +2199,9 @@ window.__ModuleLoader__.load({
                   borderRadius: '6px',
                   color: T.label,
                   // 大段文本（提示词）是**输入类控件**，与上面的 `inputStyle` 同层同边框：
-                  // 官方 `.input` 就是 `bg-layer-3` + `border-l4`（见 `inputStyle` 的注释）。
+                  // 官方 `.input` 就是 `bg-layer-3` + `0.5px border-l4`（见 `inputStyle` 的注释）。
                   background: T.bgLayer3,
-                  border: '1px solid ' + T.borderL4,
+                  border: '0.5px solid ' + T.borderL4,
                 },
               }),
             )
@@ -2398,7 +2545,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: skin.row },
-          h('strong', { style: { fontSize: '13px' } }, entry.label || entry.module || '产出图'),
+          h('strong', { style: { fontSize: S.subheadFontSize } }, entry.label || entry.module || '产出图'),
           isString(entry.module) && entry.module !== '' ? h('code', { style: skin.code }, entry.module) : null,
           entries.length > 1
             ? h(Pill, { key: 'pos' }, String(index + 1) + ' / ' + String(entries.length))
@@ -2790,7 +2937,7 @@ window.__ModuleLoader__.load({
                   { style: skin.row },
                   h(
                     'strong',
-                    { style: { fontSize: '13px' } },
+                    { style: { fontSize: S.subheadFontSize } },
                     String(item?.label ?? item?.module ?? '未命名模块'),
                   ),
                   h(Pill, null, String(ITEM_STATUS_LABEL[item?.status] ?? item?.status ?? '—')),
@@ -3033,14 +3180,14 @@ window.__ModuleLoader__.load({
                 {
                   key: String(entry?.id ?? index),
                   className: 'pxm-trash-item',
-                  style: { ...skin.card, gap: '6px' },
+                  style: { ...skin.card, gap: S.cardGap },
                 },
                 h(
                   'div',
                   { style: { ...skin.row, justifyContent: 'space-between' } },
                   h(
                     'strong',
-                    { style: { fontSize: '13px' } },
+                    { style: { fontSize: S.subheadFontSize } },
                     String(entry?.name ?? entry?.id ?? '未命名项目'),
                   ),
                   h(
@@ -4041,11 +4188,16 @@ window.__ModuleLoader__.load({
           title: label,
           style: {
             font: 'inherit',
-            fontSize: '12px',
+            // 徽标 = 官方 `Pill` 的胶囊几何（24px / `0 8px` / 12px / 18px / 999px）：
+            // 它是"点一下展开"的胶囊，与官方 Pill 同语义。来源见上面 `S` 的表头注释。
+            boxSizing: 'border-box',
+            fontSize: S.pillFontSize,
+            lineHeight: S.pillLineHeight,
+            height: S.pillHeight,
             display: 'inline-flex',
             alignItems: 'center',
             gap: '6px',
-            padding: '6px 10px',
+            padding: S.pillPad,
             borderRadius: '999px',
             cursor: 'pointer',
             color: T.label,
@@ -4198,8 +4350,11 @@ window.__ModuleLoader__.load({
                     title: String(other.projectName ?? other.runId),
                     style: {
                       font: 'inherit',
-                      fontSize: '11px',
-                      padding: '1px 6px',
+                      // 多任务小胶囊：几何照官方 `Tag.module.css` 的 `.tag`。
+                      boxSizing: 'border-box',
+                      fontSize: S.tagFontSize,
+                      lineHeight: S.tagLineHeight,
+                      padding: S.tagPad,
                       borderRadius: '999px',
                       color: T.label,
                       cursor: 'pointer',

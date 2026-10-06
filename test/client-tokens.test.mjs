@@ -44,13 +44,13 @@ const CLIENT_PATH = join(REPO_ROOT, 'client', 'client.js')
 const source = readFileSync(CLIENT_PATH, 'utf8')
 
 /**
- * 本插件用到的那一份官方 token 清单。
+ * 本插件用到的那一份官方 token 清单（**颜色 + 尺寸两族**）。
  *
- * 每个名字都由 client Theme 的 `listTokens` 确证存在，且**都带浅/深两套值**
+ * 色 token 的每个名字都由 client Theme 的 `listTokens` 确证存在，且**都带浅/深两套值**
  * （`requiresLightAndDark: true`）—— 这正是"配色能自动与官方主题一致"的前提。
  * 加/减 token 时要显式改这里，避免悄悄漂移。
  *
- * 清单**是 16 项**。历史沿革：
+ * 清单**是 19 项**。历史沿革：
  *   - 早先版本误把「进行中/进度」映射到 `--dsw-alias-brand-primary`（那是主按钮填充色），
  *     换成官方的 `--dsw-alias-label-tertiary`（`StateDot` 的 `ongoing` 用的就是它），
  *     一进一出后仍不用 brand-primary（13 项）；
@@ -59,6 +59,11 @@ const source = readFileSync(CLIENT_PATH, 'utf8')
  *     `--dsw-alias-border-l4`（同一处的描边：`.input{border:.5px solid var(--dsw-alias-border-l4)}`），
  *     以及**保留**的 `--dsw-alias-border-l2`（输入控件不再用它，但按钮描边仍在用，
  *     所以它**不是**"只声明没引用"的僵尸键）。13 + 3 = 16。
+ *   - 2026-10-08 组件尺寸对齐再进四枚 `--dsw-radius-{sm,md,lg,xl}`。
+ *     它们与色 token **性质不同**：不随深浅色变（`listTokens` 里没有它们），
+ *     是官方 base CSS 里 `:root` 的**尺寸变量**。仍然收进本清单，因为本文件真正守着的是
+ *     "**代码里出现的 `--dsw-*` 种类 == 清单**"这条不漂移的性质，颜色只不过是目前最大的一族；
+ *     下面另有一条用例钉住"半径不能混进 `T`（颜色表）"。
  *
  * 注意：`client/client.js` 里另有一份 `OFFICIAL_SURFACES` 清单（官方表面层的 token 名与
  * 官方用法，含本插件**尚未使用**的 `bg-module-platform`）。它是**合同文本**、
@@ -82,6 +87,18 @@ const REQUIRED_TOKENS = [
   '--dsw-alias-state-idle-primary',
   '--dsw-alias-state-success-primary',
   '--dsw-alias-state-warn-primary',
+  /*
+   * 2026-10-08 组件尺寸对齐再进四枚：**官方尺寸里唯一做成变量的那一族**
+   * （`--dsw-radius-{xs,sm,md,lg,xl,panel}`，见 `dsh-client-ui-theme` 的 base CSS `:root{…}`）。
+   * `client/client.js` 的圆角一律写 `var(--dsw-radius-*)`，于是官方改圆角时本插件自动跟随
+   * ——与色 token 同理。它们**不在** `T` 那张表里（`T` 只收颜色），而在 `S`（尺寸表）里，
+   * 所以本清单是"**T 的颜色 token ∪ S 的尺寸 token**"，与下面那条"代码里出现的 token 种类
+   * == 清单"一一对应。`--dsw-radius-xs` / `-panel` 官方有定义但本插件没用，故不在清单内。
+   */
+  '--dsw-radius-sm',
+  '--dsw-radius-md',
+  '--dsw-radius-lg',
+  '--dsw-radius-xl',
 ]
 
 /** 阈值：清单长度就是下界（每个 token 至少以 `var(...)` 出现一次）。 */
@@ -243,10 +260,14 @@ describe('客户端配色：只走官方 --dsw-* token（静态契约）', () =>
     const table = tokenTable(code)
     assert.ok(table !== null, '源码里找不到 token 表 `const T = { … }`（结构变了就同步本用例）')
 
+    /*
+     * `T` 是**颜色表**，尺寸 token（`--dsw-radius-*`）在 `client.js` 的 `S` 里，
+     * 所以这里比的是"颜色那一族"，而清单是"颜色 ∪ 尺寸"。
+     */
     assert.deepEqual(
       table.map((entry) => entry.token).sort(),
-      REQUIRED_TOKENS.slice().sort(),
-      'token 表里的 token 与静态清单必须一一对应（加/换 token 时两边一起改）',
+      REQUIRED_TOKENS.filter((token) => !token.startsWith('--dsw-radius-')).sort(),
+      'token 表里的颜色 token 与静态清单里的颜色项必须一一对应（加/换 token 时两边一起改）',
     )
 
     // 只声明、没被任何样式引用的键 = 那处样式要么漏了、要么被换回了硬编码。
@@ -257,6 +278,33 @@ describe('客户端配色：只走官方 --dsw-* token（静态契约）', () =>
       unused,
       [],
       '这些 token 键只声明没被引用（某处样式可能退回成硬编码了）：' + unused.join(', '),
+    )
+  })
+
+  /**
+   * 颜色与尺寸的**分界**（2026-10-08 尺寸对齐引入）：
+   *   - 色 token 进 `T`、尺寸 token 进 `S`，两族不混；
+   *   - 尺寸 token 也必须以 `var(...)` 的形态真的被消费（只写常量名不算）。
+   *
+   * 为什么值得一条用例：把 `--dsw-radius-md` 顺手塞进 `T` 是"看起来更整齐"的做法，
+   * 但那会让"`T` 里每一项都随主题深浅色变"这条隐含前提失效（半径不随主题变），
+   * 也会让 `theme.test.mjs` 那份颜色对照清单失去意义。这里把它钉住。
+   */
+  it('颜色表 T 里不含尺寸 token；四个圆角 token 都以 var(...) 形态被消费', () => {
+    const table = tokenTable(code)
+    assert.ok(table !== null, '源码里找不到 token 表 `const T = { … }`')
+
+    const colorOnly = table
+      .filter((entry) => !entry.token.startsWith('--dsw-alias-'))
+      .map((entry) => entry.key + ' → ' + entry.token)
+    assert.deepEqual(colorOnly, [], '颜色表 T 里混进了非颜色 token：' + colorOnly.join(', '))
+
+    const radiusTokens = ['--dsw-radius-sm', '--dsw-radius-md', '--dsw-radius-lg', '--dsw-radius-xl']
+    const notConsumed = radiusTokens.filter((token) => !code.includes('var(' + token + ')'))
+    assert.deepEqual(
+      notConsumed,
+      [],
+      '这些官方尺寸变量没有以 var(...) 的形态出现在样式里（圆角退回硬编码了？）：' + notConsumed.join(', '),
     )
   })
 

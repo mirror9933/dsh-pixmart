@@ -80,7 +80,12 @@
     if (method !== 'GET') return jsonResponse({ ok: true })
     if (p === '/pixmart/api/projects') return jsonResponse(projectPage(u))
     if (p.indexOf('/pixmart/api/projects/') === 0) return jsonResponse(fixture.detail)
-    if (p === '/pixmart/api/trash') return jsonResponse({ ok: true, count: 0, trash: [] })
+    // 回收站：默认空（既有用例不受影响）；要测"回收站里有项目"时夹具给 `trash` 即可
+    // （形状与宿主 `GET /pixmart/api/trash` 一致：`{ ok, count, trash }`）。
+    if (p === '/pixmart/api/trash') {
+      if (fixture.trash) return jsonResponse(fixture.trash)
+      return jsonResponse({ ok: true, count: 0, trash: [] })
+    }
     if (p === '/pixmart/api/providers') return jsonResponse(fixture.providers)
     // 运行列表 / 详情：默认都为空（既有用例不受影响）；要测「运行中」的预览卡时，
     // 夹具里给 `runs`（摘要列表）与 `runDetail`（带 items 的详情）即可。
@@ -434,6 +439,166 @@
     return tokenVar(Object.keys(values || {}))
   }
 
+  // ── 设置页：官方同语义控件的选择器（尺寸对齐用例用；仍然只有事实） ──────────
+
+  /**
+   * 把设置面板里的官方同语义控件找出来。
+   *
+   * 按**语义角色**找，不按类名找：类名是本插件自己的实现细节，换个类名不该让断言失效；
+   * 而"表单里的文本框 / 密码框 / 下拉 / 按钮 / 胶囊标签"是官方也有的角色。
+   *
+   * 返回 `{ role, selector }` 列表（不返回元素本身 —— 探针只交事实）。
+   * 注意 `selector` 是**真实 CSS 选择器**，供 `computed()` 使用；`:nth-of-type` 之类
+   * 在这里够用，因为官方规则本来也只区分"第几个控件"这种位置。
+   */
+  function settingsSlots() {
+    var root = document.querySelector('.pxm-settings')
+    if (root === null) return null
+    var out = []
+    var push = function (role, el) {
+      if (el === null || el === undefined) return
+      el.setAttribute('data-pxm-role', role)
+      out.push({ role: role })
+    }
+    // 设置页的 `<h2>` 就是本插件注册到 settings.section 的那块面板的标题。
+    push('pageTitle', root.querySelector('h2'))
+    push('textInput', root.querySelector('input[type="text"]'))
+    push('passwordInput', root.querySelector('input[type="password"]'))
+    push('select', root.querySelector('select'))
+    push('button', root.querySelector('button'))
+    // 胶囊标签：**必须在 `.pxm-settings` 里面找**。`.pxm-pill` 在页面里可能有多处
+    // （例如折叠态的实时预览徽标里就嵌了一枚），文档级查询会绑到那一枚上。
+    push('tag', root.querySelector('.pxm-pill'))
+    return out
+  }
+
+  /** 作品库面板的工具条 / 卡片 / 查看器里的官方同语义控件。 */
+  function workbenchSlots() {
+    var root = document.querySelector('.pxm-workbench')
+    if (root === null) return null
+    var out = []
+    var push = function (role, el) {
+      if (el === null || el === undefined) return
+      el.setAttribute('data-pxm-role', role)
+      out.push({ role: role })
+    }
+    push('toolbarButton', root.querySelector('.pxm-trash-toggle'))
+    push('searchInput', root.querySelector('.pxm-search'))
+    push('sortSelect', root.querySelector('.pxm-sort'))
+    push('card', root.querySelector('.pxm-trash-item'))
+    return out
+  }
+
+  /**
+   * 查看器（`position: fixed` 的模态层）里的官方同语义控件。
+   *
+   * 它只在作品库**点开一张图之后**才存在，所以与 `workbenchSlots` 分开：
+   * 尺寸用例要在同一次会话里先点开缩略图，再调这个探针。
+   */
+  function viewerSlots() {
+    var root = document.querySelector('.pxm-viewer')
+    if (root === null) return null
+    var out = []
+    var push = function (role, el) {
+      if (el === null || el === undefined) return
+      el.setAttribute('data-pxm-role', role)
+      out.push({ role: role })
+    }
+    push('viewerButton', root.querySelector('.pxm-viewer-close'))
+    // 信息卡 = 滚动区里最后一个直接子节点（尺寸 / 模型 / 模块 / 提示词那一块）。
+    push('viewerCard', root.querySelector('.pxm-viewer-scroll > div:last-child'))
+    return out
+  }
+
+  /**
+   * 实时预览那枚**徽标**（`.pxm-badge`）。
+   *
+   * 它也是"官方 Pill 的同语义物"（可点的胶囊），但在折叠态才存在，
+   * 所以单独一个探针，好让尺寸用例能把它和设置页里的 `.pxm-pill` 分开量。
+   */
+  function overlaySlots() {
+    var el = document.querySelector('.pxm-badge')
+    if (el === null) return null
+    el.setAttribute('data-pxm-role', 'badge')
+    return [{ role: 'badge' }]
+  }
+
+  /**
+   * 一个元素的**盒模型事实**（尺寸对齐用例用）：几何 + 计算样式 + **内联声明值**。
+   *
+   * 和 `computed()` 一样，量的都是 `getComputedStyle`；这里额外给出：
+   *   - 真实几何（`getBoundingClientRect().height`），好让"计算高度 28px 是不是真的画成了
+   *     28px"这件事也有事实可查——`height` 被内容压过时，两者会不一致；
+   *   - `declared`：这个元素**内联声明**的样式值（`element.style`）。为什么需要它：
+   *     浏览器会把**亚像素**值量化掉——实测 Chromium DPR=1 下 `border:.5px` 的计算值
+   *     就是 `1px`（`getComputedStyle(el).borderTopWidth === '1px'`），于是"我们声明的是官方
+   *     那根 0.5px 发丝线"这件事在计算样式里**根本区分不出来**（0.5px 与 1px 同值）。
+   *     这种"平台会量化"的属性只能断言声明值；判断（这个值对不对）仍然在 test 侧。
+   */
+  function boxMetrics(selector) {
+    var el = document.querySelector(selector)
+    if (el === null) return null
+    var cs = window.getComputedStyle(el)
+    var DECLARED = [
+      'height',
+      'padding',
+      'fontSize',
+      'lineHeight',
+      'fontWeight',
+      'borderRadius',
+      'border',
+      'borderTopWidth',
+      'boxSizing',
+      'display',
+    ]
+    var declared = {}
+    DECLARED.forEach(function (name) {
+      var value = el.style[name]
+      if (value !== undefined && value !== '') declared[name] = value
+    })
+    return {
+      tag: el.tagName,
+      className: typeof el.className === 'string' ? el.className : '',
+      text: (el.textContent || '').slice(0, 30),
+      display: cs.display,
+      boxSizing: cs.boxSizing,
+      height: cs.height,
+      paddingTop: cs.paddingTop,
+      paddingRight: cs.paddingRight,
+      paddingBottom: cs.paddingBottom,
+      paddingLeft: cs.paddingLeft,
+      fontSize: cs.fontSize,
+      lineHeight: cs.lineHeight,
+      fontWeight: cs.fontWeight,
+      borderRadius: cs.borderRadius,
+      borderTopWidth: cs.borderTopWidth,
+      declared: declared,
+      rect: rectOf(el),
+    }
+  }
+
+  /**
+   * 把若干段 CSS 值交给浏览器解析，返回解析后的**非颜色**属性值。
+   *
+   * `resolveCss` 是为颜色写的（它比较的是"同一个序列化器"，颜色在不同属性上会给出不同形式）；
+   * 尺寸这边需要的是"`var(--dsw-radius-md)` 到底解析成多少像素"，所以用 `width` 这个
+   * 接受长度值、且序列化稳定的属性来锚：把待解析值喂给一个 `span` 的 `width`，
+   * 再读它的计算 `width`（`auto` 会露馅 → 断言就该红，而不是静默相等）。
+   */
+  function resolveSize(items) {
+    var out = {}
+    ;(items || []).forEach(function (item) {
+      var probe = document.createElement('span')
+      probe.style.position = 'absolute'
+      probe.style.visibility = 'hidden'
+      probe.style.setProperty(item.prop, item.value)
+      document.body.appendChild(probe)
+      out[item.key] = window.getComputedStyle(probe)[item.prop]
+      probe.remove()
+    })
+    return out
+  }
+
   window.__pxmLane = {
     version: 1,
     install: install,
@@ -461,6 +626,13 @@
     tokenVar: tokenVar,
     setTokens: setTokens,
     officialSurfaces: officialSurfaces,
+    // 尺寸对齐：官方同语义控件的选择器 / 盒模型事实 / 非颜色值解析
+    settingsSlots: settingsSlots,
+    workbenchSlots: workbenchSlots,
+    viewerSlots: viewerSlots,
+    overlaySlots: overlaySlots,
+    boxMetrics: boxMetrics,
+    resolveSize: resolveSize,
     titlebarTop: function () {
       var el = document.getElementById('dsh-titlebar')
       return el === null ? null : rectOf(el)

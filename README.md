@@ -232,8 +232,8 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），321 项
-pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），18 项
+pnpm test             # node:test（含 jsdom lane），323 项
+pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），30 项（几何 12 + 主题 10 + 尺寸 8）
 pnpm verify           # 上面几条串起来
 ```
 
@@ -248,6 +248,12 @@ pnpm verify           # 上面几条串起来
 （同文件 `:34`：`a renamed token degrades appearance but never breaks rendering`）。
 回归由三条测试锁住（静态扫描 / token 真的生效 / 深浅色跟随），详见
 [docs/contract-notes.md](./docs/contract-notes.md) §19。
+
+**客户端几何（控件尺寸）对齐官方**：官方**没有**尺寸 token（只有 `--dsw-radius-*` 这一族
+圆角变量），所以圆角走 `var(--dsw-radius-*)`、高度/内边距/字号是**照抄官方 px**，
+集中成 `S` 常量表（每个值带 `文件:行` 出处）。照抄的那半**不会**随官方升级自动跟随，
+只有 `test/browser/sizes.test.mjs` 会变红提醒；作品库网格等**无官方对应物**的控件不强行对齐。
+详见 [docs/contract-notes.md](./docs/contract-notes.md) §20。
 
 **文档**：
 

@@ -28,11 +28,16 @@ const CLIENT = path.join(REPO_ROOT, 'client', 'client.js')
 /**
  * 变异跑哪些 lane 文件。
  *
- * 两条 lane 各有分工：`layout.test.mjs` 管几何（滚不动 / 顶栏被盖 / 横向溢出 …），
- * `theme.test.mjs` 管配色（计算样式是否等于官方 `--dsw-*` 的解析值、深浅色是否跟随）。
- * 变异只让**对应用例**变红，所以两边都要跑：几何变异不该惊动配色用例，反之亦然。
+ * 三条 lane 各有分工：`layout.test.mjs` 管几何（滚不动 / 顶栏被盖 / 横向溢出 …），
+ * `theme.test.mjs` 管配色（计算样式是否等于官方 `--dsw-*` 的解析值、深浅色是否跟随），
+ * `sizes.test.mjs` 管**控件尺寸**（高度 / 内边距 / 字号 / 行高 / 圆角是否等于官方同语义值）。
+ * 变异只让**对应用例**变红，所以三个都要跑：几何变异不该惊动配色与尺寸用例，反之亦然。
  */
-const TEST_FILES = ['test/browser/layout.test.mjs', 'test/browser/theme.test.mjs']
+const TEST_FILES = [
+  'test/browser/layout.test.mjs',
+  'test/browser/theme.test.mjs',
+  'test/browser/sizes.test.mjs',
+]
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex')
 
@@ -429,6 +434,86 @@ const MUTATIONS = [
       {
         find: '      background: T.bgLayer3,\n      // 边框同样照抄官方表单控件那一处',
         replace: '      background: T.bgLayer2,\n      // 边框同样照抄官方表单控件那一处',
+      },
+    ],
+  },
+  {
+    id: 'M22-input-height-old',
+    /**
+     * 尺寸对齐（2026-10-08）的第一形态：把表单值控件的高度退回**改造前**的 28px。
+     *
+     * 官方是 34px（`fields.module.css:108` 的 `.input{height:34px}`）。这一条证的是
+     * `sizes.test.mjs` 的 1.1 / 2.1 **不是空转**：高度写错时那两条必须红。
+     * 改的是 `S.fieldHeight`（唯一的取值来源），所以设置页与作品库的搜索框会**同时**错。
+     */
+    bug: '输入控件高度从官方的 34px 退回改造前的 28px（S.fieldHeight）',
+    expect: ['1.1 输入框 / 下拉 = 官方设置页表单控件', '2.1 工具条按钮'],
+    edits: [
+      {
+        find: "      fieldHeight: '34px',",
+        replace: "      fieldHeight: '28px',",
+      },
+    ],
+  },
+  {
+    id: 'M23-button-padding-old',
+    /**
+     * 尺寸对齐的第二形态：行内按钮的内边距退回改造前的 `4px 10px`（官方 `.sm` 是 `0 10px`）。
+     *
+     * 只改内边距、不改高度：按钮的**几何高度**仍然是 28px（`height` 是显式的），
+     * 所以能抓住它的只有"内边距等于官方"那几条断言 —— 这正是要证明它们有效的地方。
+     */
+    bug: '按钮内边距从官方 Button.sm 的 `0 10px` 退回改造前的 `6px 10px`（S.buttonPad）',
+    expect: ['1.2 按钮 = 官方 Button.sm', '2.1 工具条按钮'],
+    edits: [
+      {
+        find: "      buttonPad: '0 10px',",
+        replace: "      buttonPad: '6px 10px',",
+      },
+    ],
+  },
+  {
+    id: 'M24-title-size-old',
+    /** 尺寸对齐的第三形态：节标题退回改造前的 15px/600（官方 `._3nPmjq_title` 是 16px/24px/500）。 */
+    bug: '设置页节标题从官方的 16px/24px/500 退回改造前的 15px/600（S.titleFontSize）',
+    expect: ['1.3 标题 / 正文 = 官方文字层级'],
+    edits: [
+      {
+        find: "      titleFontSize: '16px',",
+        replace: "      titleFontSize: '15px',",
+      },
+    ],
+  },
+  {
+    id: 'M25-tag-padding-old',
+    /** 尺寸对齐的第四形态：胶囊标签内边距退回改造前的 `1px 6px`（官方 `.tag` 是 `1px 8px`）。 */
+    bug: '胶囊标签内边距从官方 Tag 的 `1px 8px` 退回改造前的 `1px 6px`（S.tagPad）',
+    expect: ['1.2 按钮 = 官方 Button.sm', 'Tag = 官方 .tag'],
+    edits: [
+      {
+        find: "      tagPad: '1px 8px',",
+        replace: "      tagPad: '1px 6px',",
+      },
+    ],
+  },
+  {
+    id: 'M26-radius-hardcoded',
+    /**
+     * 尺寸对齐的第五形态：卡片圆角**不再走官方变量**，退回一个硬编码的 10px
+     * （改造前 `skin.card` 就是 `borderRadius: '10px'`）。
+     *
+     * 这一条与 M22~M25 性质不同：前四条改的是"照抄的 px"，这一条改的是"**本该跟随官方**的
+     * 那一半"。它证明 `sizes.test.mjs` 里那句"计算值 == `var(--dsw-radius-lg)` 的解析值"
+     * 真的在比变量解析值 —— 若断言写成硬编码的 16px，这条变异仍然会被抓住（10 ≠ 16），
+     * 但 1.2 那条 `radius-sm` 的断言就说明了两者的区别：官方改半径时**只有**走变量的写法
+     * 才不需要改代码。
+     */
+    bug: '卡片圆角不走官方变量，硬编码回改造前的 10px（S.radiusLg → 字面量）',
+    expect: ['2.2 回收站列表项 = 官方设置卡片'],
+    edits: [
+      {
+        find: "        borderRadius: S.radiusLg,",
+        replace: "        borderRadius: '10px',",
       },
     ],
   },
