@@ -725,6 +725,7 @@ return loaded.then(() => configStore.get())
 默认软删 / 软删失败原项目仍在 / 恢复后内容逐字节一致 / `permanent` 真删且不进回收站 /
 两种模式缺 `confirm` 都被拒 / `confirm` 只认布尔 / `export` 回 `targetDir` 且无 `exportDir` /
 `list` 不混回收站 / schema 里 `permanent` 为可选 boolean 且 action 含 `restore`）。
+**其中与 `export` 有关的两条已随 §16.6 删除能力而重写**（见该节表格），其余断言逐字未动。
 
 **未改**：HTTP 路径的任何语义（路由、错误码、`GET /trash`、`purge`）都没动；
 客户端本次零改动（`client/client.js` 不涉及 `pixmart_projects` 工具）。
@@ -732,6 +733,11 @@ return loaded.then(() => configStore.get())
 让它只留在用户显式点按钮的界面里。
 
 ### 16.5 导出落点收敛（2026-10-06）：只留用户显式指定的那一个
+
+> **已被 §16.6 取代（同日稍后）**：本节把"导出"统一到了 `exportDir`，但 Agent 侧的
+> `action=export` 仍在写用户的目录。§16.6 把那个 action **整个删除**——Agent 不再有
+> 任何写文件的落点。本节保留为当时的问题记录；下表里 `pixmart_projects action=export`
+> 那一行的"之后"状态**已经不存在**。
 
 **问题**：同一个"导出"有两条同义但**落点不同**的实现——界面/HTTP 用配置里的 `exportDir`
 （空则 `400 no_export_dir`），而 `pixmart_projects action=export` 自作主张写
@@ -744,14 +750,15 @@ return loaded.then(() => configStore.get())
 | 入口 | 之前 | 之后 |
 |---|---|---|
 | `POST /pixmart/api/projects/<id>/export` | `dir` > `exportDir` > `400 no_export_dir` | **语义与错误码不变**（只把"没有可用目录"的文案换成与工具共用的那一条） |
-| `pixmart_projects action=export` | 固定 `<dataDir>/exports/<id>` | 新增可选入参 `dir` > 配置 `exportDir` > **失败**（`no_export_dir`） |
+| `pixmart_projects action=export` | 固定 `<dataDir>/exports/<id>` | 新增可选入参 `dir` > 配置 `exportDir` > **失败**（`no_export_dir`）——**该 action 随后被 §16.6 整个删除** |
 
 **共用的唯一实现**（`src/tools/export-output.ts`）：`resolveExportRoot(overrideDir, configuredExportDir)`
 给出 `{ok:true, root}` 或 `{ok:false, code, message}`；`planProjectExport(root, projectId, imagesDir, items)`
 给出落点 `<root>/<projectId>/` 与待复制原件（源与目标**两条**路径都过 `assertContained`）。
-两个入口都调它们，所以错误码与文案**不可能分叉**——有一条用例直接断言两边 `message` 逐字节相同。
+当时两个入口都调它们，所以错误码与文案**不可能分叉**——有一条用例直接断言两边 `message` 逐字节相同
+（该用例已随 §16.6 删除 Agent 入口而重写，见 §16.6 的"因删除能力调整的既有断言"表）。
 
-**"两者皆无"的文案**（唯一一句，HTTP 与工具共用）：
+**"两者皆无"的文案**（当时 HTTP 与工具共用；§16.6 后只剩 HTTP，文案一字未改）：
 
 > 没有可用的导出目录：请先在设置里配置作品库导出路径（设置 → PixMart → 作品库导出路径），或显式指定目标目录（绝对路径）
 
@@ -762,6 +769,80 @@ return loaded.then(() => configStore.get())
 但**没有任何代码读它**——工作区副本是无条件自动的（§7.9），它"像开关却不是开关"。
 故从 `PixmartConfig` / 默认值 / `parseConfig` 中删除；写盘时（`ConfigStore.save` / `update`）
 顺手把残留键抹掉，读盘遇到残留键**不报错也不告警**（旧 `config.json` 必须照常可用）。
+
+### 16.6 收敛（2026-10-06）：取消 Agent 的独立导出能力 —— 方案 B
+
+**问题**：§16.5 把"导出"统一到 `exportDir`，但**忽略了发起者的区别**：
+
+- **用户**点界面「导出」= 刻意挑选、要长期留存 → 写 `exportDir`（用户管理的目录）✅
+- **Agent** 调 `pixmart_projects action=export` = 它自主的中间动作 → 也写进同一个用户目录 ❌
+
+两个演员写同一个用户目录，会把用户精心管理的文件夹灌满 Agent 的临时产物，
+而且用户分不清哪些是自己要的。
+
+**决定（方案 B）：Agent 不再有任何写文件的落点。**
+它要"给用户文件"时，指向**已经存在**的会话暂存副本即可（生成时本来就会留一份）。
+
+| 变化 | 之前 | 之后 |
+|---|---|---|
+| `pixmart_projects` 的 action 枚举 | `list / get / export / delete / restore / usage` | **`list / get / delete / restore / usage`** |
+| 入参 `dir` | `export` 用（显式覆盖目标目录） | **删除**（留着它等于暗示"还能指定落点"） |
+| 工具描述 | 说明 `export` 的落点口径 | **不得出现 `export` / `exports/` / `exportDir` 字样**；只说它不写用户目录 |
+| `export` 的返回字段 `targetDir` / `files` / `warnings` / `count` | 真导出 | **全部消失**（能力没了，形状自然也没了） |
+| 调 `action=export` | 真导出 | 走**未知 action 的既有失败路径**（`invalid_args`：`未知 action "export"`），**不写任何文件** |
+| `action=get` | 只回项目详情 | **新增** `workspaceOut`：`{workspace, dir, exists}` |
+| `POST /pixmart/api/projects/<id>/export` | 用户点「导出」 | **语义、错误码、落点全部不变**（它现在是唯一入口） |
+| `pixmart_providers` 的渲染文本 | 说"用户点「导出」**或 Agent 调 `pixmart_projects action=export`** 时生效" | 只说"**用户**在作品库点「导出」时生效；生成时不复制，Agent 工具也不写这里" |
+
+**`action=get` 的新字段**（Agent 侧"知道文件在哪"的替代）：
+
+```json
+{
+  "ok": true, "action": "get", "dataDir": "<插件数据目录>",
+  "project": { "…": "形状未变" },
+  "workspaceOut": {
+    "workspace": "<会话工作区根（绝对路径）>",
+    "dir": "<工作区>/pixmart-out/<项目 id>",
+    "exists": true
+  }
+}
+```
+
+- 工作区一律经 `tools/workspace-copy.ts` 的 `sessionWorkspace()` 取
+  （`exec.agent.session.header.cwd`，必须是绝对路径）——**复用既有解析，不另写一套**；
+  `dir` 再过一次 `assertContained`（项目 id 写脏也越不出去）。
+- **拿不到工作区时 `workspaceOut` 整个缺省**（不编造路径），渲染文本明说
+  "本次调用拿不到会话工作区"。
+- `exists` 是**只读探测**（`existsSync`）：`get` 绝不创建目录。
+- `get` 现在有**专门的渲染分支**（此前是 JSON 直出），三件事必须说到：
+  **原件**在插件数据目录（作品库可浏览）；**会话暂存副本**在工作区的 `pixmart-out/`
+  （工作区内的路径才会被客户端渲染成可预览的会话地址，可直接内嵌 / `present`，
+  并报"在不在"）；**本工具不会导出到设置里的「作品库导出路径」**。
+
+**`resolveExportRoot` / `planProjectExport` 的归属**：它们现在只剩 HTTP 一个调用方，
+因此**原地保留**（`src/tools/export-output.ts`）——搬文件只会制造一次无收益的 diff；
+`NO_EXPORT_DIR_MESSAGE` 也原样留着（`400 no_export_dir` 的文案一个字都没改）。
+`exportImages` 仍有两个调用方：HTTP 导出与工作区自动副本（后者只借复制语义）。
+
+**不删用户磁盘上的数据**：`<数据目录>/exports/` 与其中的文件（实测 2 个）**原样保留**
+——那是早先版本的隐式落点留下的用户数据，插件只是不再往里写。
+
+**因删除 export 能力而调整的既有断言（逐条，含"为何不是降低强度"）**：
+
+| 文件 / 用例 | 原断言 | 为什么不是降低强度 |
+|---|---|---|
+| `test/projects-tool.test.mjs` · `export 的目标与 HTTP 同一口径`（4 条） | `action=export` 成功、落点 `<dir>/<项目 id>`、`targetDir`、无 `exportDir`、warnings 收敛、数据目录无 `exports/` | 该能力已删除，断言对象不复存在。4 条换成 3 条**反断言**（见下），原本"落点唯一"的意图被保留并加强为"**一个落点都没有**" |
+| `test/projects-tool.test.mjs` · schema 用例 | `schema.properties.dir.type === 'string'`、`dir` 可选、描述含「作品库导出路径」与 `dir` | 入参已删除。改为断言 `dir` **不存在**、action 枚举**逐项相等**（恰五个）、描述里 `export` / `exports/` / `exportDir` **一个都不许有**——比原来更强 |
+| `test/export-dir.test.mjs` · §H 第 1 条 | HTTP 与工具回**同一句** `no_export_dir` 文案、同一错误码、同一判定顺序 | 工具那条路已不存在，"两处一致"无从断言。改为：HTTP 仍回 `no_export_dir`（同一句文案、同一判定顺序），工具回 `invalid_args`，且两者都**不写任何文件** |
+| `test/export-dir.test.mjs` · §H 第 2 条 | 工具带 `dir` 时落点唯一、无 `exports/` | 工具的 `dir` 已删除。改为：HTTP 带 `dir` 仍落 `<dir>/<项目 id>`；工具侧连目标目录都**不得被创建**，且旧字段 `targetDir`/`files` 必须不存在 |
+| `test/p2.test.mjs` · `pixmart_projects` 用例 | `action=export` 带 `dir` → `ok:true` + `targetDir` | 同上。改为断言被拒（`invalid_args`），且 `exportDir` 与数据目录 `exports/` 都不存在 |
+
+**新增的更强断言**（替代被删的那些）：action 枚举逐项相等；`dir` 入参不存在；
+描述里 `export` 子串为假；`get` 的 `workspaceOut` 三段形状 + "只探测不创建" + 缺省；
+干净临时数据目录里跑遍 `list/get/usage/export/delete/restore` 后**不存在 `exports/`**。
+
+**未改**：HTTP 路径的任何语义（路由、错误码、`400 no_export_dir` 文案、
+`GET /api/providers` 回 `exportDir`）都没动；客户端零改动（客户端只用 HTTP）。
 
 ---
 

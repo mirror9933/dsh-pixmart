@@ -322,17 +322,17 @@ describe('pixmart_projects', () => {
       assert.equal(usage.summary.requests, 1)
       assert.equal(usage.summary.images, 1)
 
-      // 导出：目标取自入参 `dir`（或设置里的「作品库导出路径」）——**没有**默认落点，
-      // 未配也未给就明确失败。落点固定是 <目标>/<项目 id>/。
+      // 导出：Agent **没有**这个能力了（2026-10-06 收敛；用户点作品库的「导出」走 HTTP）。
+      // 它必须走未知 action 的既有失败路径，且不能产生任何文件落点。
       const exportDir = join(dir, 'export-out')
       const exported = await tool.execute(
         { action: 'export', id: made.projectId, dir: exportDir },
         stubExec,
       )
-      assert.equal(exported.ok, true)
-      assert.equal(exported.count, 1)
-      assert.equal(exported.targetDir, join(exportDir, made.projectId))
-      assert.ok(existsSync(exported.files[0]))
+      assert.equal(exported.ok, false)
+      assert.equal(exported.error.code, 'invalid_args')
+      assert.equal(existsSync(exportDir), false, 'Agent 侧不得有任何写文件的落点')
+      assert.equal(existsSync(join(dir, 'exports')), false)
 
       // 未确认的删除被拒绝，且项目仍在
       const refused = await tool.execute({ action: 'delete', ids: [made.projectId] }, stubExec)

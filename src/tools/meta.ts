@@ -101,15 +101,16 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         lines.push(
           `默认：${String(value.defaultProvider)} / ${String(value.defaultModel)} / ${String(value.defaultSize)}`,
         )
-        // 作品库导出路径：Agent 可以据此告诉用户"导出的文件会落在哪"。
+        // 作品库导出路径：Agent 可以据此告诉用户"导出会落在哪"。
         // 生成**不会**往这里写任何东西（语义变更），所以措辞里必须说清"导出时"；
-        // 导出有**两个**入口（用户点「导出」/ `pixmart_projects action=export`），
-        // 但落点同源：入参 `dir` > 这条配置 > 失败（没有任何隐式默认落点）。
+        // 而导出**只有用户点界面那一个入口**（`POST /pixmart/api/projects/<id>/export`，
+        // 目标 = `dir` > 这条配置 > 失败）——Agent 工具侧已无导出能力（contract-notes §16.6），
+        // 所以这里不能再写"Agent 调 pixmart_projects action=export"。
         const exportDir = typeof value.exportDir === 'string' ? value.exportDir : ''
         lines.push(
           exportDir === ''
-            ? '作品库导出路径：未配置（图片只在数据目录，经作品库浏览；要文件形式的副本，请先在设置里配置该路径，或调用 pixmart_projects action=export 并带 dir 显式指定目标）'
-            : `作品库导出路径：${exportDir}（导出时的落点 ${exportDir}/<项目 id>/；用户点「导出」或 Agent 调 pixmart_projects action=export 时生效，生成时不复制）`,
+            ? '作品库导出路径：未配置（图片只在数据目录，经作品库浏览；要文件形式的副本，请先在设置里配置该路径，再到作品库点「导出」）'
+            : `作品库导出路径：${exportDir}（用户在作品库点「导出」时的落点 ${exportDir}/<项目 id>/；生成时不复制，Agent 工具也不写这里）`,
         )
         if (Array.isArray(value.warnings) && value.warnings.length > 0) {
           lines.push(`注意：${value.warnings.join('；')}`)

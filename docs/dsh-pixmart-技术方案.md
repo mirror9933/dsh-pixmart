@@ -592,7 +592,7 @@ export interface SizeCheckResult {
 | `pixmart_generate` | 文生图 | 是 | 支持一次多张（`n`） |
 | `pixmart_edit` | 图生图 / 参考图保真 / 风格复刻 / 白底图 | 是 | 需要 `references` |
 | `pixmart_batch` | 一批模块项 | 是 | 带并发上限与逐项状态 |
-| `pixmart_projects` | list / get / export / delete | 否 | 项目库操作 |
+| `pixmart_projects` | list / get / delete / restore / usage | 否 | 项目库操作；`get` 顺带回会话暂存目录（`workspaceOut`）。**无** export（2026-10-06 方案 B 删除，见 §7.9 / 变更记录 v1.11） |
 
 **统一返回结构**
 
@@ -683,6 +683,8 @@ $DSH_HOME/pixmart/
 3. **画廊显示**：client 用 `<img src="/pixmart/file/<projectId>/<encodedName>">`。
 4. **工作区副本（无条件自动）**：每张成功落盘的图复制一份到会话工作区的 `pixmart-out/<项目 id>/`——它不是"帮用户留文件"，而是 DSH 官方内嵌写法 `![说明](<路径>)` **只渲染工作区之内**的路径（见 §11.2 / `src/tools/workspace-copy.ts`）。
    用户要的文件形式副本走**显式导出**：目标 = 请求/入参 `dir` > 配置里的「作品库导出路径」(`exportDir`)，两者都没有就失败并提示去设置里配（**没有**隐式默认落点）。
+   **这条入口只有用户点界面**（`POST /pixmart/api/projects/<id>/export`）：Agent 侧的 `pixmart_projects action=export` 已于 2026-10-06 **删除**（方案 B，见 [contract-notes §16.6](./contract-notes.md)）。
+5. **Agent 拿路径的唯一来源**：`pixmart_projects action=get` 回 `workspaceOut: {workspace, dir, exists}`——复用 `sessionWorkspace()`（`exec.agent.session.header.cwd`），**只探测不创建**；取不到工作区时该字段**缺省**。Agent 因此没有任何写文件的落点：它要"给用户文件"时，指向上面那份**已经存在**的会话暂存副本。
 
 ### 7.10 图片只读路由
 
@@ -713,7 +715,7 @@ GET /pixmart/file/<projectId>/<name>
 | `listProjects` | `{limit?, offset?}` | `ProjectSummary[]` | |
 | `getProject` | `{id}` | `ProjectDetail` | |
 | `deleteProjects` | `{ids[]}` | `{deleted}` | 二次确认由前端做 |
-| `exportProject` | `{id, dir?}` | `{files[], warnings[], dir, count}` | 落点 `<目标>/<id>/`；目标 = `dir` > 配置 `exportDir` > 失败（`400 no_export_dir`）；**无** `dataDir/exports/` 默认落点 |
+| `exportProject` | `{id, dir?}` | `{files[], warnings[], dir, count}` | **只有用户点界面这一条入口**；落点 `<目标>/<id>/`；目标 = `dir` > 配置 `exportDir` > 失败（`400 no_export_dir`）；**无** `dataDir/exports/` 默认落点。Agent 侧同名能力已于 2026-10-06 删除 |
 | `previewPrompt` | `{module, vars?, overrides?}` | `{prompt, size}` | 等价于 `pixmart_prompt` |
 | `getUsage` | `{since?}` | `UsageSummary` | 按模型/天聚合 |
 | `openDataDir` | `{}` | `{path}` | 只返回路径，不执行打开（避免任意命令执行面） |
@@ -1505,3 +1507,4 @@ Agent 调用 pixmart_batch {
 | v1.8 | 2026-10-05 | **P4 待办第 1 条落地：打包步骤剥离 client bundle 的 `__test__`**（§11.5 新增）。新增 `tools/strip-test-hooks.mjs`（按锚句定位 + 花括号配平 + 前缀/后缀逐行自证 + `node --check`，**不引入打包器、不加依赖**）、`pnpm build:client`，`files` 加 `dist`，`pretest` / `prepack` 自动产出，`dist/` 写入 `.gitignore`（产物不入库）。新增 `test/strip-test-hooks.test.mjs`（9 项，含**陈旧性守卫**：把当前源码现场剥一遍与 `dist/client.js` 逐字节比对；缺失→带原因跳过，陈旧→失败并提示 `pnpm build:client`）。**源码 `client/client.js` 一个字节未改**（五套 node:test + 浏览器 lane 仍从它的 `__test__` 取件）。**⚠️ `exports["./client"]` 仍指向 `./client/client.js`**：切换是 P4 打包的最后一步，等停止迭代后再做。`pnpm test` 260 → **269** 项、`pnpm test:browser` **11** 项全绿 |
 | v1.9 | 2026-10-05 | **README 重写为用户视角**（安装 / 首次配置 / 怎么用 / 产物在哪 / 费用 / FAQ / 已知限制 / 开发者），不再写「P0 进行中」这类内部阶段状态。诚实标注：**未发布到 registry、`private: true`**，只能用本地路径 / git 地址安装；P0–P3 已完成、**P4 未完成**；不做 3D / 视频、不做服务端缩略图、macOS 未验证、当前 0.0.1 |
 | v1.10 | 2026-10-06 | **导出落点收敛 + 死字段清理**。① 导出只剩一条口径：`resolveExportRoot` / `planProjectExport`（`src/tools/export-output.ts`）被 `POST /projects/<id>/export` 与 `pixmart_projects action=export` **共用**——工具新增可选入参 `dir`，未给则用配置 `exportDir`，两者都没有即失败（错误码 `no_export_dir`，与 HTTP **同一句文案**）。**彻底删除** `<dataDir>/exports/` 这条隐式默认落点（用户磁盘上已存在的该目录不动，只是不再写入）。② 删除死字段 `exportToWorkspace`：类型 / 默认值 / `parseConfig` 里都没有了，`ConfigStore` 每次写盘顺手把它从盘上抹掉（残留键读盘不报错）。③ 相应更新 README、contract-notes §16.3/§16.4、作品库优化方案。`pnpm test` 291 → **298** 项、`pnpm test:browser` **11** 项全绿 |
+| v1.11 | 2026-10-06 | **方案 B：取消 Agent 的独立导出能力**（[contract-notes §16.6](./contract-notes.md)）。v1.10 统一了导出的**落点**，却漏了**发起者**：用户点「导出」是刻意挑选，Agent 调 `action=export` 只是它自己的中间动作，两者写同一个用户目录会互相污染。① `pixmart_projects` 删除 `export` action（连同入参 `dir` 与返回字段 `targetDir`/`files`/`warnings`/`count`）：调它走未知 action 的既有失败路径（`invalid_args`），**不写任何文件**；action 枚举 = `list / get / delete / restore / usage`；工具描述里不再出现 `export`/`exports/`/`exportDir`。② 补上 Agent 的替代路径：`action=get` 新增 **`workspaceOut: {workspace, dir, exists}`**（复用 `sessionWorkspace()` / `WORKSPACE_OUT_DIR`，只探测不创建；取不到工作区时字段**缺省**），`get` 另有专门渲染分支，说清"原件在数据目录 / 暂存副本在工作区 `pixmart-out/` / 本工具不导出到用户目录"。③ HTTP `POST /projects/<id>/export` **语义与错误码全不变**，仍是唯一入口；`resolveExportRoot` / `planProjectExport` / `NO_EXPORT_DIR_MESSAGE` 原地保留（只剩 HTTP 一个调用方）。④ `pixmart_providers` 的文本不再提"Agent 调 action=export"。⑤ 用户磁盘上已有的 `<数据目录>/exports/`（实测 2 个文件）**原样保留**。测试：删除 export 能力的 4+2+1 条用例改为**反断言**（枚举逐项相等 / `dir` 不存在 / 描述无 `export` / 干净数据目录无 `exports/` / `get` 的缺省），`pnpm test` 298 → **299** 项、`pnpm test:browser` **11** 项全绿 |

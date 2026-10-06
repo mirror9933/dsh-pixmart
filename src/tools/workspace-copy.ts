@@ -32,7 +32,13 @@
  *   2. **复制失败不能让生图失败**：图已经生成、已经付费。任何失败（含本函数内部的
  *      意外异常）都只收敛成一句可读 warning，工具仍返回 `ok: true`。
  *   3. 副本的**完整路径**回给工具结果文本，Agent 才有稳定路径可内嵌 / `present`。
+ *
+ * 除复制之外，本文件还对外提供**只读**的 `workspaceStagingDir()`：`pixmart_projects`
+ * 的 `get` 用它回答"这个项目的会话暂存副本在哪、在不在"。Agent 侧没有任何写文件的
+ * 落点（导出能力只在用户点界面的那条 HTTP 路径上），所以这条只读探测就是它拿路径的
+ * 唯一来源。
  */
+import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { assertContained } from '../store/paths.js'
 import { exportImages, type ExportSource } from './export-output.js'
@@ -66,6 +72,46 @@ export function sessionWorkspace(exec: ToolRunContext): string | undefined {
   const trimmed = cwd.trim()
   if (trimmed === '') return undefined
   return isAbsolute(trimmed) ? trimmed : undefined
+}
+
+/**
+ * 某个项目在会话工作区里的**暂存目录**（`pixmart-out/<projectId>`）的只读探测结果。
+ *
+ * 它回答两个问题：**在哪**（`workspace` / `dir`）与**在不在**（`exists`）。
+ * 之所以还要 `exists`：Agent 据此决定"能不能拿这个路径去 `present`"——
+ * 目录不存在时内嵌一个不存在的路径只会渲染成坏图，不如先去生图。
+ */
+export interface WorkspaceStaging {
+  /** 会话工作区根（绝对路径）。 */
+  readonly workspace: string
+  /** `<工作区>/pixmart-out/<projectId>`（绝对路径）。 */
+  readonly dir: string
+  /** 该目录此刻是否已存在（有副本）。 */
+  readonly exists: boolean
+}
+
+/**
+ * 探测 `<工作区>/pixmart-out/<projectId>`：**只看不写**，绝不创建目录。
+ *
+ * 拿不到工作区（无 agent 上下文 / cwd 是相对路径）或项目 id 拼出越界路径时返回
+ * `undefined`——调用方据此让字段**缺省**，而不是编一个假路径出来。
+ *
+ * 这是 Agent 侧"知道文件在哪"的**唯一**来源：导出能力已从工具层移除（Agent 不再有
+ * 任何写文件的落点），要内嵌 / `present` 图片就用这里给出的、**已经存在**的会话暂存副本。
+ */
+export function workspaceStagingDir(
+  exec: ToolRunContext,
+  projectId: string,
+): WorkspaceStaging | undefined {
+  try {
+    const workspace = sessionWorkspace(exec)
+    if (workspace === undefined) return undefined
+    const dir = assertContained(workspace, join(workspace, WORKSPACE_OUT_DIR, projectId))
+    return { workspace, dir, exists: existsSync(dir) }
+  } catch {
+    // 越界 id 等异常一律当作"没有可给出的暂存目录"，不抛、也不编路径。
+    return undefined
+  }
 }
 
 function reasonOf(error: unknown): string {

@@ -20,9 +20,13 @@
  *   C. 路由：`POST /settings/export-dir` 写入/清除、非绝对路径 400 `invalid_export_dir`、
  *      缺字段 400 `bad_field`、GET 405、`GET /api/providers` 带 `exportDir`（且不带 `outputDir`）；
  *   D. 生成：配了旧 `outputDir` 也**不产生任何复制**（哨兵：数据目录之外没有新增任何东西）；
- *   E. 导出：`dir` 覆盖 > `exportDir` 回退 > 两者皆无 400 `no_export_dir`；
- *      落点是 `<目标>/<项目 id>/`；原件仍在（只复制不移动）；
- *   F. `pixmart_providers` 工具回传 `exportDir`。
+ *   E. 导出（**只有用户点界面这一条 HTTP 入口**）：`dir` 覆盖 > `exportDir` 回退 >
+ *      两者皆无 400 `no_export_dir`；落点是 `<目标>/<项目 id>/`；原件仍在（只复制不移动）；
+ *   F. `pixmart_providers` 工具回传 `exportDir`（并写明只有用户点「导出」时生效）。
+ *
+ * H 段钉住 2026-10-06 的第二次收敛：**Agent 侧不再有导出能力**——
+ * `pixmart_projects action=export` 已删除（走未知 action 的既有失败路径，不写任何文件），
+ * 导出只剩 HTTP 一条入口。理由见 contract-notes §16.6：两个演员写同一个用户目录会互相污染。
  *
  * **零真实网络 / 零真实厂商调用**：厂商侧一律 stub `globalThis.fetch`（连 socket 都
  * 不建），路由侧用假 webServer 直接喂 handler。
@@ -955,10 +959,10 @@ describe('ConfigStore 上的一次真实迁移', () => {
   })
 })
 
-// ── H. 导出只有一条口径：HTTP 与工具共用同一套判定与文案 ─────────────────────
+// ── H. 导出只剩 HTTP 一条入口（Agent 侧已无导出能力） ────────────────────────
 
-describe('导出的目标口径在两个入口之间不许分叉', () => {
-  it('两者皆无时，HTTP 与 pixmart_projects 回的是**同一句**文案', async () => {
+describe('导出唯一的入口是用户点界面的 HTTP 路径', () => {
+  it('两者皆无 → HTTP 400 no_export_dir；工具的 export 走未知 action 且不写文件', async () => {
     const { dataDir, root } = makeWorkspace()
     try {
       const { id } = await seedProject(dataDir)
@@ -972,21 +976,17 @@ describe('导出的目标口径在两个入口之间不许分叉', () => {
       )
       assert.equal(viaHttp.status, 400)
       assert.equal(viaHttp.json.error.code, 'no_export_dir')
+      assert.match(viaHttp.json.error.message, /设置 → PixMart → 作品库导出路径/)
 
+      // Agent 侧：export 已从 action 里删除 → 未知 action 的既有失败路径。
+      // 不再有"两个入口说同一句话"这件事可比：只剩 HTTP 一个入口。
       const tool = createProjectsTool(makeRuntime(dataDir))
       const viaTool = await tool.execute({ action: 'export', id }, stubExec)
-
       assert.equal(viaTool.ok, false)
-      assert.equal(viaTool.error.code, viaHttp.json.error.code, '错误码必须一致')
-      assert.equal(
-        viaTool.error.message,
-        viaHttp.json.error.message,
-        '同一件失败事，两个入口必须说同一句话（否则用户会以为是两种问题）',
-      )
-      assert.match(viaTool.error.message, /设置 → PixMart → 作品库导出路径/)
+      assert.equal(viaTool.error.code, 'invalid_args')
+      assert.match(viaTool.error.message, /未知 action/)
 
-      // 判定顺序也一样：目标不可用**先于**"项目不存在"被报出来（否则同一份输入，
-      // 两个入口会说成两种问题）。这里用一个不存在的 id 把这条顺序钉住。
+      // 判定顺序也仍未被这次删除改动：不存在的 id 也先撞上"没有可用目录"（HTTP 侧）
       const httpMissing = await call(
         makeFakeWebServer(),
         makeRuntime(dataDir),
@@ -994,32 +994,44 @@ describe('导出的目标口径在两个入口之间不许分叉', () => {
         '/pixmart/api/projects/nope/export',
         { body: {} },
       )
-      const toolMissing = await createProjectsTool(makeRuntime(dataDir)).execute(
-        { action: 'export', id: 'nope' },
-        stubExec,
-      )
       assert.equal(httpMissing.json.error.code, 'no_export_dir')
-      assert.equal(toolMissing.error.code, httpMissing.json.error.code)
-      assert.equal(toolMissing.error.message, httpMissing.json.error.message)
+
+      assert.deepEqual(readdirSync(root), ['data'], '两个入口都不许凭空造目录')
+      assert.equal(existsSync(join(dataDir, 'exports')), false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('工具带 dir 时也不在数据目录里造 exports/：唯一的落点就是目标目录', async () => {
+  it('HTTP 带 dir 时唯一落点就是它；工具侧不再有任何落点', async () => {
     const { dataDir, root } = makeWorkspace()
-    const target = join(root, 'tool-target')
+    const httpTarget = join(root, 'http-target')
+    const toolTarget = join(root, 'tool-target')
     try {
-      const { runtime, id } = await seedProject(dataDir)
-      const tool = createProjectsTool(runtime)
-      const exported = await tool.execute({ action: 'export', id, dir: target }, stubExec)
+      const { id } = await seedProject(dataDir)
 
-      assert.equal(exported.ok, true)
-      assert.equal(exported.count, 1)
-      assert.equal(exported.targetDir, join(target, id))
-      assert.equal(existsSync(exported.files[0]), true)
-      assert.equal(existsSync(join(dataDir, 'exports')), false, '数据目录里的 exports/ 必须不再出现')
-      assert.equal(existsSync(join(target, 'exports')), false)
+      const result = await call(
+        makeFakeWebServer(),
+        makeRuntime(dataDir),
+        'POST',
+        `/pixmart/api/projects/${id}/export`,
+        { body: { dir: httpTarget } },
+      )
+      assert.equal(result.status, 200)
+      assert.equal(result.json.dir, join(httpTarget, id))
+      assert.equal(existsSync(result.json.files[0]), true)
+      assert.equal(existsSync(join(dataDir, 'exports')), false, '数据目录里的 exports/ 必须不出现')
+
+      // 同一个 id 走 Agent 工具：被拒，且连目标目录都不该被创建
+      const viaTool = await createProjectsTool(makeRuntime(dataDir)).execute(
+        { action: 'export', id, dir: toolTarget },
+        stubExec,
+      )
+      assert.equal(viaTool.ok, false)
+      assert.equal(viaTool.error.code, 'invalid_args')
+      assert.equal('targetDir' in viaTool, false, '旧导出字段必须一并消失')
+      assert.equal('files' in viaTool, false)
+      assert.equal(existsSync(toolTarget), false, 'Agent 侧不得有任何写文件的落点')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

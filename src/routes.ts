@@ -1125,8 +1125,10 @@ async function handlePurgeTrash(
 /**
  * `POST /pixmart/api/projects/<id>/export` —— 把项目图片**复制**到目标目录。
  *
- * 这条与 `pixmart_projects action=export` 是**仅有的两条**往数据目录之外写用户文件的
- * 路径，都必须显式触发：生成（generate / edit / batch）不再自动复制任何东西。
+ * 这是**唯一**往数据目录之外写用户文件的路径（且只由用户点界面触发）：
+ * 生成（generate / edit / batch）不自动复制任何东西，Agent 侧的 `pixmart_projects`
+ * 也**没有**导出能力（contract-notes §16.6）——两个演员写同一个用户目录会把用户
+ * 精心管理的文件夹灌满临时产物。
  *
  * 目标目录的优先级（顺序即优先级）：
  *   1. 请求体里的 `dir`（绝对路径，覆盖配置）；
@@ -1135,10 +1137,9 @@ async function handlePurgeTrash(
  *
  * 实际落点是 `<目标目录>/<projectId>/`：不同项目各占一格，重复导出不会互相覆盖。
  *
- * 目标解析与落点规划都**不在这里**：HTTP 与 `pixmart_projects action=export` 共用
- * `tools/export-output.ts` 里的 `resolveExportRoot` / `planProjectExport`——
- * 两个入口曾经各写一遍，于是同一句"导出"落到了两个不同的地方（配置里的 `exportDir`
- * vs 数据目录下隐式的 `exports/`）。现在只剩用户显式配置/显式指定的那一个。
+ * 目标解析与落点规划都在 `tools/export-output.ts`（`resolveExportRoot` /
+ * `planProjectExport`）——历史上它们还被 Agent 工具入口共用，那条入口已删除；
+ * 实现留在原处，因为"用户显式导出"这一条路径仍然只用它。
  *
  * 复用 `tools/export-output.ts` 的三条不变量：只复制（原件是数据源，绝不移动）、
  * 失败不上抛（收敛成 `warnings`，原项目不受影响）、文件名内容寻址。
@@ -1153,7 +1154,7 @@ async function handleExportProject(
   const override = pickStringField(body, 'dir')
   const config = await runtime.config()
 
-  // 目标根：请求体覆盖 > 配置 > 未配置（400）。与工具入口**同一段代码、同一句文案**。
+  // 目标根：请求体覆盖 > 配置 > 未配置（400）。用户显式点「导出」时的唯一入口。
   const resolved = resolveExportRoot(override.present ? override.value : undefined, config.exportDir)
   if (!resolved.ok) {
     fail(response, 400, resolved.code, resolved.message)

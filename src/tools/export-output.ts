@@ -3,13 +3,18 @@
  *
  * 语义变更（历史）：本文件以前是「生成时自动另存到用户配置的 `outputDir`」的助手，
  * 那条路径已**取消**（用户配置的保存路径只在显式导出时生效）。现在的两个调用方是：
- *   1. **用户显式触发的作品库导出**（`POST /pixmart/api/projects/<id>/export`）；
+ *   1. **用户显式触发的作品库导出**（`POST /pixmart/api/projects/<id>/export`）——
+ *      本文件如今**只剩这一个**"导出目标"意义的调用方；
  *   2. **自动副本到会话工作区** `<工作区>/pixmart-out/<projectId>/`
  *      （见 tools/workspace-copy.ts）——它存在的理由不是"帮用户留文件"，而是
- *      DSH 官方内嵌写法只渲染会话工作区内的路径。
+ *      DSH 官方内嵌写法只渲染会话工作区内的路径；它只复用 `exportImages` 的复制语义，
+ *      不碰 `resolveExportRoot` / `planProjectExport`。
+ *
+ * `pixmart_projects action=export` 曾经是第三个调用方，现已**删除**（contract-notes
+ * §16.6）：Agent 不该有写文件的落点，两个演员写同一个用户目录只会互相污染。
  *
  * 两处的落点不同（用户配的导出路径 vs 会话工作区），但共用同一套复制语义与命名，
- * 因此互不干扰：`exportDir` 仍是"点导出时用"的那一个。
+ * 因此互不干扰：`exportDir` 仍是"用户点导出时用"的那一个。
  *
  * 三条不变量（与自动另存时期一致，仍然成立）：
  *   1. **只复制**，绝不移动/删除原件——数据目录里的项目文件是作品库的数据源。
@@ -18,12 +23,11 @@
  *   3. **文件名内容寻址**（`<sha8>-<原名>`）：不同内容绝不同名，同内容天然复用，
  *      因此重复导出、并发导出、跨项目都不会互相覆盖。
  *
- * 本文件还是**导出目标与落点布局的唯一实现**：HTTP 路由
- * （`POST /pixmart/api/projects/<id>/export`）与 `pixmart_projects action=export`
- * 都调 `resolveExportRoot` + `planProjectExport`。两个入口曾经各写一遍——
+ * 本文件还是**导出目标与落点布局的唯一实现**：`POST /pixmart/api/projects/<id>/export`
+ * 调 `resolveExportRoot` + `planProjectExport`。历史上两个入口曾各写一遍——
  * 结果就是同一句"导出"落到两个不同的地方（配置里的 `exportDir` vs 数据目录下的
- * 隐式 `exports/`），用户根本分不清"导出到底去哪"。现在只保留用户显式配置的那一个：
- * **没有可用目标就失败**，不再有任何插件自作的落点。
+ * 隐式 `exports/`）；后来工具入口删掉了「隐式 exports/」，再后来整个工具入口也删掉了。
+ * 现在只剩用户显式配置/显式指定的那一个：**没有可用目标就失败**，没有任何插件自作的落点。
  */
 import { copyFileSync, mkdirSync, statSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
@@ -117,19 +121,19 @@ function isCompleteCopy(target: string, source: string): boolean {
   }
 }
 
-// ─────────────────────────────────── 导出目标与落点（HTTP 与工具共用的唯一实现）
+// ─────────────────────────────────── 导出目标与落点（用户显式导出的唯一实现）
 
 /**
  * 「一个可用的导出目录都没有」的**唯一文案**。
  *
- * HTTP 路由（`400 no_export_dir`）与 `pixmart_projects action=export` 共用这一条字符串：
- * 两个入口说的是同一件事，就没有理由让用户读到两种说法。**必须指向设置页**——
- * 失败而不告诉人去哪儿配，等于把人卡在原地。
+ * 用户点作品库的「导出」时，路由回 `400 no_export_dir` 并带上这一条字符串。
+ * 历史上 `pixmart_projects action=export` 也共用它——那个 action 已删除（§16.6），
+ * 但文案本身没变：**必须指向设置页**——失败而不告诉人去哪儿配，等于把人卡在原地。
  */
 export const NO_EXPORT_DIR_MESSAGE =
   '没有可用的导出目录：请先在设置里配置作品库导出路径（设置 → PixMart → 作品库导出路径），或显式指定目标目录（绝对路径）'
 
-/** 导出目标解析结果：失败时带 HTTP 同款错误码，两个入口据此回 400 / 结构化失败。 */
+/** 导出目标解析结果：失败时带 HTTP 错误码，路由据此回 400。 */
 export type ExportRootResolution =
   | { readonly ok: true; readonly root: string }
   | {

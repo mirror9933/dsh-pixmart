@@ -4,20 +4,28 @@
  * 设计原则：**破坏性操作必须显式确认**。`delete` 要求 `confirm: true`，
  * 且只操作自己 projects 目录下解析得到的路径（经 `assertContained` 校验）。
  *
+ * 设计原则之二（2026-10-06 收敛）：**Agent 没有任何写文件的落点**。
+ * 本工具只会写插件数据目录（软删 = 移进回收站）；它**不再**有 `export` action——
+ * 导出是"用户刻意挑选、要长期留存"的动作，只留在用户点界面的那条 HTTP 路径上
+ * （`POST /pixmart/api/projects/<id>/export`，写用户配置的「作品库导出路径」）。
+ * Agent 需要"给用户文件"时，用 `action=get` 报出的**会话暂存副本目录**
+ * （工作区内的 `pixmart-out/<项目 id>`，生成时自动留下的那一份）——
+ * 那是**已经存在**的副本，不需要新写任何东西。
+ *
  * `delete` 的语义与 HTTP 路径（`POST /pixmart/api/projects/<id>/delete`）**一致**：
  * 默认是**软删**（`moveToTrash` → `projects/.trash/<id>`，可恢复），
  * 只有显式 `permanent: true` 才是真删。为什么 Agent 这条路也必须能恢复：
  * 用户一句"把那些测试项目删掉"是最容易触发删除的入口，若这里只能硬删，
  * 模型一旦理解错，磁盘上的字节就永久没了——而 UI 那条路是能救回来的。
  * 因此补齐对称的 `restore` action：Agent 删错了可以自己救回来，不必让用户去界面点
- * （作品库优化方案 §4 决定①、§6.1；contract-notes §16.4）。
+ * （作品库优化方案 §4 决定①、§6.1；contract-notes §16.4、§16.6）。
  */
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { historicalTotals } from '../store/historical.js'
-import type { ToolContentBlock, ToolDefinitionLike } from '../host-types.js'
-import { exportImages, planProjectExport, resolveExportRoot } from './export-output.js'
-import { TOOL_FOOTER, failure, fromException, type ToolRuntime } from './runtime.js'
+import type { ToolContentBlock, ToolDefinitionLike, ToolRunContext } from '../host-types.js'
+import { workspaceStagingDir } from './workspace-copy.js'
+import { failure, fromException, type ToolRuntime } from './runtime.js'
 
 function pickString(source: unknown, key: string): string | undefined {
   if (typeof source !== 'object' || source === null) return undefined
@@ -40,34 +48,30 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
   return {
     name: 'pixmart_projects',
     description: [
-      '访问已生成的项目与用量记录：list / get / export / delete / restore / usage。',
-      '调用时机：想知道"以前生成过什么""用了多少次""把某个项目的图导出来""删错了要恢复"。',
+      '访问已生成的项目与用量记录：list / get / delete / restore / usage。',
+      '调用时机：想知道"以前生成过什么""用了多少次""某个项目的图在哪""删错了要恢复"。',
+      'get：给出项目详情；**能取到会话工作区时**还会给出该项目在会话工作区内的暂存副本目录',
+      '（`<工作区>/pixmart-out/<项目 id>`，附 exists 标志）——图片原件始终在插件数据目录（作品库可浏览），',
+      '要用某个路径内嵌图片，就用这个已经存在的副本目录。',
+      '本工具不把图片复制到用户的设置目录或任何其它落点：Agent 侧没有这个能力，只碰插件数据目录（软删 / 恢复）。',
       'delete 默认是**软删**：项目被移入回收站（可恢复、磁盘上的字节一个都没丢），仍需显式传 confirm: true。',
       '只有再传 permanent: true 才是**永久删除、不可恢复**——用户没明确说要永久删就用默认的软删。',
       'delete 之后可以用 restore（ids = 被删的 id，或 list 里报出的回收站条目 id）恢复。',
-      '副作用：export 把该项目的图片**复制**到 <目标>/<项目 id>/（原件不动）。目标 = 入参 dir，',
-      '未给 dir 时用设置里的「作品库导出路径」；两者都没有 → 失败并提示去设置里配，**不会**有默认落点。',
-      'delete 默认只移入回收站，permanent: true 才真的删除项目目录。',
     ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'get', 'export', 'delete', 'restore', 'usage'],
+          enum: ['list', 'get', 'delete', 'restore', 'usage'],
           description: '要执行的操作。',
         },
-        id: { type: 'string', description: '项目 id（get / export 用）。' },
+        id: { type: 'string', description: '项目 id（get 用）。' },
         ids: {
           type: 'array',
           items: { type: 'string' },
           description:
             '项目 id 列表（delete 用）；restore 也用它，元素可以是回收站条目 id 或原项目 id。',
-        },
-        dir: {
-          type: 'string',
-          description:
-            'export 用：导出目标目录（绝对路径），覆盖设置里的「作品库导出路径」；省略则用设置里的那一个，两者都没有就失败。',
         },
         limit: { type: 'integer', minimum: 1, maximum: 200, description: 'list / usage 的条数上限。' },
         confirm: { type: 'boolean', description: 'delete 必须为 true 才执行（软删与永久删都要求）。' },
@@ -89,7 +93,7 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
       render: (_args, value) => renderProjects(value),
     },
     isConcurrencySafe: () => true,
-    async execute(args: unknown): Promise<unknown> {
+    async execute(args: unknown, exec: ToolRunContext): Promise<unknown> {
       try {
         const action = pickString(args, 'action') ?? 'list'
         const limit = Math.min(Math.max(Number(pickNumberOr(args, 'limit', 20)), 1), 200)
@@ -143,9 +147,13 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
           const id = pickString(args, 'id')
           if (id === undefined) return failure('invalid_args', 'get 需要 id')
           const record = runtime.projectStore.read(id)
+          // 会话暂存目录：Agent 侧唯一的"文件在哪"来源（本工具不导出、不复制）。
+          // 拿不到工作区时 `staging` 是 undefined → 字段**缺省**，绝不编造路径。
+          const staging = workspaceStagingDir(exec, record.id)
           return {
             ok: true,
             action,
+            dataDir: runtime.dataDir,
             project: {
               id: record.id,
               name: record.name,
@@ -166,43 +174,7 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
                 ...(item.error === undefined ? {} : { error: item.error }),
               })),
             },
-          }
-        }
-
-        if (action === 'export') {
-          const id = pickString(args, 'id')
-          if (id === undefined) return failure('invalid_args', 'export 需要 id')
-
-          // 目标：入参 `dir` 覆盖 > 配置里的「作品库导出路径」> 失败。
-          // 与 HTTP 路由共用 `resolveExportRoot`，**没有**插件自作的默认落点：
-          // 曾经默认写 `<dataDir>/exports/`，那让"导出到底去哪"有了两个答案。
-          // 判定顺序也与 HTTP 一致（先判目标再读项目），免得同一份输入两个入口给出不同的错。
-          const config = await runtime.config()
-          const resolved = resolveExportRoot(pickString(args, 'dir'), config.exportDir)
-          if (!resolved.ok) return failure(resolved.code, resolved.message)
-
-          const record = runtime.projectStore.read(id)
-
-          // 落点与 HTTP 完全一致：`<目标>/<projectId>/`，文件名同样内容寻址。
-          const plan = planProjectExport(
-            resolved.root,
-            id,
-            runtime.projectStore.imagesDir(id),
-            record.items,
-          )
-          if (!plan.ok) return failure(plan.code, plan.message)
-
-          const outcome = exportImages(plan.target, plan.sources)
-          // 字段名是 `targetDir` 而**不是** `exportDir`：后者已经是设置里的
-          // 「作品库导出路径」配置项，两者同名却毫无关系，读代码的人必然误会（决定①的落地）。
-          return {
-            ok: true,
-            action,
-            id,
-            count: outcome.exported.length,
-            targetDir: plan.target,
-            files: outcome.exported,
-            warnings: outcome.warnings,
+            ...(staging === undefined ? {} : { workspaceOut: staging }),
           }
         }
 
@@ -349,12 +321,8 @@ function renderProjects(value: Record<string, unknown>): ToolContentBlock[] {
     return [{ type: 'text', text: lines.join('\n') }]
   }
 
-  if (action === 'export') {
-    lines.push(`已导出 ${String(value.count)} 个文件到 ${String(value.targetDir)}`)
-    // 复制失败被收敛成警告（原件仍在），必须说出来——否则"已导出 0 个文件"会被读成没找到图。
-    const warnings = Array.isArray(value.warnings) ? value.warnings : []
-    for (const warning of warnings) lines.push(`⚠ ${String(warning)}`)
-    return [{ type: 'text', text: lines.join('\n') }]
+  if (action === 'get') {
+    return [{ type: 'text', text: renderProjectDetail(value) }]
   }
 
   if (action === 'delete') {
@@ -395,4 +363,58 @@ function renderProjects(value: Record<string, unknown>): ToolContentBlock[] {
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
 }
 
-void TOOL_FOOTER
+/**
+ * `action=get` 的渲染文本。
+ *
+ * 三件事必须说清楚，否则 Agent 只有一串路径可猜：
+ *   1. **原件**在插件数据目录（作品库浏览的就是它，本工具不复制不移动）；
+ *   2. **会话暂存副本**在工作区内的 `pixmart-out/<项目 id>`——这是唯一能被客户端
+ *      渲染成可预览会话地址的路径，可直接内嵌 / `present`；顺带报"在不在"，
+ *      免得它去 present 一个还不存在的目录；
+ *   3. 本工具**不会**导出到用户的设置目录（Agent 侧没有写文件的落点）。
+ *
+ * 拿不到工作区时字段缺省，文本也必须**说出来**（"没有可给出的路径"），
+ * 而不是让模型把缺失读成"路径是空的"。
+ */
+function renderProjectDetail(value: Record<string, unknown>): string {
+  const project = (value.project ?? {}) as Record<string, unknown>
+  const items = Array.isArray(project.items) ? project.items : []
+  const projectId = String(project.id ?? '')
+  const lines: string[] = []
+
+  let images = 0
+  for (const entry of items) {
+    const item = entry as Record<string, unknown>
+    const count = Array.isArray(item.images) ? item.images.length : 0
+    images += count
+    lines.push(
+      `- ${String(item.module)} ${String(item.label)}：${count} 张（${String(item.status)}，${String(item.size)}）`,
+    )
+  }
+  lines.unshift(`项目 ${projectId}（${String(project.name)}）：${items.length} 项 / ${images} 张图`)
+
+  // ① 原件：数据目录是唯一真相。
+  const dataDir = typeof value.dataDir === 'string' ? value.dataDir : ''
+  lines.push(
+    dataDir === ''
+      ? '原件在插件数据目录（作品库可浏览）——本工具只读，不复制也不移动它们。'
+      : `原件在插件数据目录：${join(dataDir, 'projects', projectId, 'images')}（作品库可浏览）——本工具只读，不复制也不移动它们。`,
+  )
+
+  // ② 会话暂存副本：Agent 能拿到手的路径就是它。
+  const staging = value.workspaceOut
+  if (typeof staging === 'object' && staging !== null) {
+    const dir = String((staging as Record<string, unknown>).dir ?? '')
+    const exists = (staging as Record<string, unknown>).exists === true
+    lines.push(
+      `会话暂存副本：${dir}（当前${exists ? '已存在，可直接用这个路径内嵌图片或 present' : '还不存在——本会话尚未生成过这个项目的图；生成时会自动留一份到这里'}）`,
+    )
+    lines.push('（工作区内的路径才会被客户端渲染成可预览的会话地址）')
+  } else {
+    lines.push('会话暂存副本：本次调用拿不到会话工作区，因此没有可给出的工作区路径（这不是错误）。')
+  }
+
+  // ③ 边界：本工具不写用户的目录。
+  lines.push('本工具不会把图片导出到设置里的「作品库导出路径」，也不会往任何其它落点写文件。')
+  return lines.join('\n')
+}

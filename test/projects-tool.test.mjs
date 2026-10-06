@@ -9,16 +9,28 @@
  *   2. 只有 `permanent: true` 才真删，且真删后**回收站里也没有**；
  *   3. 两种模式都仍要求 `confirm: true`，缺了就拒绝且**不碰磁盘**。
  *
- * 另外钉住 `export` 的目标口径与 HTTP 完全一致：入参 `dir` 覆盖 > 配置里的
- * 「作品库导出路径」> 失败，落点固定 `<目标>/<项目 id>/`；返回字段仍叫 `targetDir`
- * （不再是会与配置项 `exportDir` 撞概念的那个名字），且**不再**有数据目录内的
- * `exports/` 这条隐式落点。以及 `list` 绝不把回收站条目混进项目列表。
+ * 另外钉住两次收敛后的边界（contract-notes §16.5 / §16.6）：
+ *   1. `pixmart_projects` **没有** `export` action——Agent 侧不存在任何写文件的落点，
+ *      调 `export` 只走未知 action 的既有失败路径，磁盘一个字节都不动（含**不得**产生
+ *      数据目录下的 `exports/`）；
+ *   2. Agent 要"知道文件在哪"靠 `action=get` 报出的**会话暂存目录**
+ *      （`<工作区>/pixmart-out/<项目 id>` + `exists` 标志）——只探测、绝不创建，
+ *      拿不到工作区时该字段**缺省**（不编造路径）。
+ * 以及 `list` 绝不把回收站条目混进项目列表。
  *
  * 全程不联网、不调用厂商：项目直接由 `ProjectStore` 造出来（要的是删除语义，不是生图）。
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -42,6 +54,14 @@ const stubExec = {
   signal: new AbortController().signal,
   deferContext: () => {},
   concludeTurn: () => {},
+}
+
+/**
+ * 带会话工作区的执行上下文：形状与宿主一致（`agent.session.header.cwd`）。
+ * 与 `test/pixmart-out.test.mjs` 同一套取证（见 src/tools/workspace-copy.ts 顶部）。
+ */
+function execIn(workspace) {
+  return { ...stubExec, agent: { id: 'agent-test', session: { header: { cwd: workspace } } } }
 }
 
 /** 造一个临时数据目录 + 真实 runtime（配置里不需要任何厂商）。 */
@@ -285,50 +305,49 @@ describe('pixmart_projects：confirm 红线（两种模式都要）', () => {
   })
 })
 
-describe('pixmart_projects：export 的目标与 HTTP 同一口径', () => {
-  it('给了 dir → 落 <dir>/<项目 id>/；数据目录下**不再**产生 exports/', async () => {
+describe('pixmart_projects：export 能力已被删除（Agent 没有任何写文件的落点）', () => {
+  it('action=export → 走未知 action 的既有失败路径，且不写任何文件', async () => {
     await withRuntime(async ({ dir, runtime, tool }) => {
       const record = await seedProject(runtime, 'A')
-      const target = join(dir, 'explicit-target')
-      const exported = await tool.execute(
-        { action: 'export', id: record.id, dir: target },
+      const before = readdirSync(dir).sort()
+
+      const refused = await tool.execute(
+        { action: 'export', id: record.id, dir: join(dir, 'agent-target') },
         stubExec,
       )
 
-      assert.equal(exported.ok, true)
-      assert.equal(exported.count, 1)
-      assert.equal(exported.targetDir, join(target, record.id), '落点必须是 <dir>/<项目 id>')
-      assert.equal('exportDir' in exported, false, '不得再回传与配置项撞名的 exportDir')
-      assert.deepEqual([...exported.warnings], [], '正常导出不该有警告')
-      assert.equal(existsSync(exported.files[0]), true)
-      assert.equal(readFileSync(exported.files[0]).equals(PNG), true, '导出的是同一份字节')
-
-      // ① 只复制、不移动：原件仍在数据目录的 images/ 里
-      const stored = runtime.projectStore.read(record.id).items[0].images[0].file.split('/').pop()
-      assert.equal(existsSync(join(runtime.projectStore.imagesDir(record.id), stored)), true)
-      // ② 插件不再自作主张往数据目录里写 exports/（那是被取消的隐式默认落点）
+      assert.equal(refused.ok, false)
+      assert.equal(refused.error.code, 'invalid_args')
+      assert.match(refused.error.message, /未知 action/)
+      assert.match(refused.error.message, /export/)
+      // 失败不碰磁盘：连空目录都不许造（那条 `dir` 入参本身也已经不存在了）
+      assert.deepEqual(readdirSync(dir).sort(), before, '被拒的 export 不许凭空造目录')
+      assert.equal(existsSync(join(dir, 'agent-target')), false)
       assert.equal(existsSync(join(dir, 'exports')), false, '数据目录下不得有 exports/')
-
-      const text = renderText(tool, {}, exported)
-      assert.match(text, /已导出 1 个文件到/)
-      assert.match(text, /explicit-target/)
-      assert.equal(/exports/.test(text), false, '渲染文本不得再宣称 exports/')
+      // 渲染文本走失败分支（说清错误码），不得宣称"已导出"
+      const text = renderText(tool, {}, refused)
+      assert.match(text, /invalid_args/)
+      assert.equal(/已导出/.test(text), false)
     })
   })
 
-  it('只配了 exportDir → 用配置里的「作品库导出路径」，落 <exportDir>/<项目 id>/', async () => {
-    const exportRoot = mkdtempSync(join(tmpdir(), 'pixmart-tool-export-root-'))
+  it('即使配了「作品库导出路径」，export 仍被拒且那个用户目录不被创建', async () => {
+    const exportRoot = mkdtempSync(join(tmpdir(), 'pixmart-agent-export-root-'))
     try {
       await withRuntime(
         async ({ dir, runtime, tool }) => {
           const record = await seedProject(runtime, 'A')
-          const exported = await tool.execute({ action: 'export', id: record.id }, stubExec)
+          const refused = await tool.execute({ action: 'export', id: record.id }, stubExec)
 
-          assert.equal(exported.ok, true)
-          assert.equal(exported.count, 1)
-          assert.equal(exported.targetDir, join(exportRoot, record.id))
-          assert.equal(existsSync(exported.files[0]), true)
-          assert.equal(existsSync(join(dir, 'exports')), false, '配了 exportDir 也不该碰数据目录里的 exports/')
+          assert.equal(refused.ok, false)
+          assert.equal(refused.error.code, 'invalid_args')
+          assert.equal(
+            existsSync(join(exportRoot, record.id)),
+            false,
+            'Agent 侧不得写进用户配置的作品库导出路径',
+          )
+          assert.deepEqual(readdirSync(exportRoot), [], '用户配置的目录必须一个字节都没被碰')
+          assert.equal(existsSync(join(dir, 'exports')), false)
         },
         { exportDir: exportRoot },
       )
@@ -337,48 +356,68 @@ describe('pixmart_projects：export 的目标与 HTTP 同一口径', () => {
     }
   })
 
-  it('两者皆无 → 明确失败（文案指向设置页），且**不写任何文件**', async () => {
+  it('在干净临时数据目录里跑一遍全部只读/回收站动作：不产生 exports/', async () => {
     await withRuntime(async ({ dir, runtime, tool }) => {
       const record = await seedProject(runtime, 'A')
-      const before = readdirSync(dir).sort()
+      assert.equal(existsSync(join(dir, 'exports')), false, '一开始就不该有')
 
-      const refused = await tool.execute({ action: 'export', id: record.id }, stubExec)
+      await tool.execute({ action: 'list' }, stubExec)
+      await tool.execute({ action: 'get', id: record.id }, stubExec)
+      await tool.execute({ action: 'usage' }, stubExec)
+      await tool.execute({ action: 'export', id: record.id, dir: join(dir, 'nope') }, stubExec)
+      await tool.execute({ action: 'delete', ids: [record.id], confirm: true }, stubExec)
+      await tool.execute({ action: 'restore', ids: [record.id] }, stubExec)
 
-      assert.equal(refused.ok, false)
-      assert.equal(refused.error.code, 'no_export_dir')
-      assert.match(refused.error.message, /设置/)
-      assert.match(refused.error.message, /作品库导出路径/)
-      assert.match(refused.error.message, /PixMart/, '文案要指到设置里的具体位置')
-      // 失败不碰磁盘：连空目录都不许造
-      assert.deepEqual(readdirSync(dir).sort(), before, '没配目录时不许凭空造目录')
-      assert.equal(existsSync(join(dir, 'exports')), false)
+      assert.equal(existsSync(join(dir, 'exports')), false, '数据目录下必须始终没有 exports/')
+      assert.equal(existsSync(join(dir, 'nope')), false)
+    })
+  })
+})
 
-      const text = renderText(tool, {}, refused)
-      assert.match(text, /no_export_dir/)
-      assert.match(text, /设置/)
+describe('pixmart_projects：get 给出会话暂存目录（替代原来的导出）', () => {
+  it('能取到工作区 → 回 <工作区>/pixmart-out/<项目 id> 与 exists 标志；只探测不创建', async () => {
+    await withRuntime(async ({ runtime, tool }) => {
+      const record = await seedProject(runtime, 'A')
+      const workspace = mkdtempSync(join(tmpdir(), 'pixmart-get-workspace-'))
+      try {
+        const first = await tool.execute({ action: 'get', id: record.id }, execIn(workspace))
+        assert.equal(first.ok, true)
+        assert.equal(first.workspaceOut.workspace, workspace)
+        assert.equal(first.workspaceOut.dir, join(workspace, 'pixmart-out', record.id))
+        assert.equal(first.workspaceOut.exists, false, '本会话还没生成过 → 目录不存在')
+        assert.equal(existsSync(first.workspaceOut.dir), false, 'get 只探测，绝不创建目录')
+
+        // 造出副本目录（等价于此前 generate 留下的那一份）→ exists 必须翻真
+        mkdirSync(first.workspaceOut.dir, { recursive: true })
+        const second = await tool.execute({ action: 'get', id: record.id }, execIn(workspace))
+        assert.equal(second.workspaceOut.exists, true)
+        assert.equal(second.workspaceOut.dir, first.workspaceOut.dir)
+
+        // 渲染文本三件事：原件在数据目录、暂存副本路径、本工具不导出到用户目录
+        const text = renderText(tool, {}, second)
+        assert.match(text, /pixmart-out/)
+        assert.equal(text.includes(second.workspaceOut.dir), true, '必须给出暂存目录的完整路径')
+        assert.equal(text.includes(join(runtime.dataDir, 'projects', record.id, 'images')), true)
+        assert.match(text, /作品库可浏览/)
+        assert.match(text, /不会把图片导出到设置里/)
+        assert.equal(/exports\//.test(text), false)
+      } finally {
+        rmSync(workspace, { recursive: true, force: true })
+      }
     })
   })
 
-  it('目标不可写 → 仍是 ok: true + warnings，原件一个字节都没丢', async () => {
-    await withRuntime(async ({ dir, runtime, tool }) => {
+  it('取不到工作区（无 agent / 相对路径）→ 字段缺省，不编造路径', async () => {
+    await withRuntime(async ({ runtime, tool }) => {
       const record = await seedProject(runtime, 'A')
-      // 父级是文件：mkdirSync 一定失败（跨平台都抛）
-      const blocker = join(dir, 'blocker')
-      writeFileSync(blocker, 'not a directory')
-
-      const exported = await tool.execute(
-        { action: 'export', id: record.id, dir: join(blocker, 'out') },
-        stubExec,
-      )
-
-      assert.equal(exported.ok, true, '复制失败不该把工具变成失败')
-      assert.equal(exported.count, 0)
-      assert.equal(exported.warnings.length, 1)
-      assert.match(exported.warnings[0], /产物复制失败：/)
-      assert.match(exported.warnings[0], /原件仍在/)
-      const stored = runtime.projectStore.read(record.id).items[0].images[0].file.split('/').pop()
-      assert.equal(existsSync(join(runtime.projectStore.imagesDir(record.id), stored)), true)
-      assert.match(renderText(tool, {}, exported), /⚠/)
+      for (const exec of [stubExec, execIn('relative/ws')]) {
+        const got = await tool.execute({ action: 'get', id: record.id }, exec)
+        assert.equal(got.ok, true)
+        assert.equal('workspaceOut' in got, false, '拿不到工作区时该字段必须缺省')
+        const text = renderText(tool, {}, got)
+        assert.equal(/pixmart-out/.test(text), false, '文本里不得出现编造的工作区路径')
+        assert.match(text, /拿不到会话工作区/, '必须说出来，别让模型把缺失读成空路径')
+      }
     })
   })
 })
@@ -414,7 +453,7 @@ describe('pixmart_projects：list 与回收站分开报', () => {
 })
 
 describe('pixmart_projects：工具 schema', () => {
-  it('permanent 存在、可选、是 boolean；action 里多了 restore', () => {
+  it('action 列表里没有 export；permanent 可选、是 boolean；action 含 restore；描述不宣称任何写文件能力', () => {
     const { runtime } = makeRuntime()
     try {
       const tool = createProjectsTool(runtime)
@@ -430,17 +469,30 @@ describe('pixmart_projects：工具 schema', () => {
       assert.equal(schema.required.includes('confirm'), false)
       assert.equal(schema.properties.action.enum.includes('restore'), true)
       assert.equal(schema.properties.action.enum.includes('delete'), true)
-      // export 的目标是**显式**的：dir 可覆盖设置里的「作品库导出路径」，且是可选参数
-      assert.equal(schema.properties.dir.type, 'string')
-      assert.equal(schema.required.includes('dir'), false)
+
+      // ① action 列表里不再有 export（逐项断言，避免"漏了一个"被 in 掩盖）
+      assert.deepEqual(
+        [...schema.properties.action.enum],
+        ['list', 'get', 'delete', 'restore', 'usage'],
+        'action 枚举必须恰好是这五个',
+      )
+      assert.equal(schema.properties.action.enum.includes('export'), false)
+      // ② export 的入参 `dir` 一并消失（留着它等于暗示"还能指定落点"）
+      assert.equal('dir' in schema.properties, false, 'dir 入参必须随 export 一起删除')
 
       const description = String(tool.description)
       assert.match(description, /软删/, '描述必须说明 delete 默认是软删')
       assert.match(description, /permanent: true/, '描述必须说明永久删的开关')
       assert.match(description, /restore/, '描述必须提到可恢复')
-      assert.match(description, /作品库导出路径/, '描述必须说明 export 的目标从哪来')
-      assert.match(description, /dir/, '描述必须说明可以用 dir 显式指定目标')
-      assert.equal(/exports\//.test(description), false, '描述不得再宣称数据目录里的 exports/')
+      // ③ 描述里不得再出现 exports/、exportDir，也不得宣称 Agent 能导出/写入其它落点
+      assert.equal(/exports\//.test(description), false, '描述不得宣称数据目录里的 exports/')
+      assert.equal(/exportDir/.test(description), false, '描述不得出现配置项 exportDir')
+      assert.equal(
+        description.includes('export'),
+        false,
+        '描述里不得再出现 export（含 action=export 与任何"把文件写到某处"的说法）',
+      )
+      assert.equal(description.includes('pixmart-out'), true, '描述必须给出会话暂存目录的位置')
     } finally {
       // 这里只读 schema，没写过任何东西；仍清掉临时目录。
       const dir = runtime.dataDir
