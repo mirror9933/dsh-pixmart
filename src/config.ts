@@ -11,6 +11,10 @@
 
 import { isAbsolute } from 'node:path'
 
+// `sizes.js` 对 `config.js` 只有 `import type`（编译后不留依赖），所以这条运行时
+// 依赖是单向的，不会形成环。
+import { sizeOptionsFor, type SizeOption } from './sizes.js'
+
 /** 四种调用形态。`gemini-native` 是 Ofox 的 Gemini 图像模型唯一可用路径。 */
 export type ApiMode = 'images-generations' | 'images-edits' | 'chat-image' | 'gemini-native'
 /**
@@ -618,6 +622,15 @@ export interface ProviderView {
   readonly models: readonly string[]
   readonly allowedSizes: readonly string[]
   readonly sizeMode: SizeMode
+  /**
+   * 设置页「默认尺寸」下拉的候选（`{value,label}`）。
+   *
+   * **值的词表由 `sizes.ts` 出**（内置能力优先），所以 UI 能选的 == `checkSize` 认的。
+   * 用厂商的**第一个模型**当代表来定位能力：agnes 的官方表对全部 agnes 模型都一样，
+   * 而 `models` 为空时退回厂商配置（`allowedSizes`）。客户端在没有这个字段时
+   * 仍会退回 `allowedSizes`，保证老宿主可用。
+   */
+  readonly sizeOptions: readonly SizeOption[]
   readonly timeoutMs: number
 }
 
@@ -645,6 +658,11 @@ export function toProviderView(
     models: provider.models,
     allowedSizes: provider.allowedSizes,
     sizeMode: provider.sizeMode,
+    sizeOptions: sizeOptionsFor({
+      model: provider.models[0] ?? '',
+      apiMode: provider.apiMode,
+      provider,
+    }),
     timeoutMs: provider.timeoutMs,
   }
 }

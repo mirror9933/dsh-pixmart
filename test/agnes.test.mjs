@@ -24,7 +24,7 @@ import { createServer } from 'node:http'
 
 import { generateImages, resolvePlan } from '../lib/vendor/openai-compat.js'
 import { fetchProviderModels } from '../lib/vendor/models.js'
-import { checkSize } from '../lib/sizes.js'
+import { checkSize, sizeOptionsFor } from '../lib/sizes.js'
 import {
   defaultAgnesProvider,
   defaultConfig,
@@ -244,6 +244,24 @@ describe('Agnes 厂商预设', () => {
     const result = checkSize({ model: 'agnes-image-2.5-flash', size: '2624x1472', apiMode: 'images-generations', provider })
     assert.equal(result.supported, true)
     assert.equal(result.normalized, '2624x1472')
+  })
+
+  it('设置页的尺寸候选：agnes 出 40 项、像素带「档位 · 比例」标签（UI 能选档位的前提）', () => {
+    // 档位只有官方表知道，所以**候选由宿主出**：客户端不该自己拼词表，否则
+    // "UI 能选的"与"checkSize 认的"会各说各话（这正是本次要修的那类缺陷）。
+    const options = sizeOptionsFor({
+      model: 'agnes-image-2.1-flash',
+      apiMode: 'images-generations',
+      provider: { ...agnes(), allowedSizes: ['1:1'] },
+    })
+    assert.equal(options.length, 40)
+    assert.deepEqual(
+      options.filter((entry) => entry.label.includes('2K')).map((entry) => entry.label),
+      ['2K · 1:1', '2K · 3:4', '2K · 4:3', '2K · 16:9', '2K · 9:16', '2K · 2:3', '2K · 3:2', '2K · 21:9'],
+      '每个比例都该有 2K 档，标签是「档位 · 比例」',
+    )
+    // 比例项的标签就是它自己（没有档位信息）
+    assert.deepEqual(options.filter((entry) => entry.value === '3:4'), [{ value: '3:4', label: '3:4' }])
   })
 
   it('只给档位（`2K`）时拒绝并给出可用像素，而不是替用户默认一个比例', () => {

@@ -253,7 +253,7 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），353 项（其中 agnes 23 项）
+pnpm test             # node:test（含 jsdom lane），358 项（其中 agnes 24 项）
 pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），56 项
 pnpm verify           # 上面几条串起来
 ```

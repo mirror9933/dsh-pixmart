@@ -559,6 +559,92 @@ describe('jsdom lane：设置页可写', () => {
     assert.equal(sent.size, '3:4')
     assert.ok(lane.text().includes('已保存'), '保存成功应给出提示')
   })
+
+  it('默认值卡片：尺寸候选用宿主给的 sizeOptions（值是像素、标签是「档位 · 比例」）', async () => {
+    // 这是"设置页能选 1K–4K"的接线点：**词表由宿主出**（sizes.ts 的官方表），
+    // 客户端只渲染。所以这里钉住两件事：显示的是 label、存下去的是 value。
+    const lane = await createLane({
+      respond: (url, init) => {
+        if (String(init?.method).toUpperCase() === 'POST' && /\/api\/defaults$/.test(String(url))) {
+          return jsonResponse({
+            ok: true,
+            defaults: { provider: 'agnes', model: 'a-1', size: '2048x2048', n: 1 },
+          })
+        }
+        return jsonResponse(
+          providersPayload({
+            providers: [
+              providerView({
+                id: 'agnes',
+                label: 'Agnes AI',
+                dialect: 'agnes',
+                models: ['a-1'],
+                allowedSizes: ['1:1', '3:4'],
+                sizeOptions: [
+                  { value: '1024x1024', label: '1K · 1:1' },
+                  { value: '2048x2048', label: '2K · 1:1' },
+                  { value: '2624x1472', label: '2K · 16:9' },
+                ],
+              }),
+            ],
+            defaults: { provider: 'agnes', model: 'a-1', size: '1024x1024', n: 1 },
+          }),
+        )
+      },
+    })
+    await lane.render()
+
+    const triggers = lane.selectTriggers()
+    const sizeTrigger = triggers[2] // 下拉顺序：厂商 / 模型 / 尺寸
+    assert.equal(
+      lane.selectValue(sizeTrigger),
+      '1K · 1:1',
+      '默认值 1024x1024 在界面上应显示为「1K · 1:1」——这就是档位可见的证据',
+    )
+    await lane.pick(sizeTrigger, '2048x2048')
+    assert.equal(lane.selectValue(sizeTrigger), '2K · 1:1', '选完应显示 2K')
+    await lane.click('保存默认值')
+
+    const posts = lane.postCalls()
+    assert.equal(posts.length, 1, `应只有 1 次 POST，实际 ${posts.length}`)
+    const sent = JSON.parse(String(posts[0].body))
+    assert.equal(sent.size, '2048x2048', '存下去的必须是原始像素写法，不是给人看的标签')
+  })
+
+  it('默认值卡片：换厂商时把"上一个厂商专属"的尺寸换掉（不留无效默认值）', async () => {
+    // agnes 的档位要落到精确像素（2048x2048），这个写法对 ofox 无效。
+    // 切厂商时若当前值不在新候选里，必须自动退回新厂商的第一项。
+    const lane = await createLane({
+      respond: () =>
+        jsonResponse(
+          providersPayload({
+            providers: [
+              providerView({
+                id: 'agnes',
+                label: 'Agnes AI',
+                dialect: 'agnes',
+                models: ['a-1'],
+                sizeOptions: [{ value: '2048x2048', label: '2K · 1:1' }],
+              }),
+              providerView({ id: 'ofox', label: 'Ofox', models: ['o-1'], allowedSizes: ['1:1', '3:4'] }),
+            ],
+            defaults: { provider: 'agnes', model: 'a-1', size: '2048x2048', n: 1 },
+          }),
+        ),
+    })
+    await lane.render()
+
+    const triggers = lane.selectTriggers()
+    assert.equal(lane.selectValue(triggers[2]), '2K · 1:1', '初始是 agnes 的 2K')
+    await lane.pick(triggers[0], 'ofox') // 厂商
+    await lane.click('保存默认值')
+
+    const posts = lane.postCalls()
+    assert.equal(posts.length, 1, `应只有 1 次 POST，实际 ${posts.length}`)
+    const sent = JSON.parse(String(posts[0].body))
+    assert.equal(sent.provider, 'ofox')
+    assert.equal(sent.size, '1:1', 'agnes 的 2048x2048 不能带到 ofox 名下')
+  })
 })
 
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────

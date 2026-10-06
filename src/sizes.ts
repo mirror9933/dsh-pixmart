@@ -141,10 +141,14 @@ export const SIZE_CAPABILITIES: readonly SizeCapability[] = [
   },
 ]
 
-export interface SizeCheckInput {
-  readonly model: string
+export interface SizeCheckInput extends SizeCapabilityQuery {
   /** 用户/Agent 给的尺寸，比例或像素都可以。 */
   readonly size: string
+}
+
+/** 定位一份尺寸能力只需要这三样（选项列表与校验共用）。 */
+export interface SizeCapabilityQuery {
+  readonly model: string
   readonly apiMode: ApiMode
   readonly provider: ProviderConfig
 }
@@ -311,7 +315,7 @@ function normalizeTo(size: string, form: SizeForm): string | undefined {
 }
 
 /** 选出适用于该模型/厂商的能力条目（内置优先，其次厂商配置）。 */
-function capabilityFor(input: SizeCheckInput): SizeCapability {
+function capabilityFor(input: SizeCapabilityQuery): SizeCapability {
   const builtin = SIZE_CAPABILITIES.find(
     (entry) =>
       entry.match.test(input.model) &&
@@ -491,6 +495,39 @@ export function checkSize(input: SizeCheckInput): SizeCheckResult {
     `模型 "${input.model}" 不支持尺寸 "${input.size}"（${capability.label}）`,
     pool.length > 0 ? pool : declared,
   )
+}
+
+// ─────────────────────────────────────────────────────────── 设置页用的尺寸选项
+
+/** 设置页「默认尺寸」下拉的一项。`value` 是**要存进配置**的原始写法。 */
+export interface SizeOption {
+  readonly value: string
+  readonly label: string
+}
+
+/**
+ * 尺寸选项的显示名：官方表内的像素给「档位 · 比例」（`2048x2048` → `2K · 1:1`），
+ * 其余（比例、表外像素）原样显示。
+ *
+ * 档位只有官方表知道，所以**不能在客户端猜**——这也正是选项由宿主提供的原因。
+ */
+export function sizeOptionLabel(value: string): string {
+  const entry = AGNES_SIZE_TABLE.find((item) => item[0] === value)
+  return entry === undefined ? value : `${entry[1]} · ${entry[2]}`
+}
+
+/**
+ * 该厂商/模型的尺寸选项（供设置页渲染）。
+ *
+ * 值的词表**只在 `sizes.ts` 里定义**：内置能力（Gemini / gpt-image / Agnes 官方表）
+ * 与厂商配置都经同一条路径产出，所以"UI 能选的"与"`checkSize` 认的"是同一份，
+ * 客户端不需要、也不允许自己拼尺寸词表。`value` 是原始写法（如 `2048x2048`），
+ * `label` 才是给人看的（如 `2K · 1:1`）。
+ *
+ * @param query - 模型、apiMode 与厂商配置（与 `checkSize` 同源）。
+ */
+export function sizeOptionsFor(query: SizeCapabilityQuery): readonly SizeOption[] {
+  return capabilityFor(query).sizes.map((value) => ({ value, label: sizeOptionLabel(value) }))
 }
 
 // ─────────────────────────────────────────────────────────── Agnes 档位/比例

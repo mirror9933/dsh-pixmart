@@ -2441,3 +2441,67 @@ agnes 国内站在模型未开通时返回的是 **HTTP 503 + `model_not_found`*
 浏览器 `pnpm test:browser` **56**（未调整任何既有断言；`test/vendor.test.mjs` 的
 比例/像素归一化断言、`test/p2.test.mjs`、`test/insufficient-credits.test.mjs` 全部原样通过）。
 
+---
+
+## 28. 设置页能选档位（1K–4K）：尺寸词表由宿主出（2026-10-12）
+
+补上 §27.8 的最大缺口：§27 让"精确像素 → 档位"在**工具链路**上通了，但设置页的
+「默认尺寸」下拉仍然只有 8 个比例，从 UI 只能拿到默认 `1K`。现在 UI 能直接选 2K/3K/4K。
+
+### 28.1 做法：词表只有一份，客户端只渲染
+
+- `sizes.ts` 新增 `sizeOptionsFor({model, apiMode, provider})` → `{value, label}[]`：
+  **`value` 是要存进配置的原始写法**（`2048x2048`），**`label` 才是给人看的**（`2K · 1:1`）。
+  档位只有官方表知道，所以标签也在宿主算——`sizeOptionLabel()` 查 `AGNES_SIZE_TABLE`，
+  查不到就原样返回（比例、表外像素、其它厂商的像素都走这一条）。
+- `ProviderView.sizeOptions` 把这份清单带进 `GET /providers`；`toProviderView` 用
+  **厂商的第一个模型**当代表定位能力（agnes 的官方表对全部 agnes 模型一致；
+  `models` 为空时自然退回厂商配置的 `allowedSizes`）。
+- 客户端 `DefaultsCard` 直接渲染 `sizeOptions`；**没有该字段时退回 `allowedSizes`**
+  （老宿主 / 老夹具仍然可用，这也是浏览器 lane 夹具不用改的原因）。
+
+**为什么不把 32 个尺寸写进客户端**：那样"UI 能选的"与"`checkSize` 认的"会成为两份词表，
+迟早各说各话——本次修的 `listModules`、尺寸塌缩都是这一类（看起来生效、其实不是同一回事）。
+依赖方向也顺势单向化：`config.ts → sizes.ts`（`sizes.ts` 对 `config.ts` 只有 `import type`，
+编译后不留运行时依赖，不成环）。
+
+### 28.2 顺带修掉：换厂商会把上一个厂商专属的尺寸带过去
+
+agnes 的档位要落到 `2048x2048` 这种**厂商专属**写法，而它对 ofox 无效。原先换厂商只重置
+**模型**（避免 `unknown_model`），尺寸原样带过去 → 存下一个对后者无效的默认值，
+下次生图才报错。现在换厂商时若当前尺寸不在新候选里，自动退回新厂商的第一项
+（与模型重置同一处、同一理由）。
+
+### 28.3 新增断言（5 条，零网络）
+
+1. `test/agnes.test.mjs`：agnes 的候选 **40 项**（32 像素 + 8 比例），
+   且 8 个比例的 `2K` 标签恰好是 `['2K · 1:1','2K · 3:4','2K · 4:3','2K · 16:9','2K · 9:16','2K · 2:3','2K · 3:2','2K · 21:9']`；
+   比例项的标签等于它自己；
+2. `test/providers-api.test.mjs`：`GET /providers` 的 `sizeOptions` 对厂商配置是
+   `[{value:'1:1',label:'1:1'},{value:'3:4',label:'3:4'}]`；
+3. 同上，agnes：**老配置的 `allowedSizes: ['1:1']` 不影响候选**（仍是 40 项，
+   含 `2048x2048`→`2K · 1:1`、`2624x1472`→`2K · 16:9`）——与 `checkSize` 同一条路径；
+4. `test/client-settings-dom.test.mjs`：默认值卡片把 `1024x1024` 显示为 **`1K · 1:1`**，
+   选 `2048x2048` 后显示 `2K · 1:1`，**存下去的仍是 `2048x2048`**（标签不落盘）；
+5. 同上：初始是 agnes 的 `2K · 1:1`，切到 ofox 后保存 → `size` 变成 `1:1`（不带过去）。
+
+### 28.4 已知缺口（明说）
+
+- **`POST /defaults` 仍然不校验 `size`**：UI 只会送候选里的值，但手写请求仍能存进一个
+  以后会失败的值（例如给 ofox 存 `2048x2048`）。要补需要先解决"按哪个模型校验"
+  （`defaults.model` 可能属于另一个厂商），本次不动。
+- `sizeOptions` 用**第一个模型**当代表：若某厂商把能力不同的模型混在一起
+  （ofox 的 `models` 里既有图像模型也有纯文本模型），候选按第一个模型算。
+  ofox 的第一个是 gemini 图像模型 → 候选是内置的 **10 个比例**（比它配置里的 5 个更全，
+  与 `checkSize` 的实际判定一致）。CI 夹具的 provider 不匹配任何内置表，行为不变。
+
+### 28.5 结果
+
+`pnpm verify` 全绿：宿主 `pnpm test` **358**（§27 的 353 + 新增 5），
+浏览器 `pnpm test:browser` **56**（未调整任何既有断言；默认值卡片的字段说明文案变长，
+几何类断言未受影响）。
+
+> **本次会话的机器状态**：写入过程中第 4 次蓝屏，**只损坏了构建产物**（`lib/` 31 个文件、
+> `dist/client.js` 整份 291346 字节全零），源码零 NUL。产物可再生产，`pnpm build` +
+> `pnpm build:client` 后重新扫描为 0、`pnpm verify` 全绿。但这已是第 4 次，建议查硬件/存储。
+

@@ -3427,10 +3427,22 @@ window.__ModuleLoader__.load({
 
       const current = providers.find((item) => isObject(item) && item.id === provider)
       const models = isObject(current) && isArray(current.models) ? current.models : []
-      const sizes =
-        isObject(current) && isArray(current.allowedSizes) && current.allowedSizes.length > 0
-          ? current.allowedSizes.map(String)
-          : ['1:1', '3:4', '4:3', '9:16', '16:9']
+      // 尺寸候选**由宿主给词表**（`sizeOptions`：{value,label}），客户端不自己拼——
+      // 否则"UI 能选的"与"后端认的"会各说各话（agnes 的档位只有官方表知道）。
+      // 宿主较老、没有该字段时退回 `allowedSizes`（值即标签）。
+      const sizeOptionsOf = (item) => {
+        if (isObject(item) && isArray(item.sizeOptions) && item.sizeOptions.length > 0) {
+          return item.sizeOptions
+            .filter(isObject)
+            .map((entry) => ({ value: String(entry.value), label: String(entry.label ?? entry.value) }))
+        }
+        const list =
+          isObject(item) && isArray(item.allowedSizes) && item.allowedSizes.length > 0
+            ? item.allowedSizes.map(String)
+            : ['1:1', '3:4', '4:3', '9:16', '16:9']
+        return list.map((name) => ({ value: name, label: name }))
+      }
+      const sizes = sizeOptionsOf(current)
 
       const onProvider = (next) => {
         setProvider(next)
@@ -3439,6 +3451,12 @@ window.__ModuleLoader__.load({
         const target = providers.find((item) => isObject(item) && item.id === next)
         const list = isObject(target) && isArray(target.models) ? target.models.map(String) : []
         if (list.length > 0 && list.indexOf(model) < 0) setModel(list[0])
+        // 尺寸同理：当前值可能是**上一个厂商专属**的写法（如 agnes 的 `2048x2048`），
+        // 带到新厂商会存下一个对后者无效的默认值。新候选里没有它就退回第一项。
+        const nextSizes = sizeOptionsOf(target)
+        if (nextSizes.length > 0 && !nextSizes.some((entry) => entry.value === size)) {
+          setSize(nextSizes[0].value)
+        }
       }
 
       const nValue = Number(n)
@@ -3519,13 +3537,13 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '尺寸', description: '默认出图比例' },
+            { label: '尺寸', description: '默认出图尺寸（Agnes 的档位 1K–4K 由精确像素决定）' },
             h(SelectField, {
               id: 'pxm-defaults-size',
               label: '尺寸',
               value: size,
               disabled: save.busy,
-              options: sizes.map((name) => ({ value: name, label: name })),
+              options: sizes,
               onChange: (event) => setSize(event.target.value),
             }),
           ),

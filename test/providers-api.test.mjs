@@ -864,6 +864,56 @@ describe('POST /pixmart/api/providers/<id>/test', () => {
 
 // ── defaults ─────────────────────────────────────────────────────────────────
 
+describe('GET /pixmart/api/providers：尺寸选项由宿主出词表（UI 不自己拼）', () => {
+  it('厂商配置的尺寸 → {value,label}（非官方表内取值，标签即原值）', async () => {
+    const { dir, store } = makeStore({ allowedSizes: ['1:1', '3:4'], models: [] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.equal(result.status, 200)
+      assert.deepEqual(result.json.providers[0].sizeOptions, [
+        { value: '1:1', label: '1:1' },
+        { value: '3:4', label: '3:4' },
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('agnes：内置官方表优先于 config 的 allowedSizes，像素带「档位 · 比例」标签', async () => {
+    // 这一条同时钉住两件事：① 设置页拿得到 1K–4K 的候选（UI 能选档位的前提）；
+    // ② 老配置里 allowedSizes 只有比例，**不影响**候选 —— 与 checkSize 同一条路径。
+    const { dir, store } = makeStore({
+      id: 'agnes',
+      label: 'Agnes AI',
+      dialect: 'agnes',
+      models: ['agnes-image-2.1-flash'],
+      allowedSizes: ['1:1'],
+    })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      const options = result.json.providers[0].sizeOptions
+      assert.equal(options.length, 40, '32 个官方精确尺寸 + 8 个比例')
+      assert.ok(
+        options.some((entry) => entry.value === '2048x2048' && entry.label === '2K · 1:1'),
+        `2K 的像素选项应带档位标签，实际：${JSON.stringify(options.slice(0, 4))}`,
+      )
+      assert.ok(
+        options.some((entry) => entry.value === '2624x1472' && entry.label === '2K · 16:9'),
+        '16:9 的 2K 像素也要在候选里',
+      )
+      assert.ok(options.some((entry) => entry.value === '1:1' && entry.label === '1:1'), '比例项的标签是它自己')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('POST /pixmart/api/defaults', () => {
   it('只写出现的字段', async () => {
     const { dir, store } = makeStore()
