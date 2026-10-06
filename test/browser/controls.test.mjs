@@ -132,7 +132,17 @@ if (launched.browser !== null) {
     const data = typeof options.fixture === 'function' ? options.fixture(page) : options.fixture ?? fixture()
     await page.evaluate((payload) => window.__pxmLane.install(payload), data)
     await page.evaluate((slot) => window.__pxmLane.mount(slot), options.slot ?? 'settings.section')
-    await page.waitForSelector('[data-pxm-field]')
+    /*
+     * 等"面板真的画出来了"。
+     *
+     * 2026-10-10 作品库工具条改成**单行**之后，那里的控件不再挂在行式字段
+     * （`[data-pxm-field]`）里 —— 用户要求删掉「搜索（项目名 / 模块名）」「排序」这些
+     * 左列标签与说明，`Field` 这个包装随之从工具条上撤掉。所以 `main` 槽要等的是
+     * 工具条自己的语义锚点 `[data-pxm-toolbar]`（与 `[data-pxm-field]` 同一做法：
+     * 锚在**语义**上，不锚在类名上）。
+     */
+    const anchor = (options.slot ?? 'settings.section') === 'main' ? '[data-pxm-toolbar]' : '[data-pxm-field]'
+    await page.waitForSelector(anchor)
     return { page, context, problems }
   }
 

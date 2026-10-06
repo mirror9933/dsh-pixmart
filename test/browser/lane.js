@@ -469,6 +469,65 @@
     return event.defaultPrevented
   }
 
+  /**
+   * 作品库**单行工具条**（2026-10-10 布局改动）的事实。
+   *
+   * 只交事实，判断在断言里：这一行的容器矩形、行内剩余空间（有没有折行由
+   * `freeSpaceY` 体现）、以及四枚控件的矩形。
+   *
+   * 控件按**语义锚点**找，不按类名找：`[data-pxm-role="sort"]` / `"select-all"` /
+   * `"select-none"` / `"search"` 是控件自己声明的角色（与设置页 `data-pxm-role="select"`
+   * 同一做法，见 `settingsSlots` 的注释）。类名是实现细节，换个名字不该让断言失效。
+   *
+   * `topLabels`：工具条行里**还留着的**字段标签/说明文字。原来那三行是靠
+   * `[data-pxm-field-label]` / `[data-pxm-field-desc]` 承载的，删干净之后这里必须是空数组
+   * —— 变异成三行或把标签加回来时它会立刻非空。
+   */
+  function toolbarRow() {
+    var row = document.querySelector('[data-pxm-toolbar]')
+    if (row === null) return null
+    var insideRow = function (role) {
+      var el = row.querySelector('[data-pxm-role="' + role + '"]')
+      return {
+        present: el !== null,
+        rect: el === null ? null : rectOf(el),
+        text: el === null ? null : (el.textContent || '').trim(),
+      }
+    }
+    // 搜索框的角色标在内层 `<input>` 上（`SearchInput` 的 `data-pxm-role="search"`），
+    // 量它的**盒子**（`.pxm-search-box`）才有意义（输入框自己可能是被压缩过的）。
+    var searchBox = row.querySelector('.pxm-search-box')
+    var searchInput = row.querySelector('[data-pxm-role="search"]')
+    return {
+      className: typeof row.className === 'string' ? row.className : '',
+      rowRect: rectOf(row),
+      rowDisplay: window.getComputedStyle(row).display,
+      rowFlexWrap: window.getComputedStyle(row).flexWrap,
+      scrollWidth: row.scrollWidth,
+      clientWidth: row.clientWidth,
+      // 行内内容占用的纵向高度 > 单行高度 ⇒ 折行了（断言换行时用）。
+      childCount: row.children.length,
+      sort: insideRow('sort'),
+      selectAll: insideRow('select-all'),
+      selectNone: insideRow('select-none'),
+      search: {
+        present: searchInput !== null,
+        rect: searchBox === null ? rectOf(searchInput) : rectOf(searchBox),
+        inputRect: searchInput === null ? null : rectOf(searchInput),
+        placeholder: searchInput === null ? null : searchInput.getAttribute('placeholder'),
+      },
+      topLabels: Array.prototype.map.call(
+        row.querySelectorAll('[data-pxm-field-label],[data-pxm-field-desc]'),
+        function (node) { return (node.textContent || '').trim() },
+      ),
+    }
+  }
+
+  /** 从 `document.body` 里读出"页面上有没有这段文字"（按整页文本找，不按类名）。 */
+  function bodyHasText(text) {
+    return (document.body.textContent || '').indexOf(text) >= 0
+  }
+
   /** 在某个坐标点派发一次真实的 `pointerdown`（用于"点击外部关闭"）。 */
   function pointerDownAt(x, y) {
     var target = document.elementFromPoint(x, y)
@@ -807,6 +866,8 @@
     selectFacts: selectFacts,
     stepperFacts: stepperFacts,
     searchFacts: searchFacts,
+    toolbarRow: toolbarRow,
+    bodyHasText: bodyHasText,
     pressKey: pressKey,
     pointerDownAt: pointerDownAt,
     panelScroll: panelScroll,

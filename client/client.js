@@ -982,6 +982,9 @@ window.__ModuleLoader__.load({
      * `--dsw-radius-sm`），也就是官方设置页里行内动作按钮实际用的那一档。
      * `boxSizing:'border-box'` 与官方 `.button` 一致：有高度时那 1px 描边算在 28px 里。
      * 逐项来源见上面 `S` 的表头注释。
+     *
+     * `data-pxm-role` 由调用方通过 `props.role` 传入：浏览器 lane 按**语义角色**定位
+     * 控件而不是按类名（与 `Select` 同一做法，见 `test/browser/lane.js` 的 `toolbarRow`）。
      */
     function Btn(props) {
       const disabled = props.disabled === true
@@ -990,6 +993,7 @@ window.__ModuleLoader__.load({
         {
           type: 'button',
           className: isString(props.className) ? 'pxm-btn ' + props.className : 'pxm-btn',
+          ...(isString(props.role) && props.role !== '' ? { 'data-pxm-role': props.role } : {}),
           onClick: props.onClick,
           disabled,
           title: props.title,
@@ -1265,6 +1269,9 @@ window.__ModuleLoader__.load({
      * 原生 `<select>`。**只留给作品库工具条的「排序」**：官方的排序控件在
      * `SettingsRoot` 那一侧没有对应形态，作品库里也没有官方对照物，所以保持原生
      * （语义天然可访问、平台行为稳定）。设置页一律用下面的 `SelectField`。
+     *
+     * `data-pxm-role` 由调用方通过 `props.role` 传入（浏览器 lane 按**语义角色**定位
+     * 控件，不按类名 —— 见 `test/browser/lane.js` 的 `toolbarRow`）。
      */
     function Select(props) {
       const options = isArray(props.options) ? props.options : []
@@ -1272,6 +1279,7 @@ window.__ModuleLoader__.load({
         'select',
         {
           ...(isString(props.className) && props.className !== '' ? { className: props.className } : {}),
+          ...(isString(props.role) && props.role !== '' ? { 'data-pxm-role': props.role } : {}),
           style: { ...inputStyle, ...(isObject(props.style) ? props.style : {}) },
           value: props.value ?? '',
           disabled: props.disabled === true,
@@ -4525,66 +4533,70 @@ window.__ModuleLoader__.load({
       const bars = [
         header,
         notice === null ? null : h(Notice, { role: 'status', title: '已删除', detail: notice }),
-        // ── 搜索 + 排序（批次 C） ─────────────────────────────────────────────
+        /*
+         * ⚠ **刻意回归（2026-10-10，按用户要求）**：原来这一层有一行
+         * `显示 <shown> / 共 <total>`（`.pxm-count`），它是**唯一**把
+         * "宿主那边还有多少条被 limit 静默截掉"摆在界面上的地方。用户要求
+         * 删掉"左边部分"、把工具条压成一行，这一项随之被移除。
+         *
+         * 后果如实记在这里，不粉饰：**`hasMore` 现在只剩「加载更多」按钮体现**
+         * （它在下面的滚动区里，文案是「加载更多（还有 N 个）」——N 是
+         * `total - shown`）。也就是说：
+         *   - "还有更多"仍然看得见（按钮在 = 还有；按钮没了 = 取完了）；
+         *   - 但"已加载 N 条 / 共 M 条"这个**绝对计数**在界面上不再存在，
+         *     用户无法一眼看出当前只加载了 24 / 共 150。
+         * 这是**可见信息量的净减少**，不是等价替换。恢复办法见
+         * `docs/contract-notes.md` §22.2 的同一处记录（把那行加回 `bars` 即可）。
+         * `test/workbench-dom.test.mjs` 里原来按这段文字做的三条断言已逐条
+         * 改锚到"已渲染卡片数"与「加载更多」按钮上（见该文件批次 C 的注释）。
+         */
+        // ── 单行工具条：左「排序 / 全选 / 取消全选」+ 右「搜索」（2026-10-10） ──
+        //
+        // **用户明确要求**（截图对照）：删掉原来的三行「左标签+说明 / 右控件」形态
+        // ——「搜索（项目名 / 模块名）」「输入即筛，300ms 防抖」「排序」
+        // 「只影响列表顺序，不改任何文件」这些标签与说明**全部移除**，
+        // 「显示 N / 共 M」这一项也一并移除（见下面「刻意回归」那条注释）。
+        // 现在是**一行**：左边三枚控件、右边搜索框。
+        //
+        // 左侧标签删掉后，"这个搜索框搜什么"就只能由 placeholder 交代 —— 见下面
+        // `SearchInput` 的 `placeholder`（`搜索项目名 / 模块名`，与排序下拉的选项名同一套词）。
+        //
+        // 窄屏：沿用 `skin.row` 的 `flexWrap:'wrap'`，一行放不下时**搜索框折到第二行**，
+        // 绝不横向溢出（375px 由 `layout.test.mjs` 的 9 号用例按 scrollWidth 断言）。
         h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column' } },
-          h(
-            Field,
-            {
-              label: '搜索（项目名 / 模块名）',
-              description: '输入即筛，300ms 防抖',
-              style: { borderBottom: 'none', paddingBottom: '8px' },
-            },
-            h(
-              'div',
-              { style: { display: 'flex', gap: '6px', alignItems: 'center', width: '100%' } },
-              h(SearchInput, {
-                className: 'pxm-search',
-                value: query,
-                placeholder: '例如：白底 / main.white-bg',
-                onChange: (event) => setQuery(event.target.value),
-              }),
-              query === ''
-                ? null
-                : h(
-                    Btn,
-                    {
-                      className: 'pxm-search-clear',
-                      onClick: () => {
-                        setQuery('')
-                        setDebounced('')
-                      },
-                      title: '清空搜索',
-                    },
-                    '清空',
-                  ),
-            ),
-          ),
-          h(
-            Field,
-            {
-              label: '排序',
-              description: '只影响列表顺序，不改任何文件',
-              style: { borderBottom: 'none', paddingTop: 0 },
-            },
-            h(Select, {
-              className: 'pxm-sort',
-              value: sort,
-              options: PROJECT_SORT_OPTIONS,
-              onChange: (event) => setSort(event.target.value),
-            }),
-          ),
-        ),
-        // ── 计数 + 选择范围 ──────────────────────────────────────────────────
-        h(
-          'div',
-          { className: 'pxm-list-bar', style: { ...skin.row, justifyContent: 'space-between' } },
-          h(
-            'span',
-            { className: 'pxm-count', style: { fontSize: '12px', opacity: 0.72 } },
-            '显示 ' + String(shown) + ' / 共 ' + String(total),
-          ),
+          {
+            // `data-pxm-toolbar` = 这一行的**语义锚点**：浏览器 lane 靠它定位"工具条行"，
+            // 而不是靠类名（类名是实现细节，换个名字不该让断言失效）——与 `Field` 的
+            // `data-pxm-field` 同一做法。
+            'data-pxm-toolbar': '1',
+            // `skin.row` 自带 `{display:flex;alignItems:center;gap:8px;flexWrap:wrap}`。
+            // `.pxm-list-bar` 这个类名保留（它一直是"这一层工具条"的锚点，见
+            // `test/workbench-dom.test.mjs` 的固定层用例）。
+            className: 'pxm-list-bar',
+            style: { ...skin.row },
+          },
+          // ① 排序。**按内容宽度、不伸不屈、但可压缩**。
+          //
+          // 两个坑，都实测过：
+          //   - `flex:'0 1 auto'` 的 `flex-grow` 默认是 1，`<select>` 会一口吃满整行、
+          //     把「全选 / 取消全选 / 搜索」全挤到第二行去；
+          //   - `flexBasis:'auto'` + `flexGrow:0` 也不行：`auto` 取的是元素的 `width`
+          //     属性，而块级 `<select>` 的 `width:auto` 在 flex 项目里解析成
+          //     **填满可用宽度**（`fill-available`），于是它照样占满 1024px。
+          //     必须显式写 `flexBasis:'content'`（= `max-content`）它才回到固有宽度。
+          // `minWidth:0` 是留给窄屏的退路：`<select>` 的固有宽度由最长选项撑开、
+          // `min-width:auto` 时在 flex 行里**不肯让位**，375px 下会把整行顶出横向滚动。
+          h(Select, {
+            className: 'pxm-sort',
+            role: 'sort',
+            value: sort,
+            options: PROJECT_SORT_OPTIONS,
+            onChange: (event) => setSort(event.target.value),
+            style: { minWidth: 0, flexGrow: 0, flexShrink: 1, flexBasis: 'content' },
+          }),
+          // ② 全选（限定当前筛选结果）；③ 取消全选。文案保持不变：写明「当前 N 个」，
+          //    否则用户会以为选的是**全部**（宿主那边被 limit 截掉的看不到）。
           projects.length === 0
             ? null
             : h(
@@ -4594,16 +4606,19 @@ window.__ModuleLoader__.load({
                   Btn,
                   {
                     className: 'pxm-select-all',
+                    role: 'select-all',
                     onClick: () => setSelectedIds(projects.map((project) => String(project.id))),
                     disabled: batch.busy !== null,
                     title: '只作用于当前筛选结果里已加载的项目',
                   },
+                  // 这里必须用 `total` 之外的口径：**已加载**的项目数。
                   '全选（当前 ' + String(shown) + ' 个）',
                 ),
                 h(
                   Btn,
                   {
                     className: 'pxm-select-none',
+                    role: 'select-none',
                     onClick: () => {
                       setSelectedIds([])
                       setConfirmingBatch(false)
@@ -4613,6 +4628,50 @@ window.__ModuleLoader__.load({
                   '取消全选',
                 ),
               ),
+          /*
+           * ④ 搜索框，**右对齐**：`marginLeft:'auto'` 吃掉左侧控件之后的全部剩余空间，
+           *    于是它永远贴在这一行的右端（换行到第二行时则是那一行的右端）。
+           *
+           * `flex:'0 1 220px'`：桌面视口取 220px 基准宽（够放得下 placeholder），
+           * 空间不够时**先缩再折行**——`minWidth:0` 是 `SearchInput` 自己给的，
+           * 所以缩到再小也只是 input 内部滚动，不会把父级撑宽。
+           */
+          h(
+            'div',
+            {
+              className: 'pxm-search-wrap',
+              style: {
+                display: 'flex',
+                gap: '6px',
+                alignItems: 'center',
+                marginLeft: 'auto',
+                flex: '0 1 220px',
+                minWidth: 0,
+              },
+            },
+            h(SearchInput, {
+              className: 'pxm-search',
+              value: query,
+              // 原来靠左侧标签解释"搜什么"，标签删了 → **必须由 placeholder 交代**。
+              // 措辞与排序下拉的选项名（项目名 / 创建时间 / 图片张数）同一套词。
+              placeholder: '搜索项目名 / 模块名',
+              onChange: (event) => setQuery(event.target.value),
+            }),
+            query === ''
+              ? null
+              : h(
+                  Btn,
+                  {
+                    className: 'pxm-search-clear',
+                    onClick: () => {
+                      setQuery('')
+                      setDebounced('')
+                    },
+                    title: '清空搜索',
+                  },
+                  '清空',
+                ),
+          ),
         ),
         // ── 选中后才出现的工具条 ─────────────────────────────────────────────
         selectedCount === 0

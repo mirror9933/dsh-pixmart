@@ -204,8 +204,12 @@ function makeProjects(n) {
 /**
  * 会真的按 `q` / `sort` / `limit` / `offset` 分页的假宿主。
  *
- * 关键在于它**报 total / hasMore**：界面要显示的「显示 N / 共 M」和「加载更多」
- * 全靠这两个字段。用固定的单页响应测不出分页行为（旧缺陷正是"永远只有一页"）。
+ * 关键在于它**报 total / hasMore**：界面「加载更多（还有 N 个）」按钮出不出现、
+ * 剩余条数写多少，全靠这两个字段。用固定的单页响应测不出分页行为
+ * （旧缺陷正是"永远只有一页"）。
+ *
+ * 2026-10-10：原来的「显示 N / 共 M」计数行按用户要求移除（工具条压成一行），
+ * 这个假宿主报的 `total` 现在只剩「加载更多」按钮一个消费方。
  */
 function pagedRespond(all) {
   return (url, init = {}) => {
@@ -772,7 +776,7 @@ describe('jsdom lane：搜索 / 排序 / 分页', () => {
     assert.equal(cleared[2].url.includes('q='), false, '清空后不得再带 q')
   })
 
-  it('懒加载：封面一张、带 loading=lazy + decoding=async，且显示「显示 N / 共 M」', async () => {
+  it('懒加载：封面一张、带 loading=lazy + decoding=async，且已加载条数 == 渲染出的卡片数', async () => {
     const lane = await createLane({ respond: pagedRespond(makeProjects(3)) })
     await lane.render()
 
@@ -784,8 +788,27 @@ describe('jsdom lane：搜索 / 排序 / 分页', () => {
       assert.equal(img.getAttribute('loading'), 'lazy')
       assert.equal(img.getAttribute('decoding'), 'async')
     }
-    assert.ok(lane.text().includes('显示 3 / 共 3'), '要有「显示 N / 共 M」')
+    /*
+     * 2026-10-10 布局改动：原来这里断言界面上有「显示 3 / 共 3」。
+     * 按用户要求工具条压成一行、「显示 N / 共 M」被移除，所以锚点换成
+     * **已渲染的卡片数**——它才是那个计数串的**事实来源**（`shown = projects.length`）。
+     * 强度不降反升：原来断言的是 `shown` 被格式化成一段文字，现在直接钉住
+     * "3 条已加载就渲染 3 张卡片"，中间那层格式化被删掉之后依然成立。
+     * 见 `test/workbench-dom.test.mjs` 文件内多处同批改动，以及
+     * `client/client.js` 工具条上方那条「刻意回归」注释。
+     */
+    assert.equal(
+      lane.container.querySelectorAll('.pxm-tile').length,
+      3,
+      '已加载 3 条就要渲染 3 张卡片（「显示 N / 共 M」已按用户要求移除，锚点改为已渲染卡片数）',
+    )
     assert.equal(lane.byClass('pxm-load-more'), null, '没有更多时不该出现加载更多')
+    // total == shown ⇒「加载更多」必须消失；**hasMore 现在只剩这一处可见**（见 client.js 注释）。
+    assert.equal(
+      lane.text().includes('加载更多'),
+      false,
+      '取完了就不该再有「加载更多」——它是现在唯一体现 hasMore 的载体',
+    )
   })
 
   it('加载更多是**追加**，且排序变化重置回第一页', async () => {
@@ -795,11 +818,24 @@ describe('jsdom lane：搜索 / 排序 / 分页', () => {
     const pageSize = lane.bag.PROJECT_PAGE_SIZE
     assert.equal(pageSize, 24, '每页 24 条（宿主 limit 上限 200，客户端不越权）')
     assert.equal(lane.container.querySelectorAll('.pxm-tile').length, 24)
-    assert.ok(lane.text().includes('显示 24 / 共 30'))
+    /*
+     * 2026-10-10：原来的 `显示 24 / 共 30` 断言随「显示 N / 共 M」一起改锚。
+     * 换上来的是两条**更靠近事实**的断言：
+     *   ① 已渲染卡片数 == 首页大小（24）；
+     *   ② 「加载更多」按钮把自己的**剩余条数**写出来（`total - shown` = 30 - 24 = 6）
+     *      —— 这恰好是 `hasMore` 现在**唯一**的可见载体，比原来只断言一段计数文字
+     *      更能证明"宿主报的 total 真的被界面用上了"。
+     */
+    const loadMoreBefore = lane.byClass('pxm-load-more')
+    assert.ok(loadMoreBefore, '30 条只加载了 24 条 ⇒ 必须有「加载更多」')
+    assert.equal(
+      loadMoreBefore.textContent.includes('还有 6 个'),
+      true,
+      '「加载更多」要写出剩余条数（30 - 24 = 6）：实测 ' + String(loadMoreBefore.textContent),
+    )
 
     await lane.click(lane.byClass('pxm-load-more'))
     assert.equal(lane.container.querySelectorAll('.pxm-tile').length, 30, '加载更多必须追加而不是替换')
-    assert.ok(lane.text().includes('显示 30 / 共 30'))
     assert.equal(lane.byClass('pxm-load-more'), null, '没有更多了就不再显示按钮')
     assert.equal(lane.listCalls()[1].url.includes('offset=24'), true, '第二页从 offset=24 取')
 
@@ -823,8 +859,21 @@ describe('jsdom lane：搜索 / 排序 / 分页', () => {
       },
     })
     await lane.render()
-    assert.ok(lane.text().includes('显示 24 / 共 30'))
-    assert.ok(lane.byClass('pxm-load-more'), '只给 total 也要能推出"还有更多"，否则 6 个项目等于凭空消失')
+    /*
+     * 2026-10-10：原来这里断言 `显示 24 / 共 30`。那串文字已按用户要求移除，
+     * 改锚到**推论本身**：宿主没回 `hasMore`，界面只能靠 `total(30) > shown(24)`
+     * 推出"还有更多"。这个推论现在唯一的表现就是「加载更多」按钮**存在**，
+     * 所以断言它存在 + 写出剩余 6 个 —— 与本用例的意图（6 个项目不能凭空消失）
+     * 完全一致，强度不低于原来那条文字断言。
+     */
+    const loadMore = lane.byClass('pxm-load-more')
+    assert.ok(loadMore, '只给 total 也要能推出"还有更多"，否则 6 个项目等于凭空消失')
+    assert.equal(
+      loadMore.textContent.includes('还有 6 个'),
+      true,
+      '剩余条数 = total(30) - shown(24) = 6：实测 ' + String(loadMore.textContent),
+    )
+    assert.equal(lane.container.querySelectorAll('.pxm-tile').length, 24, '首页仍只渲染 24 张卡片')
   })
 
   it('取数失败时保留已加载的项目并给出可读原因（不白屏）', async () => {
@@ -1267,7 +1316,7 @@ describe('jsdom lane：面板滚动契约（结构断言，不能证明真的能
     const { bar, scroller } = assertPanelSkeleton(lane)
     assert.equal(scroller.querySelectorAll('.pxm-tile').length, 24, '卡片网格在滚动区里')
     assert.ok(bar.querySelector('.pxm-search'), '搜索框属于固定层，滚列表时不该跑掉')
-    assert.ok(bar.querySelector('.pxm-list-bar'), '计数 / 全选属于固定层')
+    assert.ok(bar.querySelector('.pxm-list-bar'), '排序 / 全选 / 取消全选 / 搜索都属于固定层（单行工具条）')
     assert.ok(scroller.contains(lane.byClass('pxm-load-more')), '「加载更多」跟着内容滚')
 
     // 选中后的批量工具条也在固定层（否则滚下去就点不到删除）

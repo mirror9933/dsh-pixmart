@@ -947,4 +947,280 @@ if (launched.browser === null) {
       }
     })
   })
+
+  // ── 9. 作品库工具条：单行布局（2026-10-10 按用户要求改） ──────────────────
+
+  /**
+   * 用户要求（原话）：删掉左边那部分（标签 + 说明 + 「显示 N / 共 M」），
+   * 把「排序 / 全选 / 取消全选」放一行左边、「搜索」放右边。
+   *
+   * 这三条用例钉住的是**几何与文案事实**，不是内联样式字符串：
+   *   - 9.1 四枚控件**同一行**（纵向重叠）+ 前三枚在左半 / 搜索在右半 + 左列标签已删；
+   *   - 9.2 375px 窄屏**不得横向溢出**（scrollWidth <= clientWidth + 1），
+   *         且左侧三枚控件仍完整落在行内（没有被裁掉）；
+   *   - 9.3 内部滚动没被破坏（固定层 + `.pxm-scroll{overflowY:auto}` 仍是唯一滚动区）。
+   *
+   * `pnpm test:browser` 的变异验证（`tools/lane-mutations.mjs` 的 M24/M25）把布局改回
+   * 三行、把搜索框挪到左边，这些用例必须变红。
+   */
+  describe('9. 作品库工具条：排序 / 全选 / 取消全选在左、搜索在右（单行）', () => {
+    it('9.1 四枚控件在同一行（纵向重叠）；前三枚在左半、搜索在右半；左侧标签已删除', async () => {
+      const { page, context, problems } = await openLane({ fixture: fixture() })
+      try {
+        await page.waitForSelector('.pxm-tile')
+        const shape = await probe(page, 'toolbarRow')
+        assert.ok(shape !== null, '作品库必须有一个单行工具条（[data-pxm-toolbar]）')
+
+        // 前提自证：四枚控件都必须真的在工具条里（缺一个，下面的几何断言就是空转）。
+        for (const [name, control] of [
+          ['排序', shape.sort],
+          ['全选', shape.selectAll],
+          ['取消全选', shape.selectNone],
+          ['搜索框', shape.search],
+        ]) {
+          assert.equal(control.present, true, name + '必须在工具条行里：' + JSON.stringify(shape))
+          assert.ok(control.rect !== null && control.rect.width > 0, name + '必须有真实几何：' + JSON.stringify(shape))
+        }
+
+        assert.equal(shape.rowDisplay, 'flex', '工具条行必须是 flex 行')
+        assert.equal(shape.rowFlexWrap, 'wrap', '工具条行必须允许换行（窄屏不得溢出）')
+
+        /*
+         * ① 单行：四者的 `getBoundingClientRect()` **纵向重叠**（两两相交高度 > 0）。
+         *
+         * 这一刻意会被变异成三行破坏：原来「排序」在第二行、「全选/取消全选」在第三行、
+         * 「搜索框」在第一行 —— 三行之间两两**不**重叠。
+         */
+        const labels = ['排序', '全选', '取消全选', '搜索框']
+        const rects = [shape.sort.rect, shape.selectAll.rect, shape.selectNone.rect, shape.search.rect]
+        const disjoint = []
+        for (let i = 0; i < rects.length; i += 1) {
+          for (let j = i + 1; j < rects.length; j += 1) {
+            const overlap =
+              Math.min(rects[i].bottom, rects[j].bottom) - Math.max(rects[i].top, rects[j].top)
+            if (overlap <= 0) disjoint.push(labels[i] + ' 与 ' + labels[j] + ' 不在同一行（纵向不重叠：' + String(overlap) + 'px）')
+          }
+        }
+        assert.deepEqual(
+          disjoint,
+          [],
+          '四枚控件必须在**同一行**（两两纵向重叠，且与行的中线相交）:\n' +
+            disjoint.join('\n') +
+            '\n' + JSON.stringify({ row: shape.rowRect, rects: rects }),
+        )
+
+        // 额外钉住"和这一行的中线相交"：防止"两端对齐但整体跑出工具条行"这种退化。
+        const rowMiddle = shape.rowRect.top + shape.rowRect.height / 2
+        for (let i = 0; i < rects.length; i += 1) {
+          assert.ok(
+            rects[i].top <= rowMiddle && rects[i].bottom >= rowMiddle,
+            labels[i] + '必须与工具条行的中线相交（否则它不在这一行里）：' + JSON.stringify(rects[i]),
+          )
+        }
+
+        /*
+         * ② 左右分半：排序 / 全选 / 取消全选三者的**右边界**都在工具条行的水平中点**左侧**，
+         *    搜索框的**左边界**在中点右侧。
+         *
+         * 这一刻意会被"把搜索框挪到左边"破坏（搜索框左边界会跑到中点左边）。
+         */
+        const middle = shape.rowRect.left + shape.rowRect.width / 2
+        for (const [name, control] of [
+          ['排序', shape.sort],
+          ['全选', shape.selectAll],
+          ['取消全选', shape.selectNone],
+        ]) {
+          assert.ok(
+            control.rect.right <= middle,
+            name + '必须落在工具条行的**左半**（右边界 ' + String(control.rect.right) + ' > 中点 ' + String(middle) + '）',
+          )
+        }
+        assert.ok(
+          shape.search.rect.left >= middle,
+          '搜索框必须落在工具条行的**右半**（左边界 ' + String(shape.search.rect.left) + ' < 中点 ' + String(middle) + '）',
+        )
+        // "在右半"还不够：它必须真的贴着行尾（右对齐）。
+        assert.ok(
+          Math.abs(shape.search.rect.right - shape.rowRect.right) <= 2,
+          '搜索框必须**右对齐**到工具条行尾：' +
+            JSON.stringify({ search: shape.search.rect, row: shape.rowRect }),
+        )
+        // DOM 顺序：排序 → 全选 → 取消全选 → 搜索（左到右）。
+        assert.ok(
+          shape.sort.rect.left < shape.selectAll.rect.left &&
+            shape.selectAll.rect.left < shape.search.rect.left,
+          '左到右的顺序必须是 排序 → 全选 / 取消全选 → 搜索：' + JSON.stringify(rects),
+        )
+
+        /*
+         * ③ 左侧标签与说明**已删除**。
+         *
+         * 两个层次都查：
+         *   a) 工具条行里不许再有 `[data-pxm-field-label]` / `[data-pxm-field-desc]`
+         *      （原来那三行就是靠它们承载"搜索（项目名 / 模块名）""输入即筛，300ms 防抖"
+         *      "排序""只影响列表顺序，不改任何文件"）；
+         *   b) 整页文本里那四段文字**一个字都不许剩** —— 比 a 更硬：它连"搬到别处去了"
+         *      也算失败。
+         */
+        assert.deepEqual(
+          shape.topLabels,
+          [],
+          '工具条行里不该再有字段标签 / 说明：' + JSON.stringify(shape.topLabels),
+        )
+        /*
+         * 用 `'显示 '` 前缀与 `' / 共 '` 中缀（而不是单独一个「共」字）：
+         * 这两个串在本插件里**只有**那一处计数会拼出来（`client.js:1950` 的
+         * "已选 N / 共 M" 在模型选择面板里，面板不展开就不存在），所以它们在
+         * 作品库列表页上"完全不出现"是可以逐字断言的，不会因为别处的文案误伤。
+         */
+        for (const gone of ['搜索（项目名 / 模块名）', '输入即筛', '只影响列表顺序', '显示 ', ' / 共 ']) {
+          assert.equal(
+            await probe(page, 'bodyHasText', gone),
+            false,
+            '按用户要求已删除的文案不该还留在页面上：' + JSON.stringify(gone),
+          )
+        }
+
+        /*
+         * ④ placeholder 必须替代原来的左侧标签（否则"搜什么"就没人交代了）。
+         *
+         * 严格到**逐字相等**：它要求 placeholder 同时点名「项目名」与「模块名」
+         * 两个可搜字段（它们对应宿主 `q` 的两个匹配面，见 §17.2）。
+         */
+        const search = await probe(page, 'searchFacts', '.pxm-search-box')
+        assert.equal(
+          search.placeholder,
+          '搜索项目名 / 模块名',
+          '左侧标签删掉后，placeholder 必须自己交代搜什么（项目名 / 模块名）：' + String(search.placeholder),
+        )
+        assert.equal(shape.search.placeholder, search.placeholder, '探针量到的必须是同一个搜索框')
+
+        // 工具条行必须留在面板内容区里（左右都不越界）。
+        const panel = await probe(page, 'box', '.pxm-workbench')
+        assert.ok(
+          shape.rowRect.left >= panel.rect.left - 1 && shape.rowRect.right <= panel.rect.right + 1,
+          '工具条行不得越出面板边界：' + JSON.stringify({ row: shape.rowRect, panel: panel.rect }),
+        )
+
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('9.2 375px 窄屏：工具条不横向溢出；左半三枚控件仍完整在行内', async () => {
+      const { page, context, problems } = await openLane({
+        width: 375,
+        height: 720,
+        fixture: fixture({ projects: projects(12) }),
+      })
+      try {
+        await page.waitForSelector('.pxm-tile')
+        const shape = await probe(page, 'toolbarRow')
+        assert.ok(shape !== null, '作品库必须有一个单行工具条（[data-pxm-toolbar]）')
+
+        /*
+         * ① 无横向溢出：工具条行自己（`scrollWidth <= clientWidth + 1`）与整个文档
+         *    （`docScrollWidth <= docClientWidth + 1`）都不许出现横向滚动条。
+         *
+         *    这是"单行放不下时允许换行、但不许横向溢出"的可证伪表述：如果三枚控件 +
+         *    搜索框被硬塞成一行且不换行，375px 下 `scrollWidth` 必然超过 `clientWidth`。
+         */
+        assert.ok(
+          shape.scrollWidth <= shape.clientWidth + 1,
+          '工具条行不得横向溢出：' +
+            JSON.stringify({ scrollWidth: shape.scrollWidth, clientWidth: shape.clientWidth, row: shape.rowRect }),
+        )
+        const metrics = await probe(page, 'metrics')
+        assert.ok(
+          metrics.docScrollWidth <= metrics.docClientWidth + 1,
+          '文档不得被撑出横向滚动：' + JSON.stringify(metrics),
+        )
+        const area = await probe(page, 'box', '.pxm-scroll')
+        assert.ok(
+          area.scrollWidth <= area.clientWidth + 1,
+          '滚动区也不该出现横向溢出：' +
+            JSON.stringify({ scrollWidth: area.scrollWidth, clientWidth: area.clientWidth }),
+        )
+
+        /*
+         * ② 左侧三枚控件必须**完整落在行内**（没有被裁掉 / 没有越界）。
+         *
+         *    `<select>` 的固有宽度由最长选项撑开，`min-width:auto` 时在 flex 行里
+         *    不肯让位 —— 这正是"375px 下必须给排序控件 `minWidth:0`"的原因；
+         *    去掉它这一条会红。
+         */
+        for (const [name, control] of [
+          ['排序', shape.sort],
+          ['全选', shape.selectAll],
+          ['取消全选', shape.selectNone],
+        ]) {
+          assert.equal(control.present, true, name + '必须在工具条行里')
+          assert.ok(
+            control.rect.left >= shape.rowRect.left - 1 && control.rect.right <= shape.rowRect.right + 1,
+            name + '在 375px 下必须完整落在工具条行内：' +
+              JSON.stringify({ control: control.rect, row: shape.rowRect }),
+          )
+        }
+
+        // ③ 换行（如果发生）只发生在搜索框上：左侧三枚控件仍**两两纵向重叠**（同一行）。
+        const left = [shape.sort.rect, shape.selectAll.rect, shape.selectNone.rect]
+        for (let i = 0; i < left.length; i += 1) {
+          for (let j = i + 1; j < left.length; j += 1) {
+            const overlap = Math.min(left[i].bottom, left[j].bottom) - Math.max(left[i].top, left[j].top)
+            assert.ok(
+              overlap > 0,
+              '左侧三枚控件在 375px 下也必须同处一行（纵向重叠 ' + String(overlap) + 'px）：' +
+                JSON.stringify(left),
+            )
+          }
+        }
+        // 搜索框要么与左侧三枚同处一行，要么**折到下一行**（它的 top 更大）；不许跑到左上方。
+        if (shape.search.rect.top < shape.rowRect.top + shape.rowRect.height / 2 - 1) {
+          assert.ok(
+            shape.search.rect.left >= shape.sort.rect.left,
+            '搜索框要么在右侧、要么折行，不许跑到排序控件左边：' + JSON.stringify(shape),
+          )
+        }
+
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('9.3 单行工具条不破坏内部滚动：固定层 + .pxm-scroll 仍是唯一滚动区', async () => {
+      const { page, context, problems } = await openLane({
+        width: 375,
+        height: 600,
+        fixture: fixture({ projects: projects(40) }),
+      })
+      try {
+        await page.waitForSelector('.pxm-tile')
+        const scroller = await probe(page, 'box', '.pxm-scroll')
+        assert.equal(scroller.computedOverflowY, 'auto', '.pxm-scroll 仍须 overflow-y:auto')
+        assert.equal(scroller.computedOverflowX, 'hidden', '.pxm-scroll 仍须 overflow-x:hidden')
+        assert.ok(
+          scroller.scrollHeight > scroller.clientHeight + 1,
+          '夹具必须真的长出可滚内容（否则"没破坏滚动"是空转）：' +
+            JSON.stringify({ scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight }),
+        )
+
+        // 工具条仍在固定层里（不跟着内容滚走）。
+        const barBefore = await probe(page, 'box', '[data-pxm-toolbar]')
+        await wheelOver(page, '.pxm-scroll', { deltaY: 800 })
+        assert.ok(await scrollTopOf(page, '.pxm-scroll') > 0, '列表页必须还能滚')
+        const barAfter = await probe(page, 'box', '[data-pxm-toolbar]')
+        assert.deepEqual(
+          barAfter.rect,
+          barBefore.rect,
+          '工具条属于固定层，滚动内容时它的几何一个像素都不该动',
+        )
+
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+  })
 }

@@ -649,6 +649,120 @@ const MUTATIONS = [
       },
     ],
   },
+  {
+    id: 'M32-search-to-left',
+    /**
+     * 作品库单行工具条（2026-10-10）：把**搜索框挪回左边**。
+     *
+     * 用户的要求是"排序 / 全选 / 取消全选在左、搜索在右"。搜索框靠
+     * `marginLeft:'auto'` 被推到行尾；去掉它之后搜索框紧跟在「取消全选」后面，
+     * 落进行**左半**。
+     *
+     * 期望由 `layout.test.mjs` 的 9.1 抓住（"搜索框必须落在工具条行的**右半**"）。
+     */
+    bug: '搜索框从右对齐退回排在左侧控件后面（「搜索放右边」被改坏）',
+    expect: ['9.1 四枚控件在同一行'],
+    edits: [
+      {
+        find: "                marginLeft: 'auto',\n                flex: '0 1 220px',",
+        replace: "                flex: '0 1 220px',",
+      },
+    ],
+  },
+  {
+    id: 'M33-toolbar-nowrap',
+    /**
+     * 作品库单行工具条（2026-10-10）：**禁止换行**（`flexWrap: wrap → nowrap`）。
+     *
+     * 用户的要求是"单行放不下时**允许换行**（搜索框可折到第二行），但必须无横向滚动条"。
+     * 375px 下左侧三枚控件已经占掉 339px 可用宽度里的 320px，而搜索框的 flex 基准是
+     * 220px —— `nowrap` 时它退无可退，整行必然横向溢出。
+     *
+     * 期望由 `layout.test.mjs` 的 9.2 抓住（"工具条行不得横向溢出" +
+     * "文档不得被撑出横向滚动"）。与 M32 互补：M32 证明"左 / 右位置"这条不是空跑，
+     * M33 证明"窄屏不溢出"这条不是空跑。
+     */
+    bug: '工具条行禁止换行（375px 下被硬塞成一行 → 横向溢出）',
+    expect: ['9.2 375px 窄屏：工具条不横向溢出'],
+    edits: [
+      {
+        find: "            className: 'pxm-list-bar',\n            style: { ...skin.row },",
+        replace: "            className: 'pxm-list-bar',\n            style: { ...skin.row, flexWrap: 'nowrap' },",
+      },
+    ],
+  },
+  {
+    id: 'M34-search-rigid-overflow',
+    /**
+     * 作品库单行工具条（2026-10-10）：搜索框**变成不可压缩的定宽**（`0 1 220px → 0 0 400px`）。
+     *
+     * 这一条专门钉"窄屏无横向溢出"这条断言**自身**：搜索框既不能缩（`flexShrink:0`）
+     * 又比 375px 下的可用宽度（339px）还宽，于是它整块溢出到行外 ——
+     * `[data-pxm-toolbar].scrollWidth 400 > clientWidth 339`。
+     *
+     * 与 `M33` 的分工：M33（禁止换行）会先撞上别的断言（行内三枚控件被挤散），
+     * 溢出那条**轮不到报**；M34 让左侧三枚控件照旧整齐，只把溢出这一条单独逼出来，
+     * 从而证明 `9.2` 里那句 `scrollWidth <= clientWidth + 1` 不是空跑。
+     */
+    bug: '搜索框改成不可压缩的定宽 400px（375px 下整块溢出工具条行）',
+    expect: ['9.2 375px 窄屏：工具条不横向溢出'],
+    edits: [
+      {
+        find: "                marginLeft: 'auto',\n                flex: '0 1 220px',",
+        replace: "                marginLeft: 'auto',\n                flex: '0 0 400px',",
+      },
+    ],
+  },
+  {
+    id: 'M35-label-back',
+    /**
+     * 作品库单行工具条（2026-10-10）：把**被删掉的左侧标签加回来**
+     * （`[data-pxm-field-label]`、文案「搜索（项目名 / 模块名）」）。
+     *
+     * 用户明确要求删掉那一列标签与说明。这一条证明 `layout.test.mjs` 的 9.1
+     * 里"工具条行里不该再有字段标签 / 说明"与"整页文本里那几段文字一个字都不许剩"
+     * 不是空跑 —— **两处都加**，因为那两条断言分别查的是 DOM 锚点与整页文本，
+     * 只加一处的话另一条仍然是空跑。
+     */
+    bug: '把删掉的左侧字段标签加回工具条（「搜索（项目名 / 模块名）」）',
+    expect: ['9.1 四枚控件在同一行'],
+    edits: [
+      {
+        find: "            'data-pxm-toolbar': '1',\n            // `skin.row` 自带",
+        replace: "            'data-pxm-toolbar': '1',\n            'data-pxm-field-label': '1',\n            'aria-label': '搜索（项目名 / 模块名）',\n            // `skin.row` 自带",
+      },
+      {
+        find: "              // 原来靠左侧标签解释\"搜什么\"，标签删了 → **必须由 placeholder 交代**。\n              // 措辞与排序下拉的选项名（项目名 / 创建时间 / 图片张数）同一套词。\n              placeholder: '搜索项目名 / 模块名',",
+        replace: "              placeholder: '搜索项目名 / 模块名',",
+      },
+      {
+        find: "                marginLeft: 'auto',\n                flex: '0 1 220px',\n                minWidth: 0,\n              },\n            },\n            h(SearchInput, {",
+        replace: "                marginLeft: 'auto',\n                flex: '0 1 220px',\n                minWidth: 0,\n              },\n            },\n            h('div', { 'data-pxm-field-desc': '1' }, '输入即筛，300ms 防抖'),\n            h('div', { 'data-pxm-field-label': '1' }, '搜索（项目名 / 模块名）'),\n            h(SearchInput, {",
+      },
+    ],
+  },
+  {
+    id: 'M36-placeholder-vague',
+    /**
+     * 作品库单行工具条（2026-10-10）：placeholder **退回不含字段名的泛泛说法**
+     * （`搜索项目名 / 模块名` → `搜索`）。
+     *
+     * 左侧标签被删掉之后，placeholder 是**唯一**交代"这个搜索框搜什么"的地方。
+     * 退回一个光秃秃的「搜索」之后，用户不知道能按项目名还是模块名搜 ——
+     * 而这正是"标签删了必须在 placeholder 里交代"这条要求的实质。
+     *
+     * 期望由 `layout.test.mjs` 的 9.1 抓住（那里的断言是**逐字相等**，
+     * 不是"非空即可"，所以这条变异必然命中）。
+     */
+    bug: '搜索框 placeholder 退回泛泛的「搜索」（不再交代搜项目名 / 模块名）',
+    expect: ['9.1 四枚控件在同一行'],
+    edits: [
+      {
+        find: "              placeholder: '搜索项目名 / 模块名',",
+        replace: "              placeholder: '搜索',",
+      },
+    ],
+  },
 ]
 
 function applyMutation(source, mutation) {
