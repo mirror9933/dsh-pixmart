@@ -151,6 +151,37 @@ export function failure(code: string, message: string, hint?: string): ToolFailu
   return { ok: false, error: { code, message, ...(hint === undefined ? {} : { hint }) } }
 }
 
+/**
+ * 余额不足时的提示文案。
+ *
+ * 它是**给模型看的指令**，不是给用户看的散文——所以要短、要可执行、要堵住退路。
+ * 三层意思缺一不可：
+ *   1. 这是账户状态问题，重试无用（去充值）；
+ *   2. **先 `ask_user_question` 问用户**，不要自作主张选一条路；
+ *   3. **严禁**用脚本/绘图库自己合成"交付物"——那是伪造，不是生成。
+ *
+ * 第 3 条来自一起实测事件（contract-notes §18）：厂商回 402 余额为负之后，
+ * Agent 未经询问就写了 PIL 脚本把图拼出来当成品交付。插件**无法**拦截宿主的
+ * `pwsh` / `write`，也没有强制弹窗的能力，所以这里只能把工具返回写成指令级文案，
+ * 并在 guidance 里立硬规则——这是能力边界，不是已完成的技术拦截。
+ */
+export const INSUFFICIENT_CREDITS_HINT =
+  '账户余额不足，重试无用——请用户去厂商后台充值。' +
+  '必须先调用 ask_user_question 询问用户：停下来去充值，还是按用户指示改用别的方式；不要自行降级。' +
+  '严禁用脚本或绘图库（PIL / ImageMagick / canvas 等）自行合成或伪造图片充当交付物。'
+
+/**
+ * 把厂商错误映射成给模型的提示。
+ * @param error - 厂商错误的 `code` / `retryable` 两个字段（其余不参与判断）。
+ */
+export function vendorFailureHint(error: {
+  readonly code: string
+  readonly retryable: boolean
+}): string {
+  if (error.code === 'insufficient_credits') return INSUFFICIENT_CREDITS_HINT
+  return error.retryable ? '该错误可重试；可直接再次调用本工具' : '该错误重试无意义，请先修正配置或提示词'
+}
+
 /** 把未知异常收敛成失败返回，不让它冒泡成未处理异常。 */
 export function fromException(error: unknown, code = 'internal'): ToolFailure {
   return failure(code, error instanceof Error ? error.message : String(error))

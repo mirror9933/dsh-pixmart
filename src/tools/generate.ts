@@ -24,6 +24,7 @@ import {
   getAttachments,
   getFs,
   renderWithImages,
+  vendorFailureHint,
   type ToolRuntime,
 } from './runtime.js'
 import { copyImagesToWorkspace, workspaceCopyLines } from './workspace-copy.js'
@@ -269,7 +270,7 @@ async function runGeneration(
     return failure(
       result.error.code,
       result.error.message,
-      result.error.retryable ? '该错误可重试；可直接再次调用本工具' : '该错误重试无意义，请先修正配置或提示词',
+      vendorFailureHint(result.error),
     )
   }
 

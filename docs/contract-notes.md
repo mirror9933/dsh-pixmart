@@ -960,5 +960,80 @@ body: { name: string }
   （它的顶带是红绿灯那 48px 的 `--dsh-frame-top-clearance`），所以查看器在 macOS 上
   仍从 y=0 起画（与修复前一致，非回归）——要不要避让红绿灯需要真机确认。
 
+---
+
+## 18. 余额不足（HTTP 402）不得自行兜底（2026-10-06）
+
+### 18.1 事件（session 日志取证，非推测）
+
+用户配置的厂商余额为负，Agent **未经询问**就自己写了合成脚本，把"造出来的图"当交付物：
+
+```
+s13  pixmart_prompt ×2（main.selling-point / main.scene）
+s14  pixmart_edit → 失败 [bad_request]：请求被拒绝（HTTP 402）：
+     {"error":{"message":"Insufficient credits. Current balance: $-0.138427.",
+               "type":"insufficient_credits","code":402}}
+s15  write  → pixmart-in\compose_main.py     ← 自己写 PIL 合成脚本
+s16  pwsh   → 跑脚本
+s18/s19 edit → 反复改脚本
+s20  pwsh   → 再跑
+```
+
+全程**没有 `ask_user_question`、没有任何审批**。
+
+### 18.2 根因：402 落进了泛化的 `bad_request`，并因此走了降级链
+
+`vendor/openai-compat.ts` 的 `classify()` 只按状态码分档，402 命中 `status >= 400`
+的兜底分支 → `bad_request`。这带来两个后果：
+
+1. **重复计费**：主循环里 `bad_request` 是唯一触发**降级链**的码
+   （`if (lastError.code === 'bad_request') shouldDegrade = true`）。余额为负时
+   适配器会把同一个注定被拒的请求换着参数（去 quality → 去 format → 去参考图 → 纯文本）
+   **最多再发 4 次**。降级链每一档都是真实厂商调用。
+2. **错误指令失效**：工具只回一句"该错误重试无意义，请先修正配置或提示词"。
+   对余额不足来说这句话毫无指向性——配置没错、提示词也没错，是账户没钱。
+   于是 Agent 自己发明了出路：**用 PIL 拼图**。
+
+比"没弹窗"更严重的一点：对电商主图而言，**PIL 脚本合成的图不是"生成的图"**，而是
+**伪造的交付物**——不经过模型、质量不可控，但外形像成品，会被计入 `pixmart-out/`、
+被 `present`、被当成结果交付。所以这一条必须在**规则层面**明令禁止，而不只是"体验优化"。
+
+### 18.3 决定
+
+1. **新增专用错误码 `insufficient_credits`**（`VendorError.code`）。识别规则：
+   - `status === 402` → 余额不足；
+   - 其他 4xx（排除 429）里出现显式特征（`insufficient_credits` / `insufficient quota` /
+     `credit balance` / 余额不足 / 额度不足 / 欠费）→ 余额不足；
+   - **429 与 5xx 一律不算**——限流和服务端故障不是账户状态，需要的是重试而不是充值。
+   - `retryable: false` → 主循环既**不重试**也**不降级**，只发一次请求。
+   - 原始 message **原样保留**（含 `Current balance: $-0.138427`）：余额数值是用户判断
+     "差多少钱"的唯一依据。
+2. **`hint` 写成指令级文案**（`tools/runtime.ts` 的 `INSUFFICIENT_CREDITS_HINT`，
+   `generate` / `edit` / `batch` 三条付费链路共用），三层意思缺一不可：
+   ① 账户余额问题、重试无用 → 请用户去厂商后台充值；② **必须先 `ask_user_question`
+   询问用户**（停下来充值 / 按用户指示改用别的方式），不要自行降级；
+   ③ **严禁**用脚本或绘图库（PIL / ImageMagick / canvas）自行合成或伪造图片充当交付物。
+3. **guidance 立硬规则**（2 行，净增 2 行 → 正文 36 行，仍在 36 行上限内；靠压缩
+   "没有可用密钥"那句腾出的空间，**没有抬高上限**）：付费调用失败（尤其余额不足 / 402）
+   先停下并 `ask_user_question`；严禁写脚本合成/伪造交付物。
+   注意：**没有**夹带任何"图片该怎么展示 / 内嵌 / present"的规则（那类在 `ab6dad8` 已整段删除）。
+4. **文档**：README「常见问题」加一条——余额不足时插件**不会**替你兜底，不要期待自动降级出图。
+
+### 18.4 做不到的部分（诚实记录，不要当成已实现的能力）
+
+- 插件**无法**拦截 DSH 核心工具（`pwsh` / `write`）——那是宿主的能力，不在插件权限内。
+  因此**无法从机制上阻止** Agent 写脚本；能做的是让它在动手前先看到"禁止"和"先问用户"。
+- 插件**无法强制弹出对话框**。DSH 里"问用户"的正规渠道只有模型调用 `ask_user_question`。
+  这条规则属于**指令级约束**（工具返回文案 + guidance），不是技术强制。
+- 因此本节的结论边界是：**降低概率，不保证根除**。真正的兜底需要宿主层面的能力
+  （如按工具白名单、或对特定错误强制中断回合），目前不存在。
+
+### 18.5 测试
+
+`test/insufficient-credits.test.mjs`（13 项，全部 stub fetch、零真实网络、零花费）：
+402 映射到专用码并保留负余额原文；**只发 1 次请求**（回归锁：旧行为是降级链 5 次）；
+hint 三层关键词；`pixmart_edit` / `pixmart_batch` 工具层与渲染文本都带指令；5xx 不被误标；
+成功路径不受影响；guidance 新规则存在且正文 ≤36 行。
+
 
 

@@ -7,7 +7,7 @@
 >
 > - **尚未发布到 registry**，`package.json` 里 `private: true`。所以只能用**本地路径 / git 地址**安装（见下方「安装」）。
 > - 功能阶段：**P0–P3 已完成，P4（打包与分发）未完成**——README / 打包步骤 / 上架还没收尾。
-> - 版本：`0.0.1`。测试：`pnpm test`（269 项）与 `pnpm test:browser`（11 项）全绿。
+> - 版本：`0.0.1`。测试：`pnpm test`（313 项）与 `pnpm test:browser`（11 项）全绿。
 > - 没做的功能写在「[已知限制](#已知限制)」里，别当成已有能力。
 
 ---
@@ -190,6 +190,13 @@ A：**正确做法是用设置页改**，不要手改 `config.json`。设置页�
 **Q：`pnpm test:browser` 报没有浏览器？**
 A：这条 lane 需要系统已装 Edge 或 Chrome（**不会自动下载浏览器**）。没有浏览器时它会**醒目失败**而不是假装通过；确实要放行可以设 `PXM_LANE_ALLOW_SKIP=1`。
 
+**Q：厂商余额不足（HTTP 402）时，插件会替我想办法把图"做出来"吗？**
+A：**不会，也不该期待。** 余额不足时工具返回专用错误码 `insufficient_credits`，原始报错里的余额数值原样保留，
+并附一条**指令级提示**要求 Agent **先停下来用 `ask_user_question` 问你**（去充值，还是换个方式）。
+"自动降级出图"不存在：插件不会、也不允许 Agent 用 PIL / ImageMagick / canvas 之类的脚本
+**合成或伪造**一张图充当交付物——那不是"生成的图"，质量和可追溯性都不可控。
+所以正确做法是充值后重试；插件只保证**不重复扣费**（402 是终态，不重试、不降级）。
+
 **Q：装完发现工具没出现？**
 A：先在对话里调一次 `pixmart_ping`——它无副作用，能确认「插件已加载 + 工具注册链路可用」，并列出宿主当前暴露的服务。
 
@@ -225,7 +232,7 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），269 项
+pnpm test             # node:test（含 jsdom lane），313 项
 pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），11 项
 pnpm verify           # 上面几条串起来
 ```

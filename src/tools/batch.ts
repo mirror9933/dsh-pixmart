@@ -20,6 +20,7 @@ import { generateImages } from '../vendor/openai-compat.js'
 import type { ProjectItem } from '../store/project-store.js'
 import type { ToolContentBlock, ToolDefinitionLike, ToolRunContext } from '../host-types.js'
 import {
+  INSUFFICIENT_CREDITS_HINT,
   TOOL_FOOTER,
   failure,
   fromException,
@@ -149,10 +150,11 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
         const lines: string[] = []
         if (value.ok !== true) {
           const error = (value.error ?? {}) as Record<string, unknown>
+          const hint = typeof error.hint === 'string' ? `\n提示：${error.hint}` : ''
           return [
             {
               type: 'text',
-              text: `批量生成失败 [${String(error.code)}]：${String(error.message)}`,
+              text: `批量生成失败 [${String(error.code)}]：${String(error.message)}${hint}`,
             },
           ]
         }
@@ -168,6 +170,11 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           const mark = record.status === 'done' ? '✓' : '✗'
           const tail = record.error === undefined ? '' : ` — ${String(record.error)}`
           lines.push(`${mark} ${String(record.label)}（${String(record.module)}）${tail}`)
+        }
+        // 余额不足的指令级提示：放在逐项清单之后，保证模型一定看到（而不是只看到
+        // 一屏 `insufficient_credits` 就自己想办法"补图"）。
+        if (typeof value.hint === 'string' && value.hint !== '') {
+          lines.push('', `提示：${value.hint}`)
         }
         // 每项的原件都在数据目录（唯一真相）；这里补上**工作区副本**的完整路径。
         lines.push(...workspaceCopyLines(value.workspaceOut))
@@ -261,7 +268,7 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
 
           if (module === undefined) {
             await runtime.runStore.setItem(run.runId, index, { status: 'failed', error: { code: 'unknown_module', message: `未知模块 ${item.module}` } })
-            return { module: item.module, label, status: 'failed' as const, error: `未知模块 ${item.module}` }
+            return { module: item.module, label, status: 'failed' as const, code: 'unknown_module', error: `未知模块 ${item.module}` }
           }
 
           await runtime.runStore.setItem(run.runId, index, { status: 'running' })
@@ -280,7 +287,7 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
               status: 'failed',
               error: { code: 'size_unsupported', message: sizeResult.reason },
             })
-            return { module: item.module, label, status: 'failed' as const, error: sizeResult.reason }
+            return { module: item.module, label, status: 'failed' as const, code: 'size_unsupported', error: sizeResult.reason }
           }
 
           const result = await generateImages({
@@ -320,6 +327,7 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
               module: item.module,
               label,
               status: 'failed' as const,
+              code: result.error.code,
               error: `${result.error.code}: ${result.error.message}`,
             }
           }
@@ -402,6 +410,12 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
 
         const completed = outcome.filter((entry) => entry.status === 'done').length
         const failed = outcome.length - completed
+
+        // 余额不足是**账户级**失败：批量的逐项错误里它会出现 N 次，但给模型的提示
+        // 只需要一条，且必须是可执行的（先问用户、禁止自己合成图片）。见 contract-notes §18。
+        const insufficientCredits = outcome.some(
+          (entry) => (entry as { code?: string }).code === 'insufficient_credits',
+        )
         await runtime.runStore.finish(run.runId, failed === 0 ? 'done' : completed === 0 ? 'failed' : 'done')
         await runtime.runStore.prune()
 
@@ -464,6 +478,7 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           attachments,
           ms: Date.now() - started,
           ...(attachmentNote === undefined ? {} : { attachmentNote }),
+          ...(insufficientCredits ? { hint: INSUFFICIENT_CREDITS_HINT } : {}),
           ...(workspaceOut === undefined ? {} : { workspaceOut }),
         }
       } catch (error) {

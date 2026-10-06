@@ -10,6 +10,9 @@
  *   3. **降级链**逐级去掉可能不兼容的参数，并把去掉的东西记进 `degraded`——
  *      "成功但没按预期保真"必须留痕，不能悄悄降级。
  *   4. **安全类错误不重试也不降级**：重试只会重复被拒。
+ *   5. **余额不足（402 / `insufficient_credits`）同样是终态**：它有独立错误码，
+ *      既不重试也**不降级**——降级链的每一档都会真实计费，余额为负时刷 5 档
+ *      等于再被拒 5 次（contract-notes §18）。
  */
 import type { ApiMode, Dialect, ProviderConfig } from '../config.js'
 import type { AbortSignalLike } from '../host-types.js'
@@ -45,6 +48,14 @@ export interface VendorImage {
 export interface VendorError {
   readonly code:
     | 'auth'
+    /**
+     * **账户余额不足**（HTTP 402 / 显式的 `insufficient_credits`）。
+     *
+     * 必须与 `bad_request` 分开：`bad_request` 的语义是"这次请求的参数写错了"，
+     * 处理方式是**降级到下一档重发**；而余额不足是账户状态问题，降级只会把同一个
+     * 请求再花一次钱并再被拒一次（见 contract-notes §18 的实测事件）。
+     */
+    | 'insufficient_credits'
     | 'rate_limit'
     | 'server'
     | 'moderation'
@@ -421,8 +432,45 @@ function extractImageHandles(
 const SAFETY_PATTERN =
   /safety|moderation|blocked|blocklist|policy|prohibited|violat|content[_ ]?filter|敏感|违规|审核/i
 
+/**
+ * 余额不足的识别特征。
+ *
+ * 各家网关的说法不统一，所以既认 OpenAI 风格的错误类型 `insufficient_credits`，
+ * 也认常见的等义说法（`insufficient quota` / `credit balance` / 中文"余额不足"）。
+ * 判定刻意保守：只在 HTTP 层面能确认是"付费被拒"时才用（见 `isInsufficientCredits`），
+ * 避免把 5xx 之类的服务端故障误标成账户问题。
+ */
+const INSUFFICIENT_CREDITS_PATTERN =
+  /insufficient[_ ]?(credits?|quota|balance|funds)|credit[_ ]?balance|余额不足|余额不够|额度不足|欠费/i
+
+/** 该响应是否应判定为"账户余额不足"。 */
+function isInsufficientCredits(status: number, bodyText: string): boolean {
+  // 402 Payment Required 本身就是"要钱"。
+  if (status === 402) return true
+  // 429 / 5xx 一律按限流或服务端故障处理：它们**不**代表账户余额状态，
+  // 且都需要重试而不是让用户去充值。
+  if (status === 429 || status >= 500) return false
+  return INSUFFICIENT_CREDITS_PATTERN.test(bodyText)
+}
+
+function insufficientCreditsError(status: number | undefined, bodyText: string): VendorError {
+  const excerpt = bodyText.slice(0, 400)
+  return {
+    code: 'insufficient_credits',
+    retryable: false,
+    ...(status === undefined ? {} : { status }),
+    // 原始 message **原样保留**：余额数值（如 `Current balance: $-0.138427`）是用户
+    // 判断"差多少钱"的唯一依据，截断或改写它都会让排查变难。
+    message:
+      status === undefined ? `账户余额不足：${excerpt}` : `账户余额不足（HTTP ${status}）：${excerpt}`,
+  }
+}
+
 function classify(status: number, bodyText: string): VendorError {
   const excerpt = bodyText.slice(0, 400)
+  // 先于泛化的 bad_request 判定：402 属于典型 bad_request 区间，一旦漏到这里就会被
+  // 当成"参数写错"而去走降级链——那正是要修的行为问题。
+  if (isInsufficientCredits(status, bodyText)) return insufficientCreditsError(status, bodyText)
   if (status === 401 || status === 403) {
     return { code: 'auth', retryable: false, status, message: `鉴权失败（HTTP ${status}）：${excerpt}` }
   }
@@ -534,6 +582,10 @@ async function sendOnce(
   const innerError = root?.error
   if (innerError !== undefined && asArray(root?.data).length === 0) {
     const text = JSON.stringify(innerError).slice(0, 400)
+    // 200 + insufficient_credits 也按余额不足处理（same 语义，只是状态码撒谎）。
+    if (INSUFFICIENT_CREDITS_PATTERN.test(text)) {
+      return { kind: 'fatal', error: insufficientCreditsError(undefined, text) }
+    }
     return SAFETY_PATTERN.test(text)
       ? { kind: 'fatal', error: { code: 'moderation', retryable: false, message: `内容被拒绝：${text}` } }
       : { kind: 'fatal', error: { code: 'bad_response', retryable: false, message: `厂商返回错误：${text}` } }
