@@ -80,10 +80,12 @@ describe('installGuidance', () => {
     // 6) 耗时预期：单张实测达分钟级，避免被误判为卡死而重复调用（重复计费）
     assert.match(GUIDANCE_TEXT, /1–3 分钟/)
     assert.match(GUIDANCE_TEXT, /不要重复调用/)
-    // 7) 产物落点：只落数据目录；要文件副本走作品库「导出」，别再手动往工作区里拷
-    assert.match(GUIDANCE_TEXT, /只\*\*落在插件数据目录/)
-    assert.match(GUIDANCE_TEXT, /作品库的「导出」/)
-    assert.match(GUIDANCE_TEXT, /不要用 `pwsh`/)
+    // 7) 图片如何展示 / 导出 / present —— 一律交回 DSH 官方约定，插件不再插手。
+    //    此前自造的三条规则（用哪条路径 present、别用 markdown、别用 pwsh）在实战中
+    //    反复误导（连错五次），2026-10-06 按用户要求整段删除。这里反向断言它不再回来。
+    assert.equal(/作品库的「导出」/.test(GUIDANCE_TEXT), false, '不得再写插件自造的导出/present 规则')
+    assert.equal(/不要用 `pwsh`/.test(GUIDANCE_TEXT), false, '不得再写插件自造的展示规则')
+    assert.equal(/present/.test(GUIDANCE_TEXT), false, '不得再对 present 的用法下指令')
     // 删除语义：默认是软删（可恢复），永久删必须由用户明确要求——这是防"顺手 permanent"的一句话。
     assert.match(GUIDANCE_TEXT, /软删/)
     assert.match(GUIDANCE_TEXT, /permanent: true/)
