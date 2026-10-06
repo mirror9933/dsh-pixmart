@@ -27,6 +27,11 @@ import {
   renderWithImages,
   type ToolRuntime,
 } from './runtime.js'
+import {
+  copyImagesToWorkspace,
+  workspaceCopyLines,
+  type WorkspaceCopyOutcome,
+} from './workspace-copy.js'
 
 function pickString(source: unknown, key: string): string | undefined {
   if (typeof source !== 'object' || source === null) return undefined
@@ -164,7 +169,8 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           const tail = record.error === undefined ? '' : ` — ${String(record.error)}`
           lines.push(`${mark} ${String(record.label)}（${String(record.module)}）${tail}`)
         }
-        // 刻意**不**列任何"另存副本"路径：批量也只写数据目录。
+        // 每项的原件都在数据目录（唯一真相）；这里补上**工作区副本**的完整路径。
+        lines.push(...workspaceCopyLines(value.workspaceOut))
         return renderWithImages(lines.join('\n'), value.attachments)
       },
     },
@@ -240,6 +246,14 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
         exec.signal.addEventListener('abort', () => {
           runtime.runStore.cancel(run.runId)
         })
+
+        /**
+         * 逐项的工作区副本结果。
+         *
+         * 按 `index` 落格就够：pool 的 worker 虽然并发，但都在同一个 Node 线程上，
+         * `index` 天然唯一，不需要额外的锁或归并逻辑。
+         */
+        const copyByIndex: (WorkspaceCopyOutcome | undefined)[] = new Array(items.length)
 
         const outcome = await pool(items, concurrency, async (item, index) => {
           const module = getModule(item.module)
@@ -324,14 +338,21 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
             )
           }
 
-          // 落盘即结束：生成**只**写数据目录。用户要文件形式的副本，
-          // 走作品库的「导出」（不再有生成时自动复制）。
+          // 落盘即结束：生成**只**写数据目录（唯一真相）。
           const first = saved[0]
           await runtime.runStore.setItem(run.runId, index, {
             status: 'done',
             ...(first === undefined ? {} : { file: first.file, width: first.width, height: first.height }),
             ms: result.ms,
           })
+
+          // 工作区副本：与 generate 同一条语义（只复制、失败只记警告、路径回给模型）。
+          // 放在落盘与运行注册表之后，保证"记录里能看到产出"不依赖副本成败。
+          copyByIndex[index] = copyImagesToWorkspace(
+            exec,
+            project.id,
+            saved.map((image) => ({ absolutePath: image.absolutePath, sha256: image.sha256 })),
+          )
 
           runtime.usage.append({
             ts: Date.now(),
@@ -384,6 +405,21 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
         await runtime.runStore.finish(run.runId, failed === 0 ? 'done' : completed === 0 ? 'failed' : 'done')
         await runtime.runStore.prune()
 
+        // 把逐项副本结果并成一条：落点与工作区对所有项都一样，只有文件列表需要合并。
+        const copyOutcomes = copyByIndex.filter(
+          (entry): entry is WorkspaceCopyOutcome => entry !== undefined,
+        )
+        const firstCopy = copyOutcomes[0]
+        const workspaceOut =
+          firstCopy === undefined
+            ? undefined
+            : {
+                workspace: firstCopy.workspace,
+                dir: firstCopy.dir,
+                files: copyOutcomes.flatMap((entry) => entry.files),
+                warnings: copyOutcomes.flatMap((entry) => entry.warnings),
+              }
+
         // 收集全部产出用于对话内嵌图
         const record = runtime.projectStore.read(project.id)
         const attachmentService = getAttachments(runtime.ctx)
@@ -428,6 +464,7 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
           attachments,
           ms: Date.now() - started,
           ...(attachmentNote === undefined ? {} : { attachmentNote }),
+          ...(workspaceOut === undefined ? {} : { workspaceOut }),
         }
       } catch (error) {
         return fromException(error, 'batch')

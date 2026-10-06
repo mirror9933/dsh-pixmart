@@ -26,6 +26,7 @@ import {
   renderWithImages,
   type ToolRuntime,
 } from './runtime.js'
+import { copyImagesToWorkspace, workspaceCopyLines } from './workspace-copy.js'
 
 function pickString(source: unknown, key: string): string | undefined {
   if (typeof source !== 'object' || source === null) return undefined
@@ -287,6 +288,16 @@ async function runGeneration(
     )
   }
 
+  // 7.5) 工作区副本：让 DSH 官方内嵌写法 `![说明](<路径>)` 在对话里可见。
+  //
+  // 这一步**不是**生成的一部分，而是"让产物可预览"的传输：只复制、绝不移动原件；
+  // 失败（拿不到工作区 / 目标不可写）一律降级成警告，工具仍 ok。
+  const workspaceCopy = copyImagesToWorkspace(
+    exec,
+    project.id,
+    saved.map((image) => ({ absolutePath: image.absolutePath, sha256: image.sha256 })),
+  )
+
   const item: ProjectItem = {
     module: input.moduleId ?? 'custom',
     label: moduleLabel,
@@ -391,6 +402,7 @@ async function runGeneration(
     attempts: result.attempts,
     ms: result.ms,
     ...(attachmentNote === undefined ? {} : { attachmentNote }),
+    ...(workspaceCopy === undefined ? {} : { workspaceOut: workspaceCopy }),
     ...(runtime.dataDirNotes.length === 0 ? {} : { dataDirNotes: [...runtime.dataDirNotes] }),
   }
 }
@@ -416,8 +428,10 @@ function renderGeneration(value: Record<string, unknown>): ToolContentBlock[] {
     const record = image as Record<string, unknown>
     lines.push(`- ${String(record.path)} (${String(record.width)}x${String(record.height)}, ${String(record.bytes)} 字节)`)
   }
-  // 刻意**不**在这里列任何"另存副本"路径：生成只写数据目录，不会再往别处复制。
-  // 用户要文件形式的副本，走作品库的「导出」（见 guidance）。
+  // 上面列的是**数据目录里的原件**（唯一真相）；下面这份是工作区里的副本。
+  // 副本存在的唯一理由是让官方内嵌写法能渲染（工作区之外的路径预览不了），
+  // 所以必须把完整路径如实列出来，Agent 才有稳定路径可用。
+  lines.push(...workspaceCopyLines(value.workspaceOut))
   return renderWithImages(lines.join('\n'), value.attachments)
 }
 

@@ -29,11 +29,39 @@ export interface AbortSignalLike {
   addEventListener(type: 'abort', listener: () => void): void
 }
 
-/** 工具执行上下文（宿主 ToolRunContext 的结构子集）。 */
+/**
+ * 会话 header 的结构子集。
+ *
+ * `cwd` 是**该会话的工作区根**（绝对路径）。它同时决定：
+ *   - `read` / `write` / `edit` / `pwsh` 这类工具解析相对路径的基准（官方
+ *     `@deepseek-ai/dsh-tool-fs` 的 `sessionCwd()` 读的就是这个字段）；
+ *   - 客户端消息渲染把哪些路径当作**会话内地址**（可内嵌预览）——
+ *     工作区之外的绝对路径保留绝对地址，因而 `![说明](<路径>)` 渲染不出来。
+ */
+export interface AgentSessionHeaderLike {
+  readonly cwd?: string
+}
+
+/** 会话的结构子集（只声明本插件用到的 `header`）。 */
+export interface AgentSessionLike {
+  readonly header?: AgentSessionHeaderLike
+}
+
+/**
+ * 工具执行上下文（宿主 ToolRunContext 的结构子集）。
+ *
+ * `agent` 在真实宿主里是**整个 Agent 对象**（`dsh-agent-loop` 的
+ * `executeToolCalls` 把 `agent` 原样塞进执行输入），因此除 `id` 外还能读到
+ * `session.header.cwd`。官方 `dsh-tool-present` 正是用 `exec.agent.session`
+ * 定位交付物所属会话。
+ */
 export interface ToolRunContext {
   readonly callId: string
   readonly signal: AbortSignalLike
-  readonly agent?: { readonly id: string }
+  readonly agent?: {
+    readonly id: string
+    readonly session?: AgentSessionLike
+  }
   deferContext(context: unknown): void
   concludeTurn(): void
 }
