@@ -1053,14 +1053,23 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 `shadow()`（浮层阴影）。加/换颜色只改这三处，不要在组件里内联新值。
 
 用到的那份官方 token 与语义对应（都经 client Theme 的 `listTokens` 确证存在，且
-`requiresLightAndDark: true`，即官方保证有浅/深两套值）：
+`requiresLightAndDark: true`，即官方保证有浅/深两套值）。
+
+**表面（`bg-*`）的语义按官方用法分层，不要按名字猜**（2026-10-06 修正，详见 19.4）：
+
+| 层 | token | 深色取值 | 官方用在哪 | 我们用在哪 |
+|---|---|---|---|---|
+| 应用最底层 | `--dsw-alias-bg-base` | `#151517` | `AppFrame.frame` / `centerCol` / `rightbarCol`、`body`、整页级面板（`schedule` 的 `S0jZwq_page`） | shell 的 `body`；**设置页的输入控件底色**（见 19.4 的"未改"说明） |
+| 抬起的表面 | `--dsw-alias-bg-layer-1` | `#232324` | `chat` 的 turn-preview（带 `elevation-panel`）、`deliverables` 的卡片、`primitives` 的 HoverCard | **作品库面板**（`main` 槽）、模型选择盒 |
+| 弹窗 / 嵌套表面 | `--dsw-alias-bg-layer-2` | `#2c2c2e` | `settings-general` 的 `.wCInkW_panel`（设置弹窗）、`Modal`、`--dsw-alias-settings-card-fill` | 卡片 / 列表盒 / 缩略图占位；**设置页 section 显示的就是这一层**（自己不再画一层） |
+| 输入控件 | `--dsw-alias-bg-layer-3` | `#353638` | `primitives` 的 `fields.module.css` 里 `.input` | 未使用（备案在 `OFFICIAL_SURFACES` 注释里） |
+| 分段控件底槽 | `--dsw-alias-bg-module-platform` | `#353638` | `SegmentedControl` | 未使用（同上） |
+| 浮层底 | `--dsw-alias-bg-overlay` | `#61666b` | tooltip 一类浮层 | 查看器 / 预览卡 / 徽标 |
+
+其余非表面 token：
 
 | 用途 | token |
 |---|---|
-| 页面底色 / 输入控件底色 | `--dsw-alias-bg-base` |
-| 面板、次级表面（顶层） | `--dsw-alias-bg-layer-1` |
-| 卡片、列表盒、缩略图占位（嵌套层） | `--dsw-alias-bg-layer-2` |
-| 查看器 / 预览卡 / 徽标（浮层） | `--dsw-alias-bg-overlay` |
 | 分隔线（发丝级） | `--dsw-alias-border-l1` |
 | 控件与卡片描边 | `--dsw-alias-border-l2` |
 | 品牌强调（**主按钮填充**） | `--dsw-alias-brand-primary`（官方 `--dsw-alias-button-primary-fill` 就是它；浅色近黑 / 深色近白）**本插件不用** |
@@ -1104,11 +1113,12 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
    （阈值 = 清单长度，现为 14）；从源码里**读出** `const T = {…}` 表，断言它与清单一一对应、
    且每个 token 键都真的被样式引用过（只声明不引用 = 那处多半被换回硬编码了）；以及
    「进行中/进度」那几处必须走 `labelTertiary`（逐处正则钉住，换成 `T.brand` 或硬编码 hex 直接红）。
-2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3 / 8.7，`pnpm test:browser`）：
+2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3 / 8.7 / 8.8，`pnpm test:browser`）：
    在 `test/browser/shell.html` 里**定义**官方浅色取值，然后按**计算样式**
    （`getComputedStyle`，不是内联字符串）断言元素某个属性 == 该 token 在**当前页面**里的解析值
    （解析由浏览器现场完成，`__pxmLane.resolveCss` 按目标属性本身解析，两边同一个序列化器）。
    夹具里刻意放一条失败项，否则 `.pxm-item-error` 根本不渲染，"失败文字走 error token"就是空转。
+   8.8 是**表面映射**那一类（"挂的是哪一层"），判据与证据见 19.4。
 3. **深浅色跟随**（8.2 / 8.4 / 8.7）：在**同一个页面**里把同一批 token 换成官方深色取值
    （`__pxmLane.setTokens`），断言每个被断言的颜色**都变了**、且等于新的解析值。
    这是"能与官方深浅色主题一致"的唯一硬证据——只断言浅色下相等，可能是硬编码巧合同色
@@ -1138,6 +1148,94 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 
 该脚本现在同时跑 `layout.test.mjs` 与 `theme.test.mjs`：几何变异不该惊动配色用例，反之亦然。
 
+### 19.4 表面映射修正（问题①）与宽屏占满（问题②）（2026-10-06）
 
+用户在 `ab4e44c` 之后实测报了两个视觉/布局问题，两处都先在 **app.asar 里核对官方原文**，
+再改代码。结论与证据如下。
 
+#### 问题①：设置面板底色比官方「通用设置」暗一大截（看着是纯黑）
 
+**根因**：`skin.wrap`（`settings.section` 的根）写的是 `background: T.bgBase` —— 那是
+**应用最底层**（深色 `#151517`）。而官方设置页的 section 自己**根本不画表面**：
+`settings-general` 的 `SettingsRoot.module.css` 里只有
+
+```
+.wCInkW_panel{… background:var(--dsw-alias-bg-layer-2)}
+.wCInkW_options{flex:1;min-height:0;padding:0 24px 24px;overflow-y:auto}   /* 没有 background */
+```
+
+——内容是**继承弹窗面板那一层** `bg-layer-2`（深色 `#2c2c2e`）。所以我们的页面：
+`#151517`（更暗）vs 官方 `#2c2c2e`；再加上卡片还挂在 `bg-layer-2` 上（与 section 同色，
+卡片边界只靠描边），观感就是"整块纯黑"。
+
+**改法**：`skin.wrap` **去掉 `background`**（跟随官方 section 的"不画表面"），保留 `color`。
+`skin.card`（`bg-layer-2`）与官方 `--dsw-alias-settings-card-fill: var(--dsw-alias-bg-layer-2)`
+**恰好同层**，因此不动。
+
+**逐个复核了全部四处表面映射**（官方对应物 → 我们对应物）：
+
+| 现在 | 应为 | 依据 |
+|---|---|---|
+| `skin.wrap` `bg-base` | **不画表面**（继承 `bg-layer-2`）← 已改 | 官方 `.wCInkW_options` 无 `background` |
+| `skin.panel` `bg-layer-1` | `bg-layer-1` ✅ 不动 | 官方"抬起的表面"层（chat turn-preview / deliverables 卡片） |
+| `skin.card` `bg-layer-2` | `bg-layer-2` ✅ 不动 | `--dsw-alias-settings-card-fill` = `bg-layer-2` |
+| `inputStyle` / 提示词 `<textarea>` `bg-base` | 官方同类控件是 `bg-layer-3` → **本次未改**（见下） | `primitives` 的 `fields.module.css` `.input{background:var(--dsw-alias-bg-layer-3)}` |
+| `.pxm-viewer` / 预览卡 / 徽标 `bg-overlay`（92% / 100%） | ✅ 不动 | 浮层底 |
+| 状态点/进度 `label-tertiary` | ✅ 不动（8.7 守着） | `StateDot` 的 `ongoing` |
+
+**没改的那一处（诚实记录）**：输入控件严格对齐官方应当是 `bg-layer-3`。本次没动它，原因有两条：
+（a）`bg-layer-3` 尚未进入本插件的 token 表，加进去会牵动静态用例的"一一对应"断言与 token 计数，
+属于另一处独立改动；（b）本次用户报的是**面板底色**，输入框底色不在报告范围内。已在
+`OFFICIAL_SURFACES` 与 19.1 的表里备案"官方是 `bg-layer-3`、我们是 `bg-base`"，将来要改有据可依。
+
+#### 问题②：2560 全屏下作品库挤在左侧、右边一大片空白
+
+**先证伪了一个假设**：这不是 shell 的中栏给的宽度上限。asar 里 `ui-layout` 的 AppFrame
+（`lib/client.js` 里那段内联 CSS）对中栏只有这一条：
+
+```
+.BynINW_centerCol{flex-direction:column;min-width:0;display:flex;overflow:hidden}
+```
+
+**没有 `max-width`、没有 `width`、没有 `margin:auto`**。`main` 槽的宿主是 `display:contents`
+的槽锚点，面板是它的直接 flex 子项，中栏 `flex-direction:column` ⇒ 子项横向 stretch ⇒
+座位本来就该占满。lane 实测 2560px：中栏 `left 220 / right 2560 / width 2340`。
+
+**真根因在我们自己**：`skin.panel` 上那条 `maxWidth: '880px'`（git c6b342c 引入，抄"聊天的
+阅读宽度"）。lane 实测 2560px：面板 `left 220 / right 1100 / width 880` ——
+右边界距中栏右边界 **1460px**，正是截图里那块空白。
+
+**改法**：删掉 `maxWidth: '880px'`（并留注释说明为什么）。官方对 `main` 槽里的**面板**页的
+惯例也是占满：`settings-general` 的 `kh1pJG_page` 是 `width:100%`，`schedule` 的 `S0jZwq_page`
+是 `width:100%; height:100%`。内层滚动（`workbenchFrame` 的固定层 + `.pxm-scroll{overflowY:auto}`）
+**未动**，8 号用例同时断言面板根不滚、`.pxm-scroll` 仍 `auto`、高度仍被锁在面板里。
+
+#### 新增断言（浏览器 lane，2 条）
+
+- **`theme.test.mjs` 8.8**：`.pxm-settings` 的**感知表面**必须等于官方弹窗面板那一层
+  （深色下由最近色判定为 `bg-layer-2`），且必须**不等于** `bg-base`；同时断言 section
+  **自己不画底色**（`backgroundColor` 为 `rgba(0,0,0,0)`）。浅色下官方三层同色，所以那条
+  "等于哪一层"只在深色判——顺序上深色先跑，失败信息才直接说"实际是哪一层"。
+- **`layout.test.mjs` 8**：1600×900 与 2560×900 两档断言面板右边界 == 中栏右边界、
+  面板宽度 == 中栏可用宽度、`.pxm-scroll` 内容区左右边界 == 面板内容区边界（只差 18px padding）、
+  面板无 `max-width`、文档无横向溢出、面板根 `overflow-y:visible` 且 `.pxm-scroll` 仍 `auto`。
+
+夹具侧同步：`shell.html` 的 `:root` 补 `bg-layer-3` / `bg-module-platform`，
+`#settingsDialog` 的底色从写死 `#fff` 改成 `var(--dsw-alias-bg-layer-2)` —— 这才是官方
+"设置弹窗面板那一层"的**同语义对应物**，否则"我们该等于什么"无可比对象。
+
+#### 反向变异（`tools/lane-mutations.mjs`，两条新变异）
+
+- `M18-settings-surface-is-bg-base`：把 `skin.wrap` 写回 `background: T.bgBase`。
+  实测 **8.8 红**：「深色：`.pxm-settings` 现在显示的表面是 `--dsw-alias-bg-base`（rgb(21,21,23)），
+  官方设置页内容表面用的应是弹窗面板那一层 `--dsw-alias-bg-layer-2`」。
+  另外把它写成 `bgLayer1` / 写成 `color-mix(…, 50%)` 两种近似变异也分别被 8.8 抓住
+  （后者报"感知表面为 null"，因为它不是任何一层的不透明色）。
+- `M19-panel-max-width-880`：给 `skin.panel` 加回 `maxWidth:'880px'`。
+  实测 **8. 宽屏红**：「1600px 宽视口：面板右边界必须贴住中栏右边界（右边不留空白块）：
+  panel `right 1100 / width 880 / maxWidth 880px`，centerCol `right 1600 / width 1380`」。
+- 顺带修正了 `M16-color-hardcoded-hex` 的锚点：它原来的 `find` 串改成现在**唯一**的那一处
+  （`background: T.bgLayer1,` 在文件里出现过两次，脚本的"必须恰好命中一次"纪律因此报错）。
+
+`pnpm verify`（typecheck + build + `pnpm test` + `pnpm test:browser`）：
+**322 + 21**，全绿；`client/client.js` 的 sha256 在变异脚本前后一致（脚本只写临时副本）。

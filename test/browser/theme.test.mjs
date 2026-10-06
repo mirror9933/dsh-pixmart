@@ -59,6 +59,8 @@ const TOKENS = [
   '--dsw-alias-bg-base',
   '--dsw-alias-bg-layer-1',
   '--dsw-alias-bg-layer-2',
+  '--dsw-alias-bg-layer-3',
+  '--dsw-alias-bg-module-platform',
   '--dsw-alias-bg-overlay',
   '--dsw-alias-border-l1',
   '--dsw-alias-border-l2',
@@ -75,11 +77,17 @@ const TOKENS = [
 /**
  * 官方**浅色**取值：必须与 `shell.html` 的 `:root` 逐字一致（8.0 有专门一条用例守着）。
  * 来源 = `@deepseek-ai/dsh-client-ui-theme` 里 `body{…}` 那一段，经 `--dsw-static-*` 逐层解析。
+ *
+ * `bg-layer-3` / `bg-module-platform` 是**表面映射对照物**（8.5 / 8.8 用）：它们证明
+ * "面板底色挂的是 layer-1、官方内容表面挂的是 layer-2"——两者**在深色下色值不同**
+ * （#232324 vs #2c2c2e），所以"换成另一个"能被断言抓到，而不是靠同名巧合。
  */
 const LIGHT = {
   '--dsw-alias-bg-base': '#fff',
   '--dsw-alias-bg-layer-1': '#fff',
   '--dsw-alias-bg-layer-2': '#fff',
+  '--dsw-alias-bg-layer-3': '#fff',
+  '--dsw-alias-bg-module-platform': '#f5f6f7',
   '--dsw-alias-bg-overlay': '#e9ecf2',
   '--dsw-alias-border-l1': '#0000000a',
   '--dsw-alias-border-l2': '#0000001a',
@@ -103,6 +111,8 @@ const DARK = {
   '--dsw-alias-bg-base': '#151517',
   '--dsw-alias-bg-layer-1': '#232324',
   '--dsw-alias-bg-layer-2': '#2c2c2e',
+  '--dsw-alias-bg-layer-3': '#353638',
+  '--dsw-alias-bg-module-platform': '#353638',
   '--dsw-alias-bg-overlay': '#61666b',
   '--dsw-alias-border-l1': '#ffffff0f',
   '--dsw-alias-border-l2': '#ffffff1f',
@@ -418,8 +428,19 @@ if (launched.browser === null) {
   const probeArgs = (page, name, args) =>
     page.evaluate(([fn, list]) => window.__pxmLane[fn].apply(null, list), [name, args])
 
-  async function openThemedLane(data = fixture(), mountSlot = 'main') {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 })
+  /**
+   * 开一个主题 lane：真实 HTTP 源 + 真实 shell 骨架 + 真 React UMD + 原产物 client.js。
+   *
+   * `options` 可以指定 `width` / `height`（宽屏用例需要）、`data`（夹具覆盖）与
+   * `mountSlot`（`main` / `shell.overlay` / `settings.section`）。
+   */
+  async function openThemedLane(options = {}) {
+    const data = options.data ?? fixture()
+    const mountSlot = options.mountSlot ?? 'main'
+    const context = await browser.newContext({
+      viewport: { width: options.width ?? 1280, height: options.height ?? 900 },
+      deviceScaleFactor: 1,
+    })
     const page = await context.newPage()
     const problems = []
     page.on('pageerror', (err) => problems.push('pageerror: ' + err.message))
@@ -441,9 +462,9 @@ if (launched.browser === null) {
    */
   async function openOverlayLane() {
     const { run, summary } = runningFixture()
-    const { page, context, problems } = await openThemedLane(
-      fixture({ runs: [summary], runDetail: run }),
-    )
+    const { page, context, problems } = await openThemedLane({
+      data: fixture({ runs: [summary], runDetail: run }),
+    })
     await page.evaluate((slot) => window.__pxmLane.mount(slot), 'shell.overlay')
     await page.waitForSelector('.pxm-chip-running', { timeout: 15000 })
     assert.ok(
@@ -703,6 +724,8 @@ if (launched.browser === null) {
         }
         for (const token of [
           '--dsw-alias-bg-layer-1',
+          '--dsw-alias-bg-layer-2',
+          '--dsw-alias-bg-layer-3',
           '--dsw-alias-border-l2',
           '--dsw-alias-label-secondary',
           // 「进行中/进度」挂的就是它：浅 #81858c / 深 #adb2b8 确实不同，
@@ -713,6 +736,24 @@ if (launched.browser === null) {
           '--dsw-alias-brand-primary',
         ]) {
           assert.notEqual(light[token], dark[token], token + ' 的浅深解析值应当不同')
+        }
+
+        /*
+         * 表面映射的**可区分性**：深色下这四个表面必须两两不同色。
+         *
+         * 这条不是凑数——它是 8.8 成立的前提：如果 `bg-base` / `bg-layer-1` /
+         * `bg-layer-2` 解析成同一个颜色，"面板底色挂错了一层"就**抓不出来**
+         * （浅色下三者都是 #fff，正是这种情形，所以 8.8 必须两套主题都量）。
+         */
+        const surfaces = ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-bg-layer-2']
+        for (let i = 0; i < surfaces.length; i += 1) {
+          for (let j = i + 1; j < surfaces.length; j += 1) {
+            assert.notEqual(
+              dark[surfaces[i]],
+              dark[surfaces[j]],
+              '深色下 ' + surfaces[i] + ' 与 ' + surfaces[j] + ' 必须不同色（否则"挂错一层"抓不出来）',
+            )
+          }
         }
         assert.deepEqual(problems, [])
       } finally {
@@ -729,7 +770,7 @@ if (launched.browser === null) {
       try {
         assert.ok(server.served.clientRequests >= 1, '浏览器必须真的请求过 /client/client.js')
         assert.equal(server.served.clientSha256, artifact, 'lane 服务的必须是仓库原产物，逐字节一致')
-        for (const name of ['computed', 'resolveCss', 'tokenVar', 'setTokens']) {
+        for (const name of ['computed', 'resolveCss', 'tokenVar', 'setTokens', 'officialSurfaces']) {
           assert.equal(
             await page.evaluate((fn) => typeof window.__pxmLane[fn], name),
             'function',
@@ -776,6 +817,174 @@ if (launched.browser === null) {
               target.key,
           )
         }
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.8 表面映射：挂的是哪一层，必须与官方同语义表面对齐 ──────────────────
+
+  /**
+   * 「官方对应物 → 我们对应物」的逐个对照（每个都在 asar 里核过原文）：
+   *
+   * | 位置 | 官方 | 我们 |
+   * |---|---|---|
+   * | 应用/窗口底 | `AppFrame.frame`、`body`、`schedule.S0jZwq_page` → `bg-base` | `body`（shell 提供） |
+   * | `main` 槽里的面板 | `chat` turn-preview、`deliverables` 卡片 → `bg-layer-1` | `.pxm-workbench` ← **本用例钉住** |
+   * | 设置页内容表面 | `settings-general` 的 `.wCInkW_options` **不画表面**（继承弹窗的 `bg-layer-2`） | `.pxm-settings` ← **本用例钉住** |
+   * | 设置卡片 | `--dsw-alias-settings-card-fill` = `bg-layer-2` | `skin.card` |
+   * | 输入控件 | `fields.module.css` 的 `.input` → `bg-layer-3` | （见交付回报：仍为 `bg-base`，未改） |
+   *
+   * 判据分两层：
+   *   1. **语义层**：`.pxm-settings` 的背景色必须等于官方"弹窗面板那一层"（`bg-layer-2`）
+   *      的解析值。浅色下三个 bg token 都是 #fff，**只有深色能区分**，所以两套都量。
+   *   2. **反证层**：它必须**不等于**应用底色 `bg-base` 的解析值 —— 这正是被修掉的缺陷形态
+   *      （深色 #151517 比官方面板 #2c2c2e 更暗，用户看到的就是"纯黑"）。
+   *
+   * 附带一条"官方三个表面在深色下两两不同色"的前提断言：没有它，
+   * "挂错一层"在数值上就无法与"挂对了"区分开。
+   */
+  describe('8.8 表面映射：设置页 section 的表面色 == 官方弹窗面板那一层，且不是应用底色', () => {
+    it('8.8 `.pxm-settings` 的表面 == 官方弹窗面板那一层（bg-layer-2），且不是应用底色 bg-base', async () => {
+      const { page, context, problems } = await openThemedLane({ mountSlot: 'settings.section' })
+      try {
+        await page.waitForSelector('.pxm-settings', { timeout: 15000 })
+
+        const surfaces = [
+          '--dsw-alias-bg-base',
+          '--dsw-alias-bg-layer-1',
+          '--dsw-alias-bg-layer-2',
+          '--dsw-alias-bg-layer-3',
+        ]
+
+        /**
+         * 在浏览器里量一次（两套主题各一次）。
+         *
+         * `backgroundColor` 拿的是**真实盒子**的值——它可能是 `rgba(0,0,0,0)`，
+         * 那正是我们要的形态：官方 `.wCInkW_options` 也不画自己的表面，继承弹窗面板。
+         * 所以判定不能只看它，还要用同一个 token 表达式在**同一套主题下**解析出一个
+         * 不透明的比色值（`resolveCss` 里给 `<span>` 加 1px 边框 + `borderTopColor`，
+         * 浏览器返回 `rgb(r,g,b)` 而不是 `color(srgb …)`）。
+         */
+        const readOnce = () =>
+          page.evaluate((tokenNames) => {
+            const nodes = document.querySelectorAll('.pxm-settings')
+            const section = nodes[nodes.length - 1]
+            if (section === undefined) return null
+            const style = window.getComputedStyle(section)
+            const items = tokenNames.map((name) => ({
+              key: name,
+              prop: 'borderTopColor',
+              value: 'var(' + name + ')',
+            }))
+            return {
+              count: nodes.length,
+              sectionBg: style.backgroundColor,
+              official: window.__pxmLane.resolveCss(items),
+            }
+          }, surfaces)
+
+        const rgbParts = (value) => {
+          const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(String(value))
+          if (m === null) return null
+          if (m[4] !== undefined && Number(m[4]) !== 1) return null
+          return [Number(m[1]), Number(m[2]), Number(m[3])]
+        }
+        const nearest = (value, candidates) => {
+          const a = rgbParts(value)
+          if (a === null) return { key: null, distance: Number.POSITIVE_INFINITY }
+          let best = { key: null, distance: Number.POSITIVE_INFINITY }
+          for (const key of Object.keys(candidates)) {
+            const b = rgbParts(candidates[key])
+            if (b === null) continue
+            const distance = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])
+            if (distance < best.distance) best = { key, distance }
+          }
+          return best
+        }
+
+        /**
+         * @param expectDistinct 官方各表面在这一套主题下是否两两不同色。
+         *   浅色下官方 bg-base / layer-1 / layer-2 **就是同一个 #fff**（在 asar 里核过取值），
+         *   所以"挂错一层"只有深色能区分——深色那一次才断定"等于哪一层"。
+         */
+        const check = (reading, label, expectDistinct) => {
+          assert.ok(reading !== null, label + '：必须能取到 `.pxm-settings`')
+          assert.equal(reading.count, 1, label + '：设置 section 的根节点应当只有 1 个 `.pxm-settings`')
+
+          const distinct = surfaces.map((name) => reading.official[name])
+          if (expectDistinct) {
+            assert.equal(
+              new Set(distinct).size,
+              distinct.length,
+              label + '：官方 bg-base / layer-1 / layer-2 / layer-3 必须两两不同色（否则判据无效）：' +
+                JSON.stringify(reading.official),
+            )
+          } else {
+            assert.equal(
+              new Set(distinct).size,
+              1,
+              label + '：浅色下官方这几个表面官方本就同色（本 lane 的已核前提）：' +
+                JSON.stringify(reading.official),
+            )
+          }
+
+          // 语义：**现在真正显示出来的那一层表面**必须等于官方弹窗面板那一层。
+          //
+          // 先判这一条、再判"自己不该有底色"的形态条，而且**只在深色下**判"等于哪一层"：
+          //   - 浅色下官方 bg-base / layer-1 / layer-2 **就是同一个 #fff**，写哪一层都同色，
+          //     所以浅色那次只核对"官方确实同色"这条前提（上面 else 分支）；
+          //   - 深色下三者互不相同（#151517 / #232324 / #2c2c2e），这时才真正能区分
+          //     "挂错了一层"与"挂对了"。
+          if (expectDistinct) {
+            assert.ok(
+              rgbParts(reading.official['--dsw-alias-bg-layer-2']) !== null,
+              label + '：bg-layer-2 的解析值必须能解析成 rgb()：' + reading.official['--dsw-alias-bg-layer-2'],
+            )
+
+            const perceivedSurface =
+              reading.sectionBg === 'rgba(0, 0, 0, 0)'
+                ? reading.official['--dsw-alias-bg-layer-2']
+                : reading.sectionBg
+            const hit = nearest(perceivedSurface, reading.official)
+            assert.equal(
+              hit.key,
+              '--dsw-alias-bg-layer-2',
+              label +
+                '：`.pxm-settings` 现在显示的表面是 ' +
+                String(hit.key) +
+                '（' +
+                perceivedSurface +
+                '），官方设置页内容表面用的应是弹窗面板那一层 `--dsw-alias-bg-layer-2`：' +
+                JSON.stringify(reading),
+            )
+            assert.notEqual(
+              nearest(perceivedSurface, { base: reading.official['--dsw-alias-bg-base'] }).distance,
+              0,
+              label + '：`.pxm-settings` 的表面又等于应用底色 bg-base —— 那正是被修掉的缺陷形态：' +
+                JSON.stringify(reading),
+            )
+
+            // 形态：官方 section 自己不画表面（`.wCInkW_options` 里没有 background），
+            // 所以我们的 section 也不该自己画一层 —— 自己画一层是"比官方面板更暗"的成因。
+            assert.equal(
+              reading.sectionBg,
+              'rgba(0, 0, 0, 0)',
+              label +
+                '：`.pxm-settings` 自己不该画底色（官方 `.wCInkW_options` 也没有 background）。实测=' +
+                reading.sectionBg,
+            )
+          }
+        }
+
+        check(await readOnce(), '浅色', false)
+
+        await probe(page, 'setTokens', DARK)
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))))
+        check(await readOnce(), '深色', true)
+
         assert.deepEqual(problems, [])
       } finally {
         await context.close()

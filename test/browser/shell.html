@@ -40,6 +40,8 @@
         --dsw-alias-bg-base: #fff;
         --dsw-alias-bg-layer-1: #fff;
         --dsw-alias-bg-layer-2: #fff;
+        --dsw-alias-bg-layer-3: #fff;
+        --dsw-alias-bg-module-platform: #f5f6f7;
         --dsw-alias-bg-overlay: #e9ecf2;
         --dsw-alias-border-l1: #0000000a;
         --dsw-alias-border-l2: #0000001a;
@@ -108,7 +110,14 @@
           display: none;
         }
       }
-      /* 设置弹窗自己滚（设置页插槽只负责排版，见 client.js `skin.wrap` 的注释）。 */
+      /*
+       * 设置弹窗自己滚（设置页插槽只负责排版，见 client.js `skin.wrap` 的注释）。
+       *
+       * 底色 = **官方设置弹窗面板那一层**：官方 `.wCInkW_panel`（`settings-general` 的
+       * SettingsRoot.module.css）写的就是 `background:var(--dsw-alias-bg-layer-2)`，
+       * 官方 section（`.wCInkW_options`）自己**不画表面**。这里必须照抄这个语义，
+       * 否则"我们的 section 底色该等于什么"就没有可比对的官方对应物。
+       */
       #settingsDialog {
         position: fixed;
         top: var(--dsh-frame-chrome-top);
@@ -116,7 +125,7 @@
         right: 0;
         bottom: 0;
         overflow: auto;
-        background: #fff;
+        background: var(--dsw-alias-bg-layer-2);
       }
       /* 槽锚点：ui-renderer 的槽是 display:contents —— 面板因此是外层容器的直接 flex 子项。 */
       .slot-anchor {

@@ -111,7 +111,55 @@ window.__ModuleLoader__.load({
      *
      * 下面这些 token 都由 client Theme 的 `listTokens` 确证存在，且**都有浅/深两套值**
      * （`requiresLightAndDark: true`）；shell 里另有更多 `--dsw-*`，这里只用能确证的。
+     *
+     * **表面层到底挂哪一个 token，是 2026-10-06 那次修正的核心**：光名字对不算对，
+     * 语义对才算对。完整清单（含官方用法）见下面的 `OFFICIAL_SURFACES`，共 6 层；
+     * 本插件实际画出来的是其中 4 层：
+     *   - `bg-base`（深色 `#151517`）＝ **应用最底层**。官方用于 `ui-layout` 的
+     *     `AppFrame.frame` / `centerCol` / `rightbarCol`、`body`，以及整页级面板
+     *     （`schedule` 的 `S0jZwq_page`）。**不是**面板/弹窗的底色。
+     *   - `bg-layer-1`（深色 `#232324`）＝ **抬起的表面**。官方用于聊天里的浮层预览
+     *     （`chat` 的 turn-preview，带 `elevation-panel`）、`deliverables` 的输出块/卡片、
+     *     `primitives` 的 HoverCard。作品库面板（`main` 槽里的面板）用它。
+     *   - `bg-layer-2`（深色 `#2c2c2e`）＝ **弹窗/嵌套表面**。官方用于
+     *     `settings-general` 的 `.wCInkW_panel`（设置弹窗那一块）、`primitives` 的 Modal、
+     *     以及 `--dsw-alias-settings-card-fill`（设置卡片填充）。**设置页 section 显示的就是它**
+     *     ——官方 section 自己不画表面（`.wCInkW_options` 没有 `background`），继承弹窗那一层。
+     *   - `bg-overlay`（深色 `#61666b`）＝ 浮层/弹出层底（tooltip 类）。
+     * 这几个值在深色下互不相同（#151517 / #232324 / #2c2c2e / #61666b），因此
+     * "挂错一个"是可以用色彩断言抓出来的（`test/browser/theme.test.mjs` 8.5 与 8.8）。
      */
+    /**
+     * 官方**表面层**清单：每层表面的 token 名 + 它在官方那侧的用途。
+     *
+     * 这是**合同文本**，不是取色来源（取色一律用下面 `T` 里的 `var(...)`）：
+     * 它记下"官方一共这几层表面、各自用在哪"，好让"我们这一处该挂哪一层"有据可查。
+     * 浏览器 lane 的 8.5 用**官方实际解析值**断言 `bg-base` / `layer-1` / `layer-2`
+     * 在深色下两两不同色（浅色下官方三层同为 `#fff`，区分不出来），8.8 再用这些解析值
+     * 判断设置页 section 显示的是哪一层。色值**故意不写在这里**：本文件有"不得出现任何
+     * 十六进制色值"的静态红线（`test/client-tokens.test.mjs`），要色值就去 lane 里量。
+     *
+     * 已核对的官方用法（原文都在 app.asar 里）：
+     *   - `bg-base`      `ui-layout` 的 AppFrame.frame / centerCol / rightbarCol、`body`、
+     *                    整页级面板（`schedule` 的 `S0jZwq_page`）→ **应用最底层**
+     *   - `bg-layer-1`   聊天里的 turn-preview（带 elevation-panel）、`deliverables` 的卡片、
+     *                    `primitives` 的 HoverCard → **抬起的表面**
+     *   - `bg-layer-2`   `settings-general` 的 `.wCInkW_panel`（设置弹窗）、`Modal`、
+     *                    `--dsw-alias-settings-card-fill` → **弹窗/嵌套表面**
+     *   - `bg-layer-3`   `primitives` 的 `fields.module.css` 里 `.input` → **输入控件**
+     *                    （本插件**目前不画**这一层：设置页的输入框仍用 `bg-base`，
+     *                    见 docs/contract-notes.md 的 19.4；所以它不是本文件的 token 表条目，
+     *                    只在此备案）
+     *   - `bg-module-platform` 分段控件/胶囊的底槽（`SegmentedControl`）—— 同上，未使用
+     *   - `bg-overlay`   tooltip 一类浮层底
+     */
+    const OFFICIAL_SURFACES = Object.freeze({
+      bgBase: { token: '--dsw-alias-bg-base', officialUse: '应用最底层 / 窗口底 / body / 整页级面板' },
+      bgLayer1: { token: '--dsw-alias-bg-layer-1', officialUse: '抬起的表面（浮层预览、卡片、HoverCard）' },
+      bgLayer2: { token: '--dsw-alias-bg-layer-2', officialUse: '弹窗面板（设置弹窗）与设置卡片填充' },
+      bgOverlay: { token: '--dsw-alias-bg-overlay', officialUse: '浮层 / 弹出层底（tooltip 类）' },
+    })
+
     const T = {
       bgBase: 'var(--dsw-alias-bg-base)',
       bgLayer1: 'var(--dsw-alias-bg-layer-1)',
@@ -578,9 +626,18 @@ window.__ModuleLoader__.load({
         display: 'flex',
         flexDirection: 'column',
         gap: '14px',
-        maxWidth: '880px',
-        // 设置页是「页面」级表面：底色用 base，次级表面（卡片）用 layer-1/2 叠上去。
-        background: T.bgBase,
+        // 设置页的阅读宽度上限由**官方 section 自己**定的（官方各页 720~760px，
+        // 见 `_3nPmjq_section` / `RotMhW_section`），这里照同一惯例，别再自己另起一套。
+        maxWidth: '760px',
+        // **不设底色**：官方设置页的 section 一律不画自己的表面
+        // （`SettingsRoot.module.css` 里只有 `.wCInkW_panel{background:var(--dsw-alias-bg-layer-2)}`
+        // 和 `.wCInkW_options{…overflow-y:auto}`，`options` 没有任何 background）。
+        // 这一层的表面＝弹窗面板的 `bg-layer-2`，继承下来即可。
+        //
+        // 早先这里写的是 `T.bgBase`，那是**应用最底层**（深色 #151517），比弹窗面板
+        // （`bg-layer-2` 深色 #2c2c2e）**更暗** —— 用户实测截图对比官方「通用设置」时
+        // 看到的就是这块"纯黑"。错在把「应用底色」当成了「内容表面」。
+        // 浏览器 lane 的 8.8 用官方同语义表面（`bg-layer-2`）的实际色值钉住这一点。
         color: T.label,
       },
       /**
@@ -599,7 +656,6 @@ window.__ModuleLoader__.load({
       panel: {
         padding: '18px',
         boxSizing: 'border-box',
-        maxWidth: '880px',
         height: '100%',
         minHeight: 0,
         flex: '1 1 auto',
@@ -609,6 +665,21 @@ window.__ModuleLoader__.load({
         // 面板 = 页面之上的一层表面（DSH 的 `bg-layer-1`），文字用主题的主文字色。
         background: T.bgLayer1,
         color: T.label,
+        // **故意不给 max-width**（早先是 `880px`，为可读性设的）。
+        //
+        // ui-layout 的 AppFrame 中栏（`.BynINW_centerCol`，见 asar 里的
+        // AppFrame.module.css）只有 `flex-direction:column; min-width:0; display:flex;
+        // overflow:hidden` —— **它自己不给任何宽度上限**，座位应当占满。
+        // 先前那条 880px 是抄"聊天的阅读宽度"来的：1280px 视口下看不出问题，
+        // 2560px 全屏下中栏有 2100px+，面板只吃 880px，右边就留出一大片空白
+        // （用户实测截图即此）。
+        //
+        // 官方对 main 槽里的**面板**页（不是表单页）的惯例同样是占满宽度：
+        // `settings-general` 的 `kh1pJG_page` 是 `width:100%`，
+        // `schedule` 的 `S0jZwq_page` 是 `width:100%; height:100%`。
+        // 长文本的可读性由内层容器各自决定，不该由"面板占位"来兜。
+        // 浏览器 lane 的 `layout.test.mjs` 8 号用例在 1600×900 与 2560×900 下钉住
+        // "内容区右边界 == 中栏右边界"。
       },
       /** 固定不滚的一层（表头 / 搜索 / 工具条）：滚动内容时它不动。 */
       bar: { flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: '14px' },
@@ -1656,12 +1727,17 @@ window.__ModuleLoader__.load({
       const header = h('div', { style: skin.row }, h('h2', { style: skin.title }, 'PixMart 电商生图'))
 
       if (state.phase === 'loading') {
-        return h('div', { style: skin.wrap }, header, h(LoadingRow, { text: '正在读取厂商与用量…' }))
+        return h(
+          'div',
+          { className: 'pxm-settings', style: skin.wrap },
+          header,
+          h(LoadingRow, { text: '正在读取厂商与用量…' }),
+        )
       }
       if (state.phase === 'error') {
         return h(
           'div',
-          { style: skin.wrap },
+          { className: 'pxm-settings', style: skin.wrap },
           header,
           h(
             Notice,
@@ -1727,7 +1803,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { style: skin.wrap },
+        { className: 'pxm-settings', style: skin.wrap },
         header,
         h(
           'p',
@@ -3009,7 +3085,13 @@ window.__ModuleLoader__.load({
     function workbenchFrame(bars, content, overlays, scrollRef) {
       return h(
         'div',
-        { className: 'pxm-workbench', style: skin.panel },
+        {
+          className: 'pxm-workbench',
+          style: skin.panel,
+          // `main` 插槽的**槽位标记**：浏览器 lane 靠它把"面板"这个盒子认出来，
+          // 而不是靠猜类名（见 `test/browser/layout.test.mjs` 8 号用例）。
+          'data-pxm-slot': 'main',
+        },
         h('div', { className: 'pxm-workbench-bar', style: skin.bar }, ...bars),
         h(
           'div',

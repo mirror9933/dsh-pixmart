@@ -53,6 +53,12 @@ const source = readFileSync(CLIENT_PATH, 'utf8')
  * 清单**是 14 项**：早先版本误把「进行中/进度」映射到 `--dsw-alias-brand-primary`
  * （那是主按钮填充色），现换成官方的 `--dsw-alias-label-tertiary`
  * （`StateDot` 的 `ongoing` 用的就是它），因此这一进一出后仍不用 brand-primary。
+ *
+ * 注意：`client/client.js` 里另有一份 `OFFICIAL_SURFACES` 清单（6 层官方表面的 token 名与
+ * 官方用法，含本插件**尚未使用**的 `bg-layer-3` / `bg-module-platform`）。它是**合同文本**、
+ * 不是取色来源，本文件因此**不**把它算进 `REQUIRED_TOKENS` ——
+ * 这份清单只收"源码里真的画出来的那些 token 的 var(...)"，混进合同文本会让
+ * 下面那条「代码里出现的 token 种类 == 清单」的断言失去意义。
  */
 const REQUIRED_TOKENS = [
   '--dsw-alias-bg-base',

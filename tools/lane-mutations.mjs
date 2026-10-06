@@ -299,8 +299,10 @@ const MUTATIONS = [
     expect: ['8.1 列表态：浅色下计算样式 == 对应 --dsw-* 的解析值', '8.2 列表态：换成官方深色 token 后同一批元素跟着变'],
     edits: [
       {
-        find: "        background: T.bgLayer1,\n        color: T.label,",
-        replace: "        background: '#f4f4f5',\n        color: T.label,",
+        // 锚点必须**唯一**：`background: T.bgLayer1,` 在文件里出现过两次
+        // （作品库面板 + 设置页的模型选择盒），所以带上紧随其后的那行注释来定位。
+        find: "        background: T.bgLayer1,\n        color: T.label,\n        // **故意不给 max-width**",
+        replace: "        background: '#f4f4f5',\n        color: T.label,\n        // **故意不给 max-width**",
       },
     ],
   },
@@ -333,6 +335,51 @@ const MUTATIONS = [
       {
         find: 'run: T.labelTertiary,',
         replace: 'run: T.brand,',
+      },
+    ],
+  },
+  {
+    id: 'M18-settings-surface-is-bg-base',
+    /**
+     * 表面映射侧的变异（问题①的缺陷形态）：把设置页 section 的底色写成
+     * **应用最底层** `--dsw-alias-bg-base`。
+     *
+     * 这正是用户实测"我们比官方「通用设置」暗一大截 / 看着是纯黑"的成因：官方设置页的
+     * section（`.wCInkW_options`）**自己不画表面**，显示的是弹窗面板那一层
+     * `--dsw-alias-bg-layer-2`（深色 `#2c2c2e`）；而 `bg-base` 是深色 `#151517`，明显更暗。
+     *
+     * 预期被 **8.8** 抓住。注意判据的构造：浅色下 `bg-base` / `layer-1` / `layer-2` 官方
+     * **就是同一个 `#fff`**（实测），所以 8.8 只在**深色**那一次断定"等于哪一层"——
+     * 这也是这条变异必须让深色那半边先跑的原因。
+     */
+    bug: '设置页 section 的底色从"不画表面（继承弹窗面板 bg-layer-2）"退回应用底色 bg-base（深色下更暗的"纯黑"）',
+    expect: ['8.8 `.pxm-settings` 的表面 == 官方弹窗面板那一层（bg-layer-2），且不是应用底色 bg-base'],
+    edits: [
+      {
+        // 锚点：`skin.wrap` 里那段说明性注释的结尾 + 紧随其后的 `color`。必须唯一。
+        find: '        color: T.label,\n      },\n      /**\n       * 作品库面板',
+        replace: '        background: T.bgBase,\n        color: T.label,\n      },\n      /**\n       * 作品库面板',
+      },
+    ],
+  },
+  {
+    id: 'M19-panel-max-width-880',
+    /**
+     * 宽屏布局侧的变异（问题②的缺陷形态）：给作品库面板加回 `maxWidth: '880px'`。
+     *
+     * 那条上限是抄"聊天的阅读宽度"来的（git c6b342c）。1280px 视口下看不出问题；
+     * 2560px 全屏下中栏有 2340px，面板只吃 880px —— 右边 1460px 全是空白，
+     * 就是用户截图里"内容挤在左侧、右边一大片空白色块"。
+     *
+     * 预期被 **8.**（`layout.test.mjs` 的宽屏用例，1600 与 2560 两档）抓住：
+     * 两档都会报"面板右边界必须贴住中栏右边界"。
+     */
+    bug: '作品库面板加回 maxWidth:880px（抄聊天的阅读宽度）—— 宽屏下右边留一大片空白',
+    expect: ['8. 1600/2560 宽视口下：面板右边界贴住中栏右边界，内容区占满且仍在内部滚动'],
+    edits: [
+      {
+        find: "        padding: '18px',\n        boxSizing: 'border-box',\n        height: '100%',",
+        replace: "        padding: '18px',\n        boxSizing: 'border-box',\n        maxWidth: '880px',\n        height: '100%',",
       },
     ],
   },

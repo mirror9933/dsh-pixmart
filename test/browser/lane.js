@@ -402,6 +402,29 @@
     return out
   }
 
+  /**
+   * **官方表面色**：把一组 `var(--dsw-…)` 当作 `color` 交给浏览器解析。
+   *
+   * 为什么走 `color` 而不是 `backgroundColor`：目标表面可能是"没有自己的背景"
+   * （官方设置页 section 就是这样的——它继承弹窗面板那一层）。那时
+   * `backgroundColor` 会是 `rgba(0,0,0,0)`，和任何 token 的解析值都不相等，
+   * 断言就变成"永远红"或者要靠特例绕开。`color` 是**继承属性**，量出来的是
+   * "这个 token 到底解析成什么颜色"，正好是"官方同语义表面用的是什么色"的答案。
+   * （`color-mix()` 会让 `backgroundColor` 变成 `color(srgb …)` 序列化形式，
+   * 用 `color` 也就顺带把两边的序列化器统一了。）
+   */
+  function officialSurfaces(items) {
+    var out = {}
+    ;(items || []).forEach(function (item) {
+      var probe = document.createElement('span')
+      probe.style.color = item.value
+      document.body.appendChild(probe)
+      out[item.key] = window.getComputedStyle(probe).color
+      probe.remove()
+    })
+    return out
+  }
+
   /** 换一组 token（深色用例）：写在 `:root` 的行内样式上，优先于样式表里的 `:root`。 */
   function setTokens(values) {
     var root = document.documentElement
@@ -432,11 +455,12 @@
     groupedPair: groupedPair,
     panelScroll: panelScroll,
     viewer: viewer,
-    // 主题 token：计算样式 / token 解析值 / 声明值 / 换一组 token
+    // 主题 token：计算样式 / token 解析值 / 声明值 / 换一组 token / 官方表面色
     computed: computed,
     resolveCss: resolveCss,
     tokenVar: tokenVar,
     setTokens: setTokens,
+    officialSurfaces: officialSurfaces,
     titlebarTop: function () {
       var el = document.getElementById('dsh-titlebar')
       return el === null ? null : rectOf(el)

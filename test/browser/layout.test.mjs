@@ -749,4 +749,187 @@ if (launched.browser === null) {
       }
     })
   })
+
+  // ── 8. 宽屏 / 全屏：面板必须占满中栏，右边不留空白块 ───────────────────────
+
+  /**
+   * 用户实测（2560×1390 全屏）：侧栏之后，作品库内容**挤在左侧**，右边一大片空白。
+   *
+   * ## 根因（证据在 asar 里，两边都读过原文）
+   *
+   * **不是** shell 的中栏宽度限制 —— `ui-layout` 的 AppFrame（asar:
+   * `@deepseek-ai/dsh-client-ui-layout/lib/client.js` 里那段内联 CSS）里，
+   * 中栏只有这一条规则：
+   *
+   *     .BynINW_centerCol{flex-direction:column;min-width:0;display:flex;overflow:hidden}
+   *
+   * 没有 `max-width`、没有 `width`、没有 `margin:auto`。`main` 槽的宿主是
+   * `display:contents` 的槽锚点，所以面板就是中栏的直接 flex 子项；中栏
+   * `flex-direction:column` ⇒ 子项横向被 stretch ⇒ 座位本来就是"占满可用宽度"。
+   * （lane 实测 2560px：中栏 `left 220 / right 2560 / width 2340`。）
+   *
+   * 真正的原因在**我们自己**：`skin.panel` 上写着 `maxWidth: 880px`（"抄聊天的阅读宽度"
+   * 那条，见 git c6b342c），面板因此只吃 880px —— lane 实测 2560px 下面板
+   * `left 220 / right 1100 / width 880`，右边界距中栏右边界 **1460px**。
+   *
+   * ## 判据
+   *
+   * 1. 面板右边界 == 中栏右边界（`<= 1px`）：右边不再有空白块；
+   * 2. 面板宽度 == 中栏可用宽度（`<= 1px`）：占满；
+   * 3. 面板内唯一的滚动容器（`.pxm-scroll`）的**内容区**左右边界 == 面板内容区边界
+   *    （只差面板自己的 `padding:18px`）——这条是把"占满"钉在**内容**上，
+   *    而不是"外层盒子被拉宽、里面还是一个窄柱"；
+   * 4. 面板仍锁死在中栏高度里、滚动仍在 `.pxm-scroll` 上（"滚不动"那条缺陷不能回归）。
+   *
+   * 1600×900 与 2560×900 两个宽度都量，避免只对某一档成立。
+   */
+  describe('8. 宽屏 / 全屏：作品库面板占满中栏的可用宽度', () => {
+    it('8. 1600/2560 宽视口下：面板右边界贴住中栏右边界，内容区占满且仍在内部滚动', async () => {
+      /** 与 `client/client.js` 的 `skin.panel` 同源的固定 18px 内边距。 */
+      const PANEL_PADDING = 18
+
+      for (const width of [1600, 2560]) {
+        const { page, context, problems } = await openLane({
+          width,
+          height: 900,
+          fixture: fixture({ projects: projects(6) }),
+        })
+        try {
+          await page.waitForSelector('.pxm-tile')
+
+          const geometry = await page.evaluate(() => {
+            const round = (n) => Math.round(n * 100) / 100
+            const box = (el) => {
+              const r = el.getBoundingClientRect()
+              const cs = window.getComputedStyle(el)
+              return {
+                left: round(r.left),
+                right: round(r.right),
+                width: round(r.width),
+                maxWidth: cs.maxWidth,
+                marginLeft: cs.marginLeft,
+                marginRight: cs.marginRight,
+                overflowY: cs.overflowY,
+                display: cs.display,
+                scrollTop: el.scrollTop,
+                scrollHeight: el.scrollHeight,
+                clientHeight: el.clientHeight,
+                paddingLeft: round(parseFloat(cs.paddingLeft)),
+                paddingRight: round(parseFloat(cs.paddingRight)),
+              }
+            }
+            const panel = document.querySelector('.pxm-workbench[data-pxm-slot="main"]')
+            const scroll = document.querySelector('.pxm-scroll')
+            /**
+             * 中栏 = 面板沿祖先链往上、**跳过所有 `display:contents` 的槽锚点**之后
+             * 第一个真正参与布局的盒子。
+             *
+             * 不能用 `offsetParent`：本骨架里 `#frame` 是 `position:absolute`，
+             * 它会先被返回。`display:contents` 的元素不建立包含块，跳过它们即可，
+             * 这也正是"面板就是中栏的直接 flex 子项"这条契约的可执行表述。
+             */
+            const containingBlock = (el) => {
+              let node = el.parentElement
+              while (node !== null && node !== document.body) {
+                if (window.getComputedStyle(node).display !== 'contents') return node
+                node = node.parentElement
+              }
+              return node
+            }
+            const centerCol = containingBlock(panel)
+            return {
+              viewport: { width: window.innerWidth, height: window.innerHeight },
+              panel: box(panel),
+              panelParent: box(panel.parentElement),
+              centerCol: box(centerCol),
+              centerColClass: centerCol.className,
+              scroll: box(scroll),
+              docScrollWidth: document.documentElement.scrollWidth,
+              docClientWidth: document.documentElement.clientWidth,
+            }
+          })
+
+          const where = String(width) + 'px 宽视口：'
+
+          // 前提自证：中栏自己不给宽度上限（否则"占满"的判据就说不清了）。
+          assert.ok(
+            /centerCol/.test(String(geometry.centerColClass)),
+            where + '量到的必须是中栏（.centerCol）：' + JSON.stringify(geometry),
+          )
+          assert.equal(
+            geometry.centerCol.maxWidth,
+            'none',
+            where + '中栏不该有 max-width：' + JSON.stringify(geometry.centerCol),
+          )
+          assert.ok(
+            geometry.centerCol.width > 1200,
+            where + '中栏必须真的变宽（夹具/骨架没生效的话本用例空转）：' +
+              JSON.stringify(geometry.centerCol),
+          )
+          assert.equal(
+            geometry.panelParent.width,
+            0,
+            where + '面板的直接父元素应当是 display:contents 的槽锚点（不产生盒子）：' +
+              JSON.stringify(geometry.panelParent),
+          )
+
+          // 1 + 2：占满中栏可用宽度，右边不留空白块。
+          assert.ok(
+            Math.abs(geometry.panel.right - geometry.centerCol.right) <= 1,
+            where +
+              '面板右边界必须贴住中栏右边界（右边不留空白块）：' +
+              JSON.stringify({ panel: geometry.panel, centerCol: geometry.centerCol }),
+          )
+          assert.ok(
+            Math.abs(geometry.panel.width - geometry.centerCol.width) <= 1,
+            where +
+              '面板必须占满中栏的可用宽度（早先的 maxWidth:880px 就是"右边一大片空白"的根因）：' +
+              JSON.stringify({ panel: geometry.panel, centerCol: geometry.centerCol }),
+          )
+          assert.ok(
+            geometry.panel.width > 880 + 200,
+            where +
+              '面板宽度必须**超过**被修掉的 880px 上限（否则这条断言对本次修复不敏感）：' +
+              String(geometry.panel.width),
+          )
+          assert.equal(geometry.panel.maxWidth, 'none', where + '面板不该再挂 max-width')
+          assert.equal(geometry.panel.marginLeft, '0px', where + '面板不该靠 margin 居中（它就该占满）')
+
+          // 3：滚动容器的**内容区**也要贴着面板内容区（不是"外层拉宽、里面还是窄柱"）。
+          assert.ok(
+            Math.abs(geometry.scroll.left - (geometry.panel.left + PANEL_PADDING)) <= 1,
+            where + '滚动容器左边界应等于面板内容区左边界：' + JSON.stringify(geometry),
+          )
+          assert.ok(
+            Math.abs(geometry.scroll.right - (geometry.panel.right - PANEL_PADDING)) <= 1,
+            where + '滚动容器右边界应等于面板内容区右边界：' + JSON.stringify(geometry),
+          )
+
+          // 4：几何不能靠"撑出文档"换来；滚动仍锁在内部。
+          assert.ok(
+            geometry.docScrollWidth <= geometry.docClientWidth + 1,
+            where + '不得出现横向溢出：' + JSON.stringify(geometry),
+          )
+          assert.equal(
+            geometry.panel.overflowY,
+            'visible',
+            where + '面板根不滚（固定层契约）：' + JSON.stringify(geometry.panel),
+          )
+          assert.equal(
+            geometry.scroll.overflowY,
+            'auto',
+            where + '唯一的滚动容器仍是 .pxm-scroll：' + JSON.stringify(geometry.scroll),
+          )
+          assert.ok(
+            geometry.scroll.clientHeight > 0 && geometry.scroll.clientHeight <= geometry.panel.clientHeight,
+            where + '滚动容器必须被锁在面板高度里（否则"滚不动"会回归）：' + JSON.stringify(geometry),
+          )
+
+          assert.deepEqual(problems, [], where + '页面不该有 console.error / 未捕获异常')
+        } finally {
+          await context.close()
+        }
+      }
+    })
+  })
 }
