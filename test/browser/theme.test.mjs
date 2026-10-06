@@ -31,7 +31,11 @@
  *
  * 官方 token 里 `state-success-primary` / `state-warn-primary` 的**浅色与深色取值相同**，
  * 所以它们**不能**用来证明"跟随主题"。用来证明跟随主题的全是浅/深确实不同的 token
- * （bg / border / label / brand / error / idle）——最后一条用例专门把这件事钉住。
+ * （bg / border / label / error / idle）——8.5 用例专门把这件事钉住。
+ *
+ * 另一处语义锚点是 8.7：官方 `StateDot` 的 `ongoing` 用 `--dsw-alias-label-tertiary`
+ * （`StateDot.module.css` 的 `.spinner`），而 `--dsw-alias-brand-primary` 是**主按钮填充**
+ * （浅色近黑）。所以"进行中/进度"三处必须量到 tertiary 的解析值，且深浅跟着变。
  *
  * ## 运行
  *
@@ -61,6 +65,7 @@ const TOKENS = [
   '--dsw-alias-brand-primary',
   '--dsw-alias-label-primary',
   '--dsw-alias-label-secondary',
+  '--dsw-alias-label-tertiary',
   '--dsw-alias-state-error-primary',
   '--dsw-alias-state-idle-primary',
   '--dsw-alias-state-success-primary',
@@ -81,6 +86,7 @@ const LIGHT = {
   '--dsw-alias-brand-primary': '#0f1115',
   '--dsw-alias-label-primary': '#0f1115',
   '--dsw-alias-label-secondary': '#61666b',
+  '--dsw-alias-label-tertiary': '#81858c',
   '--dsw-alias-state-error-primary': '#ec1313',
   '--dsw-alias-state-idle-primary': '#d4d4d4',
   '--dsw-alias-state-success-primary': '#22c55e',
@@ -103,6 +109,7 @@ const DARK = {
   '--dsw-alias-brand-primary': '#f9fafb',
   '--dsw-alias-label-primary': '#f9fafb',
   '--dsw-alias-label-secondary': '#cfd3d6',
+  '--dsw-alias-label-tertiary': '#adb2b8',
   '--dsw-alias-state-error-primary': '#f25a5a',
   '--dsw-alias-state-idle-primary': '#545557',
   '--dsw-alias-state-success-primary': '#22c55e',
@@ -187,6 +194,36 @@ const TARGETS = [
 const LIST_TARGETS = TARGETS.filter((target) => target.state === 'list')
 const DETAIL_TARGETS = TARGETS.filter((target) => target.state === 'detail')
 
+/**
+ * 「进行中 / 进度」那几处（8.7），全部在 `.pxm-card`（运行中自动展开的预览卡）里：
+ *   - `.pxm-chip-running`：那一格**正在跑**，边框走状态色 `COLORS.run`；
+ *   - `.pxm-chip-running .pxm-ring`：它的进度环（`Colors.run` + 18% 半透明轨道）。
+ *
+ * 两处都应挂 `--dsw-alias-label-tertiary`——官方 `StateDot` 的 `ongoing` 用的就是它
+ * （`StateDot.module.css` 的 `.spinner{color:var(--dsw-alias-label-tertiary)}`）。
+ * 早先版本误用了 `--dsw-alias-brand-primary`（**主按钮填充**，浅色 #0f1115 近黑），
+ * 浅色主题下那一格会呈现近黑色边框，看起来像一枚按钮而不是"正在跑"。
+ *
+ * **预览卡头部那枚 36px 的 `ProgressRing` 不在这里**：它只画「已完成（success）/
+ * 失败（error）/ 剩余槽（idle）」三段，本来就没有"进行中"这一段要上色（已逐处核对过
+ * `brand-primary` 的用法：只有状态色映射与选中描边/focus ring 三处，前者与这里的缩略图
+ * 边框、进度环是同一处 `COLORS.run`）。
+ */
+const OVERLAY_TARGETS = [
+  {
+    key: 'chip.running.border',
+    selector: '.pxm-chip-running',
+    prop: 'borderTopColor',
+    expect: 'var(--dsw-alias-label-tertiary)',
+  },
+  {
+    key: 'chip.running.ringColor',
+    selector: '.pxm-chip-running .pxm-ring',
+    prop: 'backgroundImage',
+    expect: 'conic-gradient(var(--dsw-alias-label-tertiary) 0deg 120deg, color-mix(in srgb, var(--dsw-alias-label-tertiary) 18%, transparent) 120deg 360deg)',
+  },
+]
+
 /** 历史硬编码值里最典型的一个：改造前的失败文字 `#ef4444`。留着做"不是碰巧同色"的反证。 */
 const LEGACY_ERROR_COLOR = 'rgb(239, 68, 68)'
 
@@ -252,10 +289,55 @@ function projectsFixture(n = 4) {
   return out
 }
 
-const fixture = () => ({
-  projects: projectsFixture(),
-  detail: detailFixture(),
-  providers: {
+/**
+ * 8.7 用的运行夹具：一条**正在跑**的运行，`items` 里恰好一条 `status:'running'`
+ * （那枚缩略图才会渲染 `.pxm-chip-running` 与它的进度环），另一条已完成。
+ *
+ * `startedAt` 必须**晚于本页面的挂载基线**，预览卡才会自动展开（§8.5.5）——
+ * 而基线是 `client.js` 求值那一刻、由 Node 侧夹具无法预知的时刻，所以这里取一个
+ * 明确的将来时刻（`Date.now() + 60s`）：它一定晚于基线。这不是"伪造数据"，
+ * 只是把「本页面加载之后才开始的运行」这一态确定下来；另外几个时间字段与它保持一致。
+ */
+function runningFixture() {
+  const now = Date.now()
+  const startedAt = now + 60000
+  const run = {
+    runId: 'run-theme',
+    sessionId: 'sess-theme',
+    tool: 'batch',
+    provider: 'ofox',
+    model: 'gpt-image-1',
+    size: '1:1',
+    status: 'running',
+    total: 2,
+    completed: 1,
+    failed: 0,
+    currentLabel: '白底主图',
+    projectId: PROJECT_ID,
+    projectName: '主题对齐',
+    startedAt,
+    updatedAt: startedAt,
+    items: [
+      {
+        index: 0,
+        module: 'main.white-bg',
+        label: '白底主图',
+        status: 'done',
+        file: 'images/0.png',
+        width: 1024,
+        height: 1024,
+      },
+      { index: 1, module: 'detail.hero', label: '详情首屏', status: 'running' },
+    ],
+  }
+  const { items, ...summary } = run
+  // 列表摘要与详情必须**同一份时间戳**：服务端采纳的是摘要（`startedAt` 决定自动展开），
+  // 两份不一致时 8.7 会测到"卡片没展开"。
+  return { run, summary }
+}
+
+function providersFixture() {
+  return {
     ok: true,
     dataDir: 'D:/pixmart',
     exportDir: 'D:/PixMartExport',
@@ -275,7 +357,15 @@ const fixture = () => ({
         allowedSizes: ['1:1'],
       },
     ],
-  },
+  }
+}
+
+const fixture = (over = {}) => ({
+  projects: projectsFixture(),
+  detail: detailFixture(),
+  runs: [],
+  providers: providersFixture(),
+  ...over,
 })
 
 // ── lane 启动 ───────────────────────────────────────────────────────────────
@@ -328,7 +418,7 @@ if (launched.browser === null) {
   const probeArgs = (page, name, args) =>
     page.evaluate(([fn, list]) => window.__pxmLane[fn].apply(null, list), [name, args])
 
-  async function openThemedLane() {
+  async function openThemedLane(data = fixture(), mountSlot = 'main') {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 })
     const page = await context.newPage()
     const problems = []
@@ -337,8 +427,33 @@ if (launched.browser === null) {
       if (msg.type() === 'error') problems.push('console.error: ' + msg.text())
     })
     await page.goto(server.origin + '/shell.html', { waitUntil: 'load' })
-    await page.evaluate((data) => window.__pxmLane.install(data), fixture())
-    await page.evaluate((slot) => window.__pxmLane.mount(slot), 'main')
+    await page.evaluate((payload) => window.__pxmLane.install(payload), data)
+    await page.evaluate((slot) => window.__pxmLane.mount(slot), mountSlot)
+    return { page, context, problems }
+  }
+
+  /**
+   * 起一个带**在跑的运行**的页面，并把 `shell.overlay` 实时预览卡挂上。
+   *
+   * 8.7 的那两个元素（`.pxm-chip-running` 与它的进度环）只在
+   * 「运行中 → 卡片自动展开」这一态里存在，所以这里必须先等到 `.pxm-chip-running`
+   * 真的出现，再开始量——否则量到的是 `null`，断言会以"元素缺失"报错而不是静默通过。
+   */
+  async function openOverlayLane() {
+    const { run, summary } = runningFixture()
+    const { page, context, problems } = await openThemedLane(
+      fixture({ runs: [summary], runDetail: run }),
+    )
+    await page.evaluate((slot) => window.__pxmLane.mount(slot), 'shell.overlay')
+    await page.waitForSelector('.pxm-chip-running', { timeout: 15000 })
+    assert.ok(
+      (await page.$('.pxm-card')) !== null,
+      '运行中必须展开预览卡（否则量到的不是卡片里的缩略图）',
+    )
+    assert.ok(
+      (await page.$('.pxm-chip-running .pxm-ring')) !== null,
+      '运行中的缩略图必须带进度环（否则那条"进度环颜色"的断言是空转）',
+    )
     return { page, context, problems }
   }
 
@@ -436,7 +551,7 @@ if (launched.browser === null) {
   // ── 8.0 token 表自证 ─────────────────────────────────────────────────────
 
   describe('8.0 token 表自证：shell 骨架发布的确实是官方 token 与浅色取值', () => {
-    it('13 个 --dsw-* 都能在 :root 上读到，且等于官方浅色取值', async () => {
+    it('14 个 --dsw-* 都能在 :root 上读到，且等于官方浅色取值', async () => {
       const { page, context, problems } = await openThemedLane()
       try {
         const declared = await probe(page, 'tokenVar', TOKENS)
@@ -570,7 +685,7 @@ if (launched.browser === null) {
   // ── 8.5 哪些 token 不能当"跟随主题"的证据 ────────────────────────────────
 
   describe('8.5 官方 token 里浅/深同色的那几个：记录清楚，免得被当成跟随主题的证据', () => {
-    it('8.5 success / warn 浅深同色；bg / border / label / error / idle / brand 确实不同色', async () => {
+    it('8.5 success / warn 浅深同色；bg / border / label / error / idle / tertiary 确实不同色', async () => {
       const { page, context, problems } = await openThemedLane()
       try {
         const items = TOKENS.map((token) => ({ key: token, prop: 'color', value: 'var(' + token + ')' }))
@@ -590,6 +705,9 @@ if (launched.browser === null) {
           '--dsw-alias-bg-layer-1',
           '--dsw-alias-border-l2',
           '--dsw-alias-label-secondary',
+          // 「进行中/进度」挂的就是它：浅 #81858c / 深 #adb2b8 确实不同，
+          // 因此它**可以**作为"跟随主题"的证据（8.7 正是在用它）。
+          '--dsw-alias-label-tertiary',
           '--dsw-alias-state-error-primary',
           '--dsw-alias-state-idle-primary',
           '--dsw-alias-brand-primary',
@@ -618,6 +736,47 @@ if (launched.browser === null) {
             '主题探针 ' + name + ' 必须存在',
           )
         }
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.7 「进行中 / 进度」的语义色 ─────────────────────────────────────────
+
+  describe('8.7 运行中的预览卡：进度相关的颜色挂 label-tertiary，而不是主按钮填充 brand-primary', () => {
+    it('8.7 运行中缩略图的边框与它的进度环：浅色等于 tertiary 解析值，深色跟着变', async () => {
+      const { page, context, problems } = await openOverlayLane()
+      try {
+        const m = await measureBothThemes(page, OVERLAY_TARGETS)
+
+        assertThemeSwitched(m.lightVars, m.darkVars)
+        assertLightMatches(m, OVERLAY_TARGETS)
+        assertFollowedTheme(m, OVERLAY_TARGETS)
+
+        // 反证：这两处若退回**主按钮填充色** brand-primary，浅色下会是近黑 #0f1115。
+        // 逐个断言它们**不**等于"同样的表达式、但把 token 换成 brand"的解析值 ——
+        // 表达式逐字对齐（含 color-mix 轨道与角度），否则比的是两种不同的序列化，
+        // 断言会因为"字符串本来就不同"而恒真，等于没测。
+        const asBrand = (expect) =>
+          expect.replace(/var\(--dsw-alias-label-tertiary\)/g, 'var(--dsw-alias-brand-primary)')
+        const brandResolved = await resolveExpectations(
+          page,
+          OVERLAY_TARGETS.map((target) => ({
+            key: target.key,
+            prop: target.prop,
+            expect: asBrand(target.expect),
+          })),
+        )
+        for (const target of OVERLAY_TARGETS) {
+          assert.notEqual(
+            m.lightComputed[target.key],
+            brandResolved[target.key],
+            '这处进度色等于 brand-primary（主按钮填充色，浅色近黑）——那是被修掉的缺陷形态：' +
+              target.key,
+          )
+        }
+        assert.deepEqual(problems, [])
       } finally {
         await context.close()
       }

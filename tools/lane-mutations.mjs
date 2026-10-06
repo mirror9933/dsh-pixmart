@@ -304,6 +304,38 @@ const MUTATIONS = [
       },
     ],
   },
+  {
+    id: 'M17-progress-color-is-brand',
+    /**
+     * 语义侧的变异：把「进行中 / 进度」的状态色从**官方 `StateDot` ongoing 的那一枚**
+     * （`--dsw-alias-label-tertiary`）退回 `--dsw-alias-brand-primary`。
+     *
+     * 这正是 d03a4a4 里那处**错误的**语义映射：`brand-primary` 是**主按钮填充**色
+     * （官方 `--dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary)`），
+     * 浅色下近黑（`#0f1115`）、深色下近白。挂在"正在跑"的那一格上，浅色主题里它看起来
+     * 像一枚按钮而不是状态点——与本插件"和官方一致"的目标相反。
+     *
+     * 预期被 **8.7** 抓住（浏览器侧量的是**计算样式**，所以换 token 与换硬编码 hex 都会被它抓住：前者
+     * 等于 brand 的解析值，后者干脆不跟着主题变）。
+     * 另外 `pnpm test` 里的静态用例 `test/client-tokens.test.mjs`（"token 表与清单一一对应"与
+     * "进行中/进度用的是 label-tertiary"两条）也会因这处变红——但它不在本脚本跑的 lane 文件里。
+     */
+    bug: '「进行中/进度」的状态色从 label-tertiary 退回 brand-primary（主按钮填充色，浅色近黑）—— 进度点长得像按钮',
+    expect: ['8.7 运行中缩略图的边框与它的进度环：浅色等于 tertiary 解析值，深色跟着变'],
+    edits: [
+      // T 表里补回 brand（变异体必须仍然可运行，才谈得上"被断言抓住"而不是"崩了"）
+      {
+        find: "      labelTertiary: 'var(--dsw-alias-label-tertiary)',",
+        replace:
+          "      brand: 'var(--dsw-alias-brand-primary)',\n      labelTertiary: 'var(--dsw-alias-label-tertiary)',",
+      },
+      // 状态色映射退回 brand
+      {
+        find: 'run: T.labelTertiary,',
+        replace: 'run: T.brand,',
+      },
+    ],
+  },
 ]
 
 function applyMutation(source, mutation) {

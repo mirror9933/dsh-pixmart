@@ -49,6 +49,10 @@ const source = readFileSync(CLIENT_PATH, 'utf8')
  * 每个名字都由 client Theme 的 `listTokens` 确证存在，且**都带浅/深两套值**
  * （`requiresLightAndDark: true`）—— 这正是"配色能自动与官方主题一致"的前提。
  * 加/减 token 时要显式改这里，避免悄悄漂移。
+ *
+ * 清单**是 14 项**：早先版本误把「进行中/进度」映射到 `--dsw-alias-brand-primary`
+ * （那是主按钮填充色），现换成官方的 `--dsw-alias-label-tertiary`
+ * （`StateDot` 的 `ongoing` 用的就是它），因此这一进一出后仍不用 brand-primary。
  */
 const REQUIRED_TOKENS = [
   '--dsw-alias-bg-base',
@@ -57,9 +61,9 @@ const REQUIRED_TOKENS = [
   '--dsw-alias-bg-overlay',
   '--dsw-alias-border-l1',
   '--dsw-alias-border-l2',
-  '--dsw-alias-brand-primary',
   '--dsw-alias-label-primary',
   '--dsw-alias-label-secondary',
+  '--dsw-alias-label-tertiary',
   '--dsw-alias-state-error-primary',
   '--dsw-alias-state-idle-primary',
   '--dsw-alias-state-success-primary',
@@ -240,5 +244,55 @@ describe('客户端配色：只走官方 --dsw-* token（静态契约）', () =>
       [],
       '这些 token 键只声明没被引用（某处样式可能退回成硬编码了）：' + unused.join(', '),
     )
+  })
+
+  /**
+   * 语义锚点：「进行中 / 正在跑 / 进度」= `label-tertiary`，**不是** `brand-primary`。
+   *
+   * 为什么需要它（而且不能只靠上面那条"键被引用过"）：`brand-primary` 是官方**主按钮填充**色
+   * （浅色 `#0f1115`、深色 `#f9fafb`），把它挂到进行中上，浅色主题下会呈现近黑色——看起来像
+   * 一枚按钮而不是状态点。官方 `StateDot` 的 `ongoing` 用的是 `--dsw-alias-label-tertiary`
+   * （`StateDot.module.css` 的 `.spinner`），这里把**同一处语义**钉在源码上：
+   * 「进行中/进度」的载体（状态色映射 `COLORS.run` → 运行中缩略图边框 + 它的进度环）
+   * 以及同一枚 token 的另两处用途（选中态描边 / focus ring），一旦换回 `brand-primary`
+   * 或硬编码 hex，本用例直接变红。
+   */
+  it('「进行中 / 进度」用的是 label-tertiary，不是主按钮填充色 brand-primary', () => {
+    const table = tokenTable(code)
+    assert.ok(table !== null, '源码里找不到 token 表 `const T = { … }`（结构变了就同步本用例）')
+
+    const tokens = Object.fromEntries(table.map((entry) => [entry.key, entry.token]))
+    assert.equal(
+      tokens.labelTertiary,
+      '--dsw-alias-label-tertiary',
+      'token 表里必须有 labelTertiary → --dsw-alias-label-tertiary',
+    )
+
+    // 「进行中/进度」的载体各自断言（不是只查全文件的"没出现过 brand"，
+    // 那样一处漏改、别处仍有引用时会被放过）。
+    const COLORS_LINE = 'const COLORS = { ok: T.success, fail: T.error, run: T.'
+    const runColor = new RegExp(COLORS_LINE + '([A-Za-z]+), track: T\\.idle \\}').exec(code)
+    assert.ok(runColor !== null, '找不到状态色映射 `const COLORS = { … }`（结构变了就同步本用例）')
+    assert.equal(
+      runColor[1],
+      'labelTertiary',
+      '「进行中」的状态色必须映射到 labelTertiary（换成 brand 就是"进度点长得像主按钮"）',
+    )
+
+    const chipBorder = /status === 'running' \? COLORS\.([A-Za-z]+)/.exec(code)
+    assert.ok(chipBorder !== null, '找不到运行中缩略图的边框色表达式（结构变了就同步本用例）')
+    assert.equal(chipBorder[1], 'run', '运行中缩略图边框必须走 COLORS.run')
+
+    const runningRing = /'conic-gradient\(' \+ COLORS\.([A-Za-z]+) \+ ' 0deg '/.exec(code)
+    assert.ok(runningRing !== null, '找不到运行中的进度环表达式（结构变了就同步本用例）')
+    assert.equal(runningRing[1], 'run', '运行中的进度环必须走 COLORS.run')
+
+    const tileSelected = /border: selected \? '1px solid ' \+ T\.([A-Za-z]+)/.exec(code)
+    assert.ok(tileSelected !== null, '找不到选中态描边表达式（结构变了就同步本用例）')
+    assert.equal(tileSelected[1], 'labelTertiary', '选中态描边必须走 labelTertiary')
+
+    const focusRing = /\.pxm-badge:focus-visible,\.pxm-thumb:focus-visible\{outline:2px solid ' \+\s*\n?\s*T\.([A-Za-z]+)/.exec(code)
+    assert.ok(focusRing !== null, '找不到 focus ring 表达式（结构变了就同步本用例）')
+    assert.equal(focusRing[1], 'labelTertiary', 'focus ring 必须走 labelTertiary')
   })
 })

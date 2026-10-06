@@ -96,6 +96,12 @@ window.__ModuleLoader__.load({
      * 视觉 token：客户端配色**只走 DSH 官方主题变量**（`--dsw-*`），因此深浅色主题自动一致，
      * 插件侧不写死任何颜色（没有十六进制色值 / rgb 函数 / 系统色关键字）。
      *
+     * **不用 `--dsw-alias-brand-primary`**：那个 token 是**主按钮填充**（浅色 `#0f1115`、
+     * 深色 `#f9fafb`，见官方 `--dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary)`）。
+     * 「进行中 / 进度」若挂上它，浅色主题下会呈现**近黑色**——看起来像一枚按钮而不是状态。
+     * 官方 `StateDot` 的 `ongoing` 用的是 `--dsw-alias-label-tertiary`
+     * （`StateDot.module.css` 的 `.spinner{color:var(--dsw-alias-label-tertiary)}`），本插件照抄那一处语义。
+     *
      * 为什么**不** require 官方组件包（`@deepseek-ai/dsh-client-ui-primitives`）：
      *   - 官方明文禁止 —— `dsh-agent-preset/skills/cordis-plugin-development/references/practices.md:35`；
      *   - 该包是**未打包 ESM + 38 个相对 `.module.css`**，而本插件是手写 JS、没有构建步骤，
@@ -113,9 +119,9 @@ window.__ModuleLoader__.load({
       bgOverlay: 'var(--dsw-alias-bg-overlay)',
       borderL1: 'var(--dsw-alias-border-l1)',
       borderL2: 'var(--dsw-alias-border-l2)',
-      brand: 'var(--dsw-alias-brand-primary)',
       label: 'var(--dsw-alias-label-primary)',
       labelSecondary: 'var(--dsw-alias-label-secondary)',
+      labelTertiary: 'var(--dsw-alias-label-tertiary)',
       error: 'var(--dsw-alias-state-error-primary)',
       idle: 'var(--dsw-alias-state-idle-primary)',
       success: 'var(--dsw-alias-state-success-primary)',
@@ -134,8 +140,13 @@ window.__ModuleLoader__.load({
     const shadow = (y, blur, percent) =>
       '0 ' + String(y) + 'px ' + String(blur) + 'px ' + tint(T.label, percent)
 
-    /** 状态色：状态徽标 / 进度环 / 缩略图边框共用一套语义（对齐官方 `StateDot`）。 */
-    const COLORS = { ok: T.success, fail: T.error, run: T.brand, track: T.idle }
+    /**
+     * 状态色：状态徽标 / 进度环 / 缩略图边框共用一套语义（对齐官方 `StateDot`）。
+     *
+     * `run` 用 `labelTertiary` 而不是任何「品牌」色：官方 `StateDot` 的 `ongoing`
+     * （唯一非圆点的状态：呼吸弧 + 旋转环）就是 `--dsw-alias-label-tertiary`。
+     */
+    const COLORS = { ok: T.success, fail: T.error, run: T.labelTertiary, track: T.idle }
 
     const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
     const isArray = Array.isArray
@@ -1987,9 +1998,10 @@ window.__ModuleLoader__.load({
               cursor: 'pointer',
               padding: '8px',
               borderRadius: '10px',
-              // 选中态用官方品牌色描边（而不是继承来的文字色：那是文字语义，不对）。
-              border: selected ? '1px solid ' + T.brand : '1px solid ' + T.borderL1,
-              background: selected ? tint(T.brand, 6) : T.bgLayer2,
+              // 选中态用官方**三级文字色**描边。**不**用 `brand-primary`：那是主按钮填充色
+              // （浅色近黑 / 深色近白），选中描边会变成"像按钮"的假象；此处要的是中性强调。
+              border: selected ? '1px solid ' + T.labelTertiary : '1px solid ' + T.borderL1,
+              background: selected ? tint(T.labelTertiary, 6) : T.bgLayer2,
               display: 'flex',
               flexDirection: 'column',
               gap: '8px',
@@ -3876,9 +3888,11 @@ window.__ModuleLoader__.load({
                       height: '18px',
                       borderRadius: '50%',
                       background:
-                        'conic-gradient(' + T.brand + ' 0deg ' +
+                        // 「这一格正在跑」的进度环：官方 `StateDot` ongoing 的同一枚 token
+                        // （轨道用它的 18% 半透明变体，而不是另一枚颜色）。
+                        'conic-gradient(' + COLORS.run + ' 0deg ' +
                         String(runningDeg) +
-                        'deg, ' + tint(T.brand, 18) + ' ' +
+                        'deg, ' + tint(COLORS.run, 18) + ' ' +
                         String(runningDeg) +
                         'deg 360deg)',
                     },
@@ -4245,7 +4259,7 @@ window.__ModuleLoader__.load({
       /* 查看器是本插件在作品库面板内的模态层（position:fixed），入场动画随 reduced-motion 关闭 */
       '.pxm-viewer{animation:pxm-in .16s ease-out;}',
       '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid ' +
-        T.brand +
+        T.labelTertiary +
         ';outline-offset:2px;}',
       '.pxm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}',
       /* 窄屏（<640px）：退化为底部整宽 + 另设更小高度上限 */

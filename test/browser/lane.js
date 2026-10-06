@@ -82,7 +82,15 @@
     if (p.indexOf('/pixmart/api/projects/') === 0) return jsonResponse(fixture.detail)
     if (p === '/pixmart/api/trash') return jsonResponse({ ok: true, count: 0, trash: [] })
     if (p === '/pixmart/api/providers') return jsonResponse(fixture.providers)
-    if (p === '/pixmart/api/runs') return jsonResponse({ ok: true, runs: [], count: 0 })
+    // 运行列表 / 详情：默认都为空（既有用例不受影响）；要测「运行中」的预览卡时，
+    // 夹具里给 `runs`（摘要列表）与 `runDetail`（带 items 的详情）即可。
+    if (p === '/pixmart/api/runs') {
+      return jsonResponse({ ok: true, runs: fixture.runs || [], count: (fixture.runs || []).length })
+    }
+    if (p.indexOf('/pixmart/api/runs/') === 0) {
+      if (!fixture.runDetail) return jsonResponse({ ok: false, error: { code: 'not_found', message: p } }, 404)
+      return jsonResponse({ ok: true, run: fixture.runDetail })
+    }
     return jsonResponse({ ok: false, error: { code: 'unknown_route', message: p } }, 404)
   }
 

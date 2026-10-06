@@ -1063,9 +1063,18 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 | 查看器 / 预览卡 / 徽标（浮层） | `--dsw-alias-bg-overlay` |
 | 分隔线（发丝级） | `--dsw-alias-border-l1` |
 | 控件与卡片描边 | `--dsw-alias-border-l2` |
-| 品牌强调（选中描边、focus ring、进度「进行中」） | `--dsw-alias-brand-primary` |
-| 主文字 / 次文字 | `--dsw-alias-label-primary` / `--dsw-alias-label-secondary` |
-| 状态色（对齐官方 `StateDot`） | `--dsw-alias-state-success-primary`（完成）· `-state-error-primary`（失败）· `-state-warn-primary`（警告 / 数据过期）· `-state-idle-primary`（待机 / 进度条底槽） |
+| 品牌强调（**主按钮填充**） | `--dsw-alias-brand-primary`（官方 `--dsw-alias-button-primary-fill` 就是它；浅色近黑 / 深色近白）**本插件不用** |
+| 主文字 / 次文字 / 三级文字 | `--dsw-alias-label-primary` / `--dsw-alias-label-secondary` / `--dsw-alias-label-tertiary` |
+| 状态色（对齐官方 `StateDot`） | `--dsw-alias-state-success-primary`（完成）· `-state-error-primary`（失败）· `-state-warn-primary`（警告 / 数据过期）· `-state-idle-primary`（待机 / 进度条底槽）· **`--dsw-alias-label-tertiary`（进行中 —— 官方 `StateDot` 的 `ongoing` 用的正是它）** |
+
+**「进行中 / 进度」为什么是 `label-tertiary` 而不是 `brand-primary`**：`brand-primary` 是**主按钮
+填充**色（官方 `--dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary)`），浅色 `#0f1115`
+近黑、深色 `#f9fafb` 近白。把它挂在"正在跑"的状态点上，浅色主题下会呈现近黑色——看起来像一枚
+按钮而不是状态。官方 `StateDot` 的 `ongoing`（唯一非圆点的状态）用的是
+`--dsw-alias-label-tertiary`（`StateDot.module.css` 的 `.spinner{color:var(--dsw-alias-label-tertiary)}`，
+轨道是同色的 25% 半透明）。本插件照抄该语义：状态色映射 `COLORS.run`、运行中缩略图的边框与它的
+进度环都用它。**预览卡头部那枚 36px `ProgressRing` 不在此列**——它只画「完成 / 失败 / 剩余槽」
+三段，本来就没有"进行中"这一段要上色。
 
 **唯一的例外**：官方 token 里 `state-success-primary` 与 `state-warn-primary` 的浅色/深色
 取值**本来相同**（`#22c55e` / `#f59e0b`），所以它们不能用来证明"跟随主题"——这不是硬编码，
@@ -1089,21 +1098,25 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 
 ### 19.3 回归怎么锁住（三条）
 
-1. **静态扫描**（`test/client-tokens.test.mjs`，8 项，`pnpm test`）：先按字符串/注释状态机剥掉
+1. **静态扫描**（`test/client-tokens.test.mjs`，9 项，`pnpm test`）：先按字符串/注释状态机剥掉
    注释（注释里会**提到**被禁的写法），再对代码断言——没有十六进制色值、没有系统色关键字、
-   没有 `rgb()`/`hsl()`、没有「当前颜色」关键字。两条**正向**断言：`--dsw-` 出现次数 ≥ 清单长度
-   （阈值 13）；以及从源码里**读出** `const T = {…}` 表，断言它与清单一一对应、且每个 token 键
-   都真的被样式引用过（只声明不引用 = 那处多半被换回硬编码了）。
-2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3，`pnpm test:browser`）：
+   没有 `rgb()`/`hsl()`、没有「当前颜色」关键字。三条**正向**断言：`--dsw-` 出现次数 ≥ 清单长度
+   （阈值 = 清单长度，现为 14）；从源码里**读出** `const T = {…}` 表，断言它与清单一一对应、
+   且每个 token 键都真的被样式引用过（只声明不引用 = 那处多半被换回硬编码了）；以及
+   「进行中/进度」那几处必须走 `labelTertiary`（逐处正则钉住，换成 `T.brand` 或硬编码 hex 直接红）。
+2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3 / 8.7，`pnpm test:browser`）：
    在 `test/browser/shell.html` 里**定义**官方浅色取值，然后按**计算样式**
    （`getComputedStyle`，不是内联字符串）断言元素某个属性 == 该 token 在**当前页面**里的解析值
    （解析由浏览器现场完成，`__pxmLane.resolveCss` 按目标属性本身解析，两边同一个序列化器）。
    夹具里刻意放一条失败项，否则 `.pxm-item-error` 根本不渲染，"失败文字走 error token"就是空转。
-3. **深浅色跟随**（8.2 / 8.4）：在**同一个页面**里把同一批 token 换成官方深色取值
+3. **深浅色跟随**（8.2 / 8.4 / 8.7）：在**同一个页面**里把同一批 token 换成官方深色取值
    （`__pxmLane.setTokens`），断言每个被断言的颜色**都变了**、且等于新的解析值。
    这是"能与官方深浅色主题一致"的唯一硬证据——只断言浅色下相等，可能是硬编码巧合同色
    （成功色官方浅色就是 `#22c55e`，与历史硬编码一模一样）。8.5 另外把"哪几个 token 浅深同色、
-   因此不能当证据"写成断言，防止以后拿它们当证据。
+   因此不能当证据"写成断言，防止以后拿它们当证据。`--dsw-alias-label-tertiary` 浅色 `#81858c`、
+   深色 `#adb2b8` **确实不同色**（从 app.asar 里
+   `@deepseek-ai/dsh-client-ui-theme/lib/client.js` 的 `body{}` 与 `body[data-ds-dark-theme]{}`
+   两份定义逐层解析得到），所以 8.7 可以拿它当"跟随主题"的证据。
 
 第 2、3 条刻意拆成**各自独立**的用例（8.1 只管浅色相等，8.2 只管跟着变）：写成一个用例时，
 "浅色不相等"会先失败、把"跟着变"那条断言挡在后面，反向变异就只能证明一半。
@@ -1115,6 +1128,13 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 - `8.2 列表态` 红：「这些元素在深色 token 下颜色没变」；
 - 静态侧 `test/client-tokens.test.mjs` 的「没有任何十六进制颜色字面量」也红
   （浏览器 lane 脚本另跑一份临时副本，仓库产物 sha256 前后一致）。
+
+**反向变异（语义侧）**：`M17-progress-color-is-brand` 把「进行中/进度」的状态色从
+`labelTertiary` 退回 `brand-primary`（= d03a4a4 里那处错误的映射），并在 `T` 表里补回 `brand`
+（变异体必须仍然可运行，才谈得上"被断言抓住"）。实测（`node tools/lane-mutations.mjs M17`）：
+`8.7` 红——「这些元素的颜色不是它挂的那个 token 的解析值」；静态侧
+`test/client-tokens.test.mjs` 的「token 表与清单一一对应」与「进行中/进度用的是 label-tertiary」
+两条同时红。
 
 该脚本现在同时跑 `layout.test.mjs` 与 `theme.test.mjs`：几何变异不该惊动配色用例，反之亦然。
 
