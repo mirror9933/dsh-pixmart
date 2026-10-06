@@ -176,6 +176,8 @@ export function copyImagesToWorkspace(
  *
  * 只陈述**事实**（副本落在会话工作区内的完整路径、以及失败原因），不写任何
  * "该怎么展示"的规则——官方约定已经足够，规则该由系统提示决定（见 guidance.ts）。
+ * 末尾那句"该目录是会话暂存、可能混有 Agent 自造产物"同样是**事实披露**（用户明确
+ * 要求告知"这里可能不只有插件的自动副本"），不是展示规则。
  */
 export function workspaceCopyLines(outcome: unknown): string[] {
   if (typeof outcome !== 'object' || outcome === null) return []
@@ -194,6 +196,12 @@ export function workspaceCopyLines(outcome: unknown): string[] {
     // 也没有把任何规则塞进系统提示。
     lines.push('副本（在会话工作区内；官方 `![说明](<路径>)` 只渲染工作区内的路径）：')
     for (const file of files) lines.push(`- ${file}`)
+    // 这个目录**不是插件独占**的：Agent 自己加工的产物也可能落在这里（用户已接受，
+    // 但要求必须明确告知）。同样是陈述事实，不是展示规则。
+    lines.push(
+      `⚠ \`${WORKSPACE_OUT_DIR}/\` 是会话暂存目录，可能同时含有 Agent 自己加工的产物；`,
+    )
+    lines.push('插件不会清理它，可随时整体删除（生成的原件始终在插件数据目录，不受影响）。')
   }
   for (const warning of warnings) lines.push(`⚠ ${warning}`)
   return lines

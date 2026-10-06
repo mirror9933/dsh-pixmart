@@ -26,3 +26,9 @@ lib/
 # 原本落在数据目录（工作区之外）。用户当前的工作区就是这个仓库，因此必须忽略，
 # 否则每次生图都会把仓库弄脏（refs/、output/ 已经踩过两次）。
 /pixmart-out/
+
+# Agent 的**输入参考图与临时脚本**落点（`<工作区>/pixmart-in/`）。
+# 与 pixmart-out/ 的区别：那个是**插件**写的副本，这个是 **Agent 自造**的目录
+# （实测它会往里放参考图和 check_white.py / clean_white.py 之类的临时脚本）。
+# 约定已写进系统提示（src/guidance.ts）；前导斜杠同样锚定仓库根。
+/pixmart-in/

@@ -93,6 +93,21 @@ describe('installGuidance', () => {
     assert.equal(/另行复制/.test(GUIDANCE_TEXT), false, '不得再宣称生成时会自动复制')
   })
 
+  it('文本钉住工作区内的文件落点约定（pixmart-in / pixmart-out）', () => {
+    // 实测：Agent 生白底图时自造了 `pixmart-in/` 放参考图与临时脚本（check_white.py、
+    // clean_white.py），还会往 pixmart-out/ 里写自己加工的产物。所以"放哪"必须写进
+    // 系统提示，否则它会写到工作区根目录或仓库其他位置（refs/、output/ 已经踩过两次）。
+    assert.match(GUIDANCE_TEXT, /pixmart-in/)
+    // 插件自己的落点也要点名，避免两者混为一谈。
+    assert.match(GUIDANCE_TEXT, /pixmart-out/)
+    // 锚定到"会话工作区"，而不是任意的相对目录。
+    assert.match(GUIDANCE_TEXT, /会话工作区的 `pixmart-in\/`/)
+    // 禁令必须在：不许写到工作区根目录或仓库其他位置。
+    assert.match(GUIDANCE_TEXT, /不要\*\*写到工作区根目录/)
+    // 这一条只讲**文件放哪**，绝不夹带"怎么显示"的规则（同上一条反向断言）。
+    assert.equal(/present/.test(GUIDANCE_TEXT), false, '落点约定不得夹带展示规则')
+  })
+
   it('文本保持精简（系统提示预算要留给高信号内容）', () => {
     const lines = GUIDANCE_TEXT.split('\n').length
     assert.ok(lines <= 36, `说明不应超过 36 行，实际 ${lines} 行`)

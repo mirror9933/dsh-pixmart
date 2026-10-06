@@ -53,6 +53,9 @@ export const GUIDANCE_TEXT = [
   '历史记录与累计用量用 `pixmart_projects` 查询。',
   '该项目库的 `delete` 默认是**软删**（进回收站，可 `action=restore` 恢复），',
   '**只有用户明确要求永久删除时才传 `permanent: true`**；两种模式都要 `confirm: true`。',
+  '',
+  '**文件落点**：参考图、临时脚本与中间产物请放在**会话工作区的 `pixmart-in/`**；',
+  '生成图的自动副本在 `pixmart-out/`（插件写），两者都**不要**写到工作区根目录或仓库其他位置。',
 ].join('\n')
 
 function isSystemPromptLike(value: unknown): value is SystemPromptLike {
