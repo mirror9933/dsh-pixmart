@@ -13,7 +13,19 @@ import { isAbsolute } from 'node:path'
 
 /** 四种调用形态。`gemini-native` 是 Ofox 的 Gemini 图像模型唯一可用路径。 */
 export type ApiMode = 'images-generations' | 'images-edits' | 'chat-image' | 'gemini-native'
-export type Dialect = 'standard' | 'ofox'
+/**
+ * 方言 = **字段名与字段位置的差异**，同一套 `apiMode` 下各家仍可能不同。
+ *
+ *   - `standard`：`image` + `response_format`（顶层）；
+ *   - `ofox`：`input_images` + `output_format`；
+ *   - `agnes`：`extra_body.image` + `extra_body.response_format`，尺寸走「档位 + 比例」
+ *     （`size: '1K'` + `ratio: '16:9'`）。
+ *
+ * `agnes` 单列而不是复用 `standard`：官方文档明文**「不要把 `response_format` 放在
+ * 顶层」**，放错位置不是被忽略而是报错；参考图同理必须在 `extra_body.image` 里。
+ * 字段写错会被服务端**静默忽略/直接报错**，所以由配置决定，绝不靠内容嗅探。
+ */
+export type Dialect = 'standard' | 'ofox' | 'agnes'
 export type SizeMode = 'whitelist' | 'exact' | 'free'
 export type ProviderGroup = 'official' | 'aggregator'
 
@@ -107,12 +119,51 @@ export function defaultOfoxProvider(): ProviderConfig {
   }
 }
 
+/**
+ * Agnes AI 的内置默认（P0 取证见 contract-notes §25；**无 API Key，未做真实出图验证**）。
+ *
+ * 取证要点（两条独立来源，冲突处见 §25.2）：
+ *   - 端点：`POST {baseUrl}/images/generations`，`Authorization: Bearer`；**图生图同端点**
+ *     （不走 `/images/edits`）。
+ *   - `size` 用**档位**（`1K`/`2K`/`3K`/`4K`）+ `ratio`（支持的 8 种比例，见 `allowedSizes`），
+ *     不是像素；因此 `sizeMode: 'whitelist'` 且取值是**比例**。
+ *   - `response_format` 与参考图都必须嵌在 `extra_body` 内。
+ *   - baseUrl 用官方文档的 `apihub.agnes-ai.com`，**不是**参考项目的 `api.agnes-ai.cn`
+ *     （冲突未解决，见 §25.2 第 1 条）。
+ */
+export function defaultAgnesProvider(): ProviderConfig {
+  return {
+    id: 'agnes',
+    label: 'Agnes AI',
+    group: 'official',
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
+    // Agnes 生图只有 OpenAI 兼容一套路径，无 Gemini 原生端点。
+    geminiNativeBaseUrl: '',
+    dialect: 'agnes',
+    apiMode: 'images-generations',
+    apiKeyEnv: 'AGNES_API_KEY',
+    apiKey: '',
+    models: [
+      'agnes-image-2.1-flash',
+      'agnes-image-2.5-flash',
+      'agnes-image-2.0-flash',
+      'agnes-3.0-flash',
+    ],
+    // 官方「Size and Ratio」表里 ratio 支持的全部取值（21:9 在档位表内有）。
+    allowedSizes: ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'],
+    sizeMode: 'whitelist',
+    extraHeaders: {},
+    // 官方建议客户端超时 60–360s。
+    timeoutMs: 180_000,
+  }
+}
+
 /** 出厂配置：一个未填密钥的 Ofox，方便用户直接进设置页填。 */
 export function defaultConfig(): PixmartConfig {
   const provider = defaultOfoxProvider()
   return {
     version: CONFIG_VERSION,
-    providers: [provider],
+    providers: [provider, defaultAgnesProvider()],
     defaults: {
       provider: provider.id,
       model: provider.models[0] ?? '',
@@ -312,7 +363,7 @@ const API_MODES: readonly ApiMode[] = [
   'chat-image',
   'gemini-native',
 ]
-const DIALECTS: readonly Dialect[] = ['standard', 'ofox']
+const DIALECTS: readonly Dialect[] = ['standard', 'ofox', 'agnes']
 const SIZE_MODES: readonly SizeMode[] = ['whitelist', 'exact', 'free']
 const GROUPS: readonly ProviderGroup[] = ['official', 'aggregator']
 

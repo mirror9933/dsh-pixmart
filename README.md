@@ -112,6 +112,26 @@ dsh --profile px --dump-config
 
 设置页里还能看到**累计用量**与**数据目录**，方便核对账目。
 
+### 厂商
+
+厂商列表由配置里的 `providers` 驱动，**出厂就带两家**（新增一家只需往 `providers` 里加一条）：
+
+| 厂商 | `dialect` | 端点 | 密钥 | 状态 |
+|---|---|---|---|---|
+| **Ofox**（默认） | `ofox` | `https://api.ofox.io/v1` | `OFOX_API_KEY` | 已验证（真实出图 / 契约笔记 §11、§18） |
+| **Agnes AI** | `agnes` | `https://apihub.agnes-ai.com/v1` | `AGNES_API_KEY` | **契约已取证，未做真实出图验证** |
+
+**Agnes 的取舍**（细节与出处见 [docs/contract-notes.md](./docs/contract-notes.md) §25）：
+
+- 生图与图生图**同一个端点** `POST /v1/images/generations`，`Authorization: Bearer`；**不走** `/images/edits`。
+- 参考图必须在 **`extra_body.image`**（data URI 数组），`response_format` 也必须在 **`extra_body`** 内
+  ——官方明文：放到顶层会**报错**。所以它单列成一个方言 `agnes`，而不是复用 `standard`。
+- 尺寸是**「档位 + 比例」**：我们固定发 `size: '1K'`，比例由 `ratio` 给（支持 8 种：`1:1`/`3:4`/`4:3`/`16:9`/`9:16`/`2:3`/`3:2`/`21:9`）。
+  所以在 Agnes 上前端选 `1:1` 之类的**比例**，不要按像素理解。
+- 官方文档**没有** `/models` 列表接口。点「拉取模型」**会失败**并给出可读原因（HTTP 404）——
+  这是可接受的结论，不是坏了；请在设置页用「模型」列表手动勾选，或先填 `models`。
+- **未验证**：真实出图、真实尺寸回传、多图合成、`/models` 是否存在。拿到 Key 后才能确认（清单见 §25.5）。
+
 ---
 
 ## 怎么用
@@ -232,8 +252,8 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），323 项
-pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），30 项（几何 12 + 主题 10 + 尺寸 8）
+pnpm test             # node:test（含 jsdom lane），342 项（其中 agnes 19 项）
+pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），56 项
 pnpm verify           # 上面几条串起来
 ```
 

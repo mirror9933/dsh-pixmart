@@ -16,6 +16,7 @@
  */
 import type { ApiMode, Dialect, ProviderConfig } from '../config.js'
 import type { AbortSignalLike } from '../host-types.js'
+import { pixelToRatio } from '../sizes.js'
 
 export interface VendorReference {
   readonly data: Uint8Array
@@ -207,6 +208,7 @@ interface Variant {
 function variantChain(
   apiMode: ApiMode,
   hasReferences: boolean,
+  dialect: Dialect,
 ): readonly Variant[] {
   if (apiMode === 'gemini-native') {
     return [
@@ -231,9 +233,11 @@ function variantChain(
     { label: 'text-only', includeSize: false, includeQuality: false, includeFormat: false, includeReferences: false },
   ]
 
-  // chat-image 不使用 quality / response_format，去掉重复档位。
+  // chat-image 不使用 quality / response_format；agnes **额外**不使用 quality 且
+  // **不能去掉 size**（官方文档把 size 标为必填，去掉它只是白花一次请求的钱）。
   const seen = new Set<string>()
   return raw.filter((variant) => {
+    if (dialect === 'agnes' && (variant.includeQuality || !variant.includeSize)) return false
     const signature =
       apiMode === 'chat-image'
         ? `${variant.includeSize}|${variant.includeReferences}`
@@ -263,9 +267,41 @@ interface DialectFields {
 }
 
 function dialectFields(dialect: Dialect): DialectFields {
-  return dialect === 'ofox'
-    ? { references: 'input_images', format: 'output_format', formatValue: 'png' }
-    : { references: 'image', format: 'response_format', formatValue: 'b64_json' }
+  if (dialect === 'ofox') return { references: 'input_images', format: 'output_format', formatValue: 'png' }
+  // agnes 由 `buildRequest` 单独分叉（字段嵌在 extra_body 内），这两个值不会被用到，
+  // 但保持与官方文档一致的语义，避免被误读成"顶层 response_format"。
+  if (dialect === 'agnes') return { references: 'extra_body.image', format: 'extra_body.response_format', formatValue: 'url' }
+  return { references: 'image', format: 'response_format', formatValue: 'b64_json' }
+}
+
+/**
+ * Agnes 的 `size` 是**档位**（`1K`/`2K`/`3K`/`4K`），比例另用 `ratio`。
+ *
+ * 我们只发 `1K`：官方价目表里 1K–4K 同价，而档位越高单张耗时越长；把档位写死
+ * 而把**比例**交给用户/Agent 选，语义更清楚（`checkSize` 归一化出来的就是比例）。
+ * 像素输入（如 `1024x1024`）回落到 `1K` —— 官方文档说"确切的像素值也会被接受"，
+ * 但档位化之后语义才确定。
+ */
+function agnesSizeTier(size: string): string {
+  const tier = /^\s*([1-4])K\s*$/i.exec(size)
+  return tier === null ? '1K' : `${tier[1]}K`
+}
+
+/** Agnes 支持的 8 种比例；不在表内时退回 `1:1`（官方文档：默认 `1:1`）。 */
+const AGNES_RATIOS: readonly string[] = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9']
+
+/** 把归一化后的尺寸（比例或像素）转成 Agnes 的 `ratio` 取值。 */
+function agnesRatio(size: string): string {
+  const trimmed = size.trim()
+  if (AGNES_RATIOS.includes(trimmed)) return trimmed
+
+  const pixel = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(trimmed)
+  if (pixel !== null) {
+    const ratio = pixelToRatio(`${pixel[1]}x${pixel[2]}`)
+    if (ratio !== undefined && AGNES_RATIOS.includes(ratio)) return ratio
+  }
+
+  return '1:1'
 }
 
 interface PreparedRequest {
@@ -343,6 +379,28 @@ function buildRequest(
       messages: [{ role: 'user', content }],
     }
     if (variant.includeSize && request.size !== undefined) body.size = request.size
+    headers['Content-Type'] = 'application/json'
+    return { url, headers, init: { method: 'POST', headers, body: JSON.stringify(body), signal: request.signal } }
+  }
+
+  // Agnes：请求体形状与 standard 差三处，任一处写错都不是"降级"而是失败——
+  //   1. `response_format` 必须嵌在 `extra_body` 内（官方明文：放顶层会报错）；
+  //   2. 参考图必须在 `extra_body.image` 里（顶层 `image` 会不被采用）；
+  //   3. 尺寸是「档位 + 比例」：`size: '1K'` + `ratio: '3:4'`，不是 `1024x768` 那种像素。
+  // 另外**不发 `n`**：官方请求参数表里没有它（发了可能被拒或影响请求形状），
+  // 多张输出靠多次调用（与 `pixmart_generate` 的 n 语义一致）。
+  // size 缺失由 `generateImages` 的前置检查挡下（返回结构化 config 错误），到这里必然有值。
+  if (provider.dialect === 'agnes') {
+    const body: Record<string, unknown> = { model, prompt }
+    const extraBody: Record<string, unknown> = {}
+    if (variant.includeSize && request.size !== undefined) {
+      body.size = agnesSizeTier(request.size)
+      body.ratio = agnesRatio(request.size)
+    }
+    if (references.length > 0) extraBody.image = references.map(toDataUri)
+    if (variant.includeFormat) extraBody.response_format = fields.formatValue
+    if (Object.keys(extraBody).length > 0) body.extra_body = extraBody
+    if (request.seed !== undefined) body.seed = request.seed
     headers['Content-Type'] = 'application/json'
     return { url, headers, init: { method: 'POST', headers, body: JSON.stringify(body), signal: request.signal } }
   }
@@ -664,7 +722,26 @@ export async function generateImages(request: VendorRequest): Promise<VendorResu
     }
   }
 
-  const chain = variantChain(plan.apiMode, request.references.length > 0)
+  // Agnes 的 `size` 是**必填**（官方请求参数表）。缺它时不构造任何请求：
+  // 发出去只会拿到一个 400，再来一次降级也只是重复一次同样的 400。
+  if (request.provider.dialect === 'agnes' && (request.size ?? '').trim() === '') {
+    return {
+      ok: false,
+      apiMode: plan.apiMode,
+      planReason: plan.reason,
+      error: {
+        code: 'config',
+        retryable: false,
+        message:
+          '厂商「Agnes AI」要求显式尺寸（官方文档把 size 标为必填）：请先经 pixmart_check_size 归一化出比例（如 1:1、3:4）再发起生图',
+      },
+      degraded: [],
+      attempts: 0,
+      ms: Date.now() - started,
+    }
+  }
+
+  const chain = variantChain(plan.apiMode, request.references.length > 0, request.provider.dialect)
   const degraded: DegradedFlag[] = []
   let attempts = 0
   let lastError: VendorError = { code: 'bad_response', retryable: false, message: '没有可用的尝试档位' }

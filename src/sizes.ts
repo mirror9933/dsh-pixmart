@@ -7,7 +7,7 @@
  *
  * 校验**在发请求之前**执行：不支持的尺寸直接返回最近可用建议，不花用户的钱。
  */
-import type { ApiMode, ProviderConfig, SizeMode } from './config.js'
+import type { ApiMode, Dialect, ProviderConfig, SizeMode } from './config.js'
 
 /** 一个内置能力条目。模型名越具体的规则排越前。 */
 export interface SizeCapability {
@@ -169,9 +169,17 @@ function byAspectDistance(target: string, candidates: readonly string[]): readon
     .map((entry) => entry.candidate)
 }
 
-/** 该 apiMode 需要的取值格式。 */
-function requiredKind(apiMode: ApiMode): 'ratio' | 'pixel' {
-  return apiMode === 'gemini-native' ? 'ratio' : 'pixel'
+/**
+ * 该 apiMode/方言需要的取值格式。
+ *
+ * `gemini-native` 用比例；OpenAI 兼容路径通常用像素，但 **agnes 方言是例外**——
+ * 它的 `size` 是档位（`1K`/`2K`/…），比例另走 `ratio`，所以归一化结果应当是
+ * **比例**（如 `3:4`），由适配器拼成 `size: '1K'` + `ratio: '3:4'`。
+ */
+function requiredKind(apiMode: ApiMode, dialect?: Dialect): 'ratio' | 'pixel' {
+  if (apiMode === 'gemini-native') return 'ratio'
+  if (dialect === 'agnes') return 'ratio'
+  return 'pixel'
 }
 
 /** 把任意格式的尺寸归一化到目标格式。 */
@@ -202,7 +210,7 @@ function capabilityFor(input: SizeCheckInput): SizeCapability {
     label: `${provider.label} 配置`,
     mode: provider.sizeMode,
     sizes: provider.allowedSizes,
-    kind: requiredKind(input.apiMode),
+    kind: requiredKind(input.apiMode, provider.dialect),
   }
 }
 
@@ -211,7 +219,7 @@ function capabilityFor(input: SizeCheckInput): SizeCapability {
  * @param input - 模型、目标尺寸、apiMode 与厂商配置。
  */
 export function checkSize(input: SizeCheckInput): SizeCheckResult {
-  const kind = requiredKind(input.apiMode)
+  const kind = requiredKind(input.apiMode, input.provider.dialect)
   const capability = capabilityFor(input)
 
   const normalized = normalizeTo(input.size, kind)

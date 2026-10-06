@@ -2111,3 +2111,119 @@ sha256 前后一致"）：
 6. **`M42` 变异里宽度与定位是"一并退回旧形态"的**：单看不能证明"宽度夹取"这一条独立有效
    （4.6 里那条 `listRect.width == triggerRect.width` 在 `M42` 下也会红，但与位置那条混在一起）。
    如实记录：宽度那一条目前没有**单独**的反向变异。
+
+---
+
+## 25. 新增厂商 Agnes AI：`dialect: 'agnes'`（2026-10-12）
+
+**关键前提：我们没有 Agnes 的 API Key。** 本节记录的全是**离线可取证的契约**，
+**没有任何一条来自真实出图**。凡属"只能在拿到 Key 后验证"的，一律在 §25.5 列清，不混进结论。
+
+### 25.1 取证表
+
+参考项目 `E:\Programs\trae\project\pixmart-ai` **只读**引用；官方文档走
+`https://agnes-ai.com/doc/常用接入文档` → 该页 302 到 Mintlify 站（`www.agnes-ai.com/zh-Hans/docs/...`），
+`web_fetch` 不跟随跨域跳转，故按文档索引取到实际页面并**以索引页给出的原生页面为准**：
+[Agnes Image 2.1 Flash](https://wiki.agnes-ai.com/en/docs/agnes-image-21-flash.md)
+（索引：[llms.txt](https://wiki.agnes-ai.com/llms.txt)、[agnes-30-flash](https://agnes-ai.com/zh-Hans/docs/agnes-30-flash.md)）。
+
+| 项 | 结论 | 出处 |
+|---|---|---|
+| base URL | `https://apihub.agnes-ai.com/v1` | 官方文档「Integration Checklist」；对照 `pixmart-ai/src/renderer/src/types/model.ts:142-146`（该处写的是 `api.agnes-ai.cn/v1`，见 §25.2①） |
+| API base | `POST {base}/images/generations`；**图生图同端点**，无独立 `/images/edits` | 官方文档 Endpoint 小节；`pixmart-ai/src/main/services/openai.ts:552-560` 走 `client.images.generate`（即 `/v1/images/generations`） |
+| 鉴权 | `Authorization: Bearer <key>` | 官方文档 Headers 小节；`pixmart-ai/src/main/services/openai.ts:250-251`（OpenAI SDK `apiKey`） |
+| 请求体 | **JSON**（非 multipart），`Content-Type: application/json` | 官方文档全部 curl 示例；`openai.ts:552-560` |
+| 参考图字段 | **`extra_body.image`**（字符串数组，公网 URL **或** `data:image/...;base64,`；多张=多图合成） | 官方文档「Image-to-image」「Multi-image Composition」「Data URI Base64 Input」；`openai.ts:557-558`（`extra_body.image`） |
+| 输出格式字段 | **`extra_body.response_format`**，值 `url` / `b64_json`。官方 **Warning 明文：不要放到顶层**（顶层会报错） | 官方文档「Common Errors → Top-level response_format causes errors」；`openai.ts:559`（`response_format` 放在 `extra_body` 内） |
+| `responseModalities` | **不需要**（Agnes 无 Gemini 原生协议） | 官方文档无此字段；与 Ofox 的 gemini-native 不同 |
+| 尺寸 | `size` = **档位** `1K`/`2K`/`3K`/`4K`（官方标 **必填**，建议与 `ratio` 同用）+ `ratio` = `1:1`/`3:4`/`4:3`/`16:9`/`9:16`/`2:3`/`3:2`/`21:9`（默认 `1:1`）。像素值（如 `1024x768`）"也接受但可能被归一化" | 官方文档「Request Parameters」「Size and Ratio」「Output Dimension Reference」；`openai.ts:554-555`（`size:'1K'` + `ratio`） |
+| 响应形状 | `{ created, data: [{ url, b64_json, revised_prompt }] }`，**二选一**：url 模式下 `b64_json` 为 `null`，base64 模式下 `url` 为 `null`；另可用顶层 `return_base64: true` 要 base64 | 官方文档「Response Format」两个 Tab + Response Fields 表 |
+| 模型 id | 生图：`agnes-image-2.1-flash`（官方正文）、`agnes-image-2.0-flash` / `agnes-image-2.5-flash`（文档索引）；文本：`agnes-3.0-flash`（官方正文）、`agnes-2.0-flash`（`openai.ts:297` 兜底） | 官方文档标题/模型小节；`openai.ts:56`（`FALLBACK_MODELS.agnes`） |
+| `/models` | **官方文档未记载**。参考项目用 `client.models.list()` 做「测试连接」（`openai.ts:1594`）与「拉取模型」（`openai.ts:1607`），但那是 OpenAI SDK 的常规调用，**不等于 Agnes 真的实现该路由** | 官方文档全站无 List Models 页；`openai.ts:1594,1607` |
+
+### 25.2 参考项目与官方文档的冲突点（**逐条列出，不调和**）
+
+1. **base URL 不同**：参考项目 `https://api.agnes-ai.cn/v1`（`types/model.ts:144`）
+   vs 官方 `https://apihub.agnes-ai.com/v1`（官方 Integration Checklist）。
+   **未解决**：两者域名、TLD 都不同，无法判断是"同一服务的两个入口"还是"参考项目过时"。
+   本次**采用官方文档值**（`apihub.agnes-ai.com`），并在设置页允许用户自行改成 `.cn` 入口。
+2. **`image` 的层级，官方文档内部自相矛盾**：Request Parameters **表**把 `image` 列为**顶层**参数，
+   而全部 curl 示例、Image-to-image / Multi-image / Data URI 三个示例、以及
+   "Missing image parameter" 排错条目都把它放在 **`extra_body.image`**。
+   参考项目与示例一致（`openai.ts:557-558`）。**本次采用 `extra_body.image`**（跟示例走）。
+   风险已记入 §25.5：若真实服务只认顶层，图生图会静默丢参考图。
+3. **`responseModalities`**：官方文档**没有**这个字段，参考项目也不传。
+   与我们在 Ofox/gemini-native 上踩到的坑（缺它则整体忽略 `generationConfig`，§11.1）**无关**——
+   Agnes 不是 Gemini 原生协议，所以这条**不是冲突，是不同协议**；列在这里只为避免被误套。
+4. **`/models`**：参考项目把它当既有能力用（`openai.ts:1594,1607`），官方文档完全没提。
+   **不做调和**：我们按"可能不存在"实现——失败时给可读原因，不假装成功（§25.3④）。
+5. **尺寸写法**：参考项目固定发 `size:'1K'` + `ratio`（`openai.ts:554-555`），
+   官方文档主推"档位 + ratio"，但其部分示例用的是像素（`size: "1024x768"`）。
+   两者都"被接受"，但语义不同（示例的像素会被服务端归一化）。
+   **本次跟参考项目**：固定档位 `1K` + 归一化后的比例，输出尺寸才可预期。
+
+### 25.3 映射决策：**新增 `dialect: 'agnes'`**（复用 `apiMode: 'images-generations'`）
+
+**为什么不复用现有方言**：
+- `standard` 把 `image` / `response_format` 放在**顶层**；Agnes 官方明文顶层 `response_format` **会报错**，
+  参考图放顶层则**不被采用**。硬套 `standard` = 运行时静默失败（正是要避免的那类）。
+- `ofox` 用 `input_images` + `output_format`（像素 `size`），字段名与尺寸语义**都不对**。
+
+**为什么不需要新 `apiMode`**：端点、方法、请求体类型（JSON）与鉴权头都和
+`images-generations` 一致，差异**只在字段名与字段位置**——这正是 `dialect` 的定义（见 `src/config.ts` 的 `Dialect` 注释）。
+于是新增 `Dialect = 'standard' | 'ofox' | 'agnes'`，在适配器里加三条分支：
+
+1. **请求体**（`src/vendor/openai-compat.ts`，`buildRequest` 的 agnes 分支）：
+   `{ model, prompt, size: '1K', ratio, extra_body: { image?, response_format: 'url' } }`。
+   **不发 `n`**（官方参数表无此字段）、**不发 `quality`**。
+2. **降级链**（`variantChain`）：agnes 链上**剔除** `quality` 档与"去掉 size"档——
+   `quality` 是厂商不认的参数，`size` 是必填；两档都只是白花一次请求的钱。
+   带参考图时恰好三档：`full` → 去掉 `response_format` → 再去掉参考图（与标准链同序）。
+3. **尺寸归一化**（`src/sizes.ts` 的 `requiredKind`）：agnes 方言下归一化成**比例**而不是像素
+   （`3:4` 保持 `3:4`、`1024x1024` → `1:1`、`1280x960` → `4:3`），再由适配器拼成"档位 + 比例"。
+   `provider.allowedSizes` 用官方那 8 种比例。
+4. **缺 `size` 不构造请求**（`generateImages` 前置检查）：直接返回结构化 `config` 错误并指向
+   `pixmart_check_size`，`attempts: 0`——官方把 `size` 标为必填，发出去只会换回一个 400。
+
+**响应解析无需改动**：官方 `data[].url` / `data[].b64_json` 与既有 `extractImageHandles`
+的 `images-generations` 分支形状一致（`null` 值会被当作"没有"从而回落到另一支）。
+
+### 25.4 新增断言（`test/agnes.test.mjs`，19 条，**零真实网络**）
+
+全部针对 `lib/` 产物、只打本文件起的本地 http 服务器：
+
+1. **预设**（6 条）：出厂 `providers` = `['ofox','agnes']` 且 `defaults.provider` 仍是 `ofox`、
+   `apiKey` 为空、`dialect`/`apiMode`/`baseUrl`/`apiKeyEnv` 齐全、`Bearer` 下 `resolveApiKey` 出厂无密钥、
+   `parseConfig` 能解析回 `dialect:'agnes'`（枚举合法）、路由表对带参考图的 agnes 模型仍走
+   `images-generations`、尺寸归一化成**比例**（并与 `standard` 方言的像素结果对照）、不支持比例给最近邻。
+2. **请求构造**（5 条）：端点 `/v1/images/generations`、`Authorization: Bearer`、
+   `size:'1K'` + `ratio:'3:4'`、`extra_body.response_format='url'`、**顶层 `response_format` 必须为 `undefined`**、
+   **顶层 `image` 必须为 `undefined`**、`n`/`quality` 不出现、图生图**不走** `/images/edits`、
+   多张参考图按序全进 `extra_body.image`、像素尺寸折算成受支持比例、`standard` 方言未被带偏。
+3. **响应解析**（3 条）：url 形状（真的下载了远程产物，字节与魔数都对）、
+   base64 形状（`url: null` 不影响判定，且**没有**多余下载）、无图片时是结构化 `bad_response`。
+4. **错误分支**（5 条）：401 → `auth` 且只发一次、不降级；缺 `size` → `config` 且**零请求**；
+   400 → 三档降级且**任何一档都不含 `quality`、都带 `size`**；无 `/models` → `bad_response` +
+   `HTTP 404` 可读文案（探测确实打了 `/v1/models` 且带 Bearer）；无密钥 → `no_api_key` 且零请求。
+
+**反向变异**（`.probe/agnes-mutations.mjs`，3 条，全部 ✔ = 断言真的会红）：
+① 把 `response_format` 移到顶层；② 把参考图放到顶层 `image`；③ 让 agnes 的尺寸归一化回像素。
+
+### 25.5 拿到 Key 之后**才能**验证的清单（本节的结论都不覆盖这些）
+
+1. **真实出图**：`agnes-image-2.1-flash` 是否真能出图、耗时是否落在官方建议的 60–360s 内。
+2. **base URL 到底是哪个**（§25.2①）：`apihub.agnes-ai.com` 与 `api.agnes-ai.cn` 哪个可用；是否需要二者之一。
+3. **`image` 的层级**（§25.2②）：真实服务读的是 `extra_body.image` 还是顶层 `image`。
+   若是后者，**图生图会静默丢参考图**——这是本次实现最需要实测的一条。
+4. **`size` 是否真的必填**：我们据此做了"缺 size 直接失败"的前置检查（宁可不发也不猜）。
+5. **`size:'1K'` + `ratio` 的真实回传尺寸**：是否等于官方「Output Dimension Reference」表里的
+   `1:1 → 1024x1024` / `3:4 → 864x1152` / `16:9 → 1312x736` 等。
+   注意官方 `16:9` 的 1K 是 **1312x736**（不是 1280x720），我们**没有**在任何地方断言这个像素值。
+6. **`/models` 是否存在**：现在"拉取模型"在 Agnes 上预期失败（HTTP 404 可读原因）。
+   若实际存在，应把探测结果接进设置页；若不存在，README 已写明这是可接受结论。
+7. **`n` 的行为**：我们不发 `n`，多张靠多次调用。若 Agnes 支持 `n`，可省一半请求（尚未验证）。
+8. **`extra_body` 是否真是 LiteLLM 语义**：参考项目 base URL 指向 `apihub`（形似 LiteLLM 代理），
+   `extra_body` 很可能是代理层的"透传字段"；若是直连原生服务，该字段语义可能不同。**没把握**。
+9. **`return_base64: true`**（官方文本生图专用）：我们没实现该分支，只走 `extra_body.response_format`。
+10. **多图合成**：我们只按文档发了 `extra_body.image` 数组，未验证服务端是否按序理解多图角色。
+
