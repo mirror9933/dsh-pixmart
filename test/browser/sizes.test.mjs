@@ -56,7 +56,71 @@ import {
 
 // ── 官方尺寸（本文件独立复述一遍；每条都带出处） ─────────────────────────────
 
-/** 官方设置页**表单值控件**：`primitives/lib/settings-form/fields.module.css` 的 `.input`。 */
+/**
+ * 官方**自绘下拉触发器**：`@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js:438`
+ * 的 `PermissionRow.module.css` → `.selector{border-radius:var(--dsw-radius-md);
+ * background:var(--dsw-alias-bg-module-platform);height:36px;color:var(--dsw-alias-label-primary);
+ * cursor:pointer;border:none;align-items:center;gap:12px;padding:0 14px;font-size:14px;
+ * line-height:22px;display:inline-flex}`（官方「权限」那一行的下拉）。
+ *
+ * 与 `OFFICIAL_FIELD` 的区别是真实存在的：官方**表单值字段**是 34px / `0 12px` / 13px /
+ * `bg-layer-3`（`SettingsValueField` 的 `<input>`），而**下拉触发器**是 36px / `0 14px` /
+ * 14px / `bg-module-platform`。两者不是同一个组件，所以分成两套断言。
+ */
+const OFFICIAL_SELECT = {
+  /** `.selector{height:36px}` —— PermissionRow.module.css（client.js:438） */
+  height: '36px',
+  /** `.selector{padding:0 14px}` —— 同处 */
+  paddingTop: '0px',
+  paddingRight: '14px',
+  paddingBottom: '0px',
+  paddingLeft: '14px',
+  /** `.selector{font-size:14px}` —— 同处 */
+  fontSize: '14px',
+  /** `.selector{line-height:22px}` —— 同处 */
+  lineHeight: '22px',
+  /** `.selector{border-radius:var(--dsw-radius-md)}` —— 同处 */
+  radiusVar: '--dsw-radius-md',
+  /**
+   * `.selector{border:none}` —— 同处：官方下拉触发器**没有**描边。
+   * 用布尔标记而不是"期望宽度 0px"：`style.border` 从未被写过时，
+   * `borderTopWidth` 的声明值是 UA 默认的 `medium`，拿 0px 去比是比错了对象。
+   */
+  expectNoBorder: true,
+}
+
+/**
+ * 官方**搜索框**：`@deepseek-ai/dsh-client-ui-settings-plugin-inventory/lib/client.js:57`
+ * 的 `RotMhW_search` → `input{height:36px;padding:0 34px 0 36px;font-size:13px;
+ * border-radius:var(--dsw-radius-md);border:.5px solid var(--dsw-alias-border-l4);
+ * background:var(--dsw-alias-bg-layer-1)}`，左侧图标 `left:12px`（16px 的 `IconSearchOutlineRegular`）。
+ *
+ * 它与 `OFFICIAL_FIELD` **不是同一个组件**（36 vs 34、`bg-layer-1` vs `bg-layer-3`、
+ * 有前置图标 vs 无）。`lineHeight` 是本插件**有意补齐**的一项：官方那条规则靠
+ * `font:inherit` 继承外层容器的行高（量出来是 `normal`），我们在自己的元素上显式写
+ * `13px × 1.5 = 19.5px`——断言它等于 19.5 是"我们写的声明生效了"，不是"官方就是 19.5"。
+ */
+const OFFICIAL_SEARCH = {
+  /** `input{height:36px}` —— settings-plugin-inventory/lib/client.js:57 */
+  height: '36px',
+  /** `input{padding:0 34px 0 36px}` —— 同处 */
+  paddingTop: '0px',
+  paddingRight: '34px',
+  paddingBottom: '0px',
+  paddingLeft: '36px',
+  /** `input{font-size:13px}` —— 同处 */
+  fontSize: '13px',
+  /** 本插件显式声明 `line-height:1.5`（官方靠 `font:inherit`，见上面注释）。 */
+  lineHeight: '19.5px',
+  /** `input{border-radius:var(--dsw-radius-md)}` —— 同处 */
+  radiusVar: '--dsw-radius-md',
+  /** `input{border:.5px solid var(--dsw-alias-border-l4)}` —— 同处 */
+  expectBorderTopWidth: '0.5px',
+}
+
+/**
+ * 官方设置页**表单值控件**：`primitives/lib/settings-form/fields.module.css` 的 `.input`。
+ */
 const OFFICIAL_FIELD = {
   /** `.input{height:34px}` —— fields.module.css:108 */
   height: '34px',
@@ -245,21 +309,19 @@ if (launched.browser === null) {
   }
 
   /**
-   * 表单值控件的断言集：文本框 / 密码框用全部；`<select>` 去掉 `lineHeight`。
+   * 表单值控件的断言集：文本框 / 密码框用 `OFFICIAL_FIELD`，**搜索框**用
+   * `OFFICIAL_SEARCH`（官方那边是另一个组件：36px / `0 34px 0 36px` / `bg-layer-1`），
+   * 设置页的**自绘下拉触发器**用 `OFFICIAL_SELECT`（36px / `0 14px` / 14px / 无描边）。
    *
-   * 为什么 `<select>` 单独处理：**平台行为**——Chromium 对 `<select>` 不把内联
+   * 原生 `<select>` 只剩作品库工具条的「排序」：它没有官方对照物，
+   * 仍按 `OFFICIAL_FIELD` 量，但要去掉 `lineHeight`——Chromium 对 `<select>` 不把内联
    * `line-height` 落到计算样式上（实测同一个 `inputStyle` 下 `input` 是 `19.5px`、
-   * `select` 是 `normal`），而官方 `.input` 规则**本身是给 `<input>` 写的**，官方 client
-   * 侧也没有原生 `<select>`（它的下拉是一个 div + background-image，见
-   * `settings-models/lib/client.js:58` 的 `._3nPmjq_selectInput`）。
-   * 所以 `<select>` 能对齐的是 height / padding / fontSize / radius / 描边这几项，
-   * `lineHeight` 在这里是"平台不表达"的量，断言它就是永远红——如实记下这个限制。
+   * `select` 是 `normal`）。断言它就是永远红，如实记下这个限制。
    */
   const fieldExpectation = (role) => {
-    const omit =
-      role === 'select' || role === 'sortSelect'
-        ? new Set(['lineHeight'])
-        : new Set()
+    if (role === 'searchInput') return OFFICIAL_SEARCH
+    if (role === 'select') return OFFICIAL_SELECT
+    const omit = role === 'sortSelect' ? new Set(['lineHeight']) : new Set()
     const out = {}
     for (const key of Object.keys(OFFICIAL_FIELD)) {
       if (omit.has(key)) continue
@@ -281,7 +343,7 @@ if (launched.browser === null) {
    * 只比**计算样式**：`radiusVar` / `borderRadius` / `expectBorderTopWidth` 这类不由
    * 计算样式承担（或已由专门断言处理）的键要显式排除，否则会拿 `measure` 里不存在的键去比。
    */
-  const NOT_COMPUTED = new Set(['radiusVar', 'borderRadius', 'expectBorderTopWidth'])
+  const NOT_COMPUTED = new Set(['radiusVar', 'borderRadius', 'expectBorderTopWidth', 'expectNoBorder'])
 
   const isObject = (value) => value !== null && typeof value === 'object'
 
@@ -315,10 +377,26 @@ if (launched.browser === null) {
    * 所以这一条只能落在声明值上：**证据强度弱于其它尺寸断言**，如实记在这里。
    */
   function borderDiff(measured, expect, where) {
-    const want = expect.expectBorderTopWidth
     const declared = isObject(measured.declared) ? measured.declared : {}
     const gotLonghand = declared.borderTopWidth
     const gotShorthand = declared.border
+    // 官方下拉触发器是 `.selector{border:none}`：这里断言的是"**确实没有**声明过描边"。
+    // 不能拿 0px 去比——没写过 `border` 时 UA 默认值是 `medium`，比的是错对象。
+    if (expect.expectNoBorder === true) {
+      // 只认**元素自己声明过**的描边。`declared.borderTopWidth` 不能直接用：Chromium 在
+      // "从未写过任何边框"时也会回 `medium`（UA 初始值），与"显式声明成 medium"同形。
+      // `declaredBorder` 是按 CSS 声明原始值取的（简写 + 长属性），见 lane.js 的注释。
+      const raw = isObject(measured.declaredBorder) ? measured.declaredBorder : {}
+      const shorthand = String(raw.shorthand ?? '')
+      const topWidth = String(raw.topWidth ?? '')
+      const noBorder = shorthand === '' && (topWidth === '' || topWidth === 'medium')
+      if (noBorder) return []
+      return [
+        where + ' 不该有描边（官方 `.selector{border:none}`），实测声明值 border=' +
+          JSON.stringify(shorthand) + ' border-top-width=' + JSON.stringify(topWidth),
+      ]
+    }
+    const want = expect.expectBorderTopWidth
     // `style.border` 写入后，浏览器把值分派到长属性上（`style.border` 本身读回空串），
     // 所以两种形态都认：只要值就是官方那一根 0.5px 即可。
     const ok =
@@ -455,7 +533,7 @@ if (launched.browser === null) {
   // ── 1. 设置页 ─────────────────────────────────────────────────────────────
 
   describe('1. 尺寸对齐 · 设置页（settings.section）', () => {
-    it('1.1 输入框 / 下拉 = 官方设置页表单控件（34px / 0 12px / 13px / radius-md / 0.5px 描边）', async () => {
+    it('1.1 输入框 = 官方表单控件；自绘下拉触发器 = 官方 .selector（36px / 0 14px / 14px / 无描边）', async () => {
       const { page, context, problems } = await openSizeLane({ slot: 'settings.section' })
       try {
         /*

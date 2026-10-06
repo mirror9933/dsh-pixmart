@@ -1438,3 +1438,175 @@ color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
 `pnpm verify`（typecheck + build + `pnpm test` + `pnpm test:browser`）：
 **323 + 30**，全绿。基准 **322 + 22**，本次 **+1 静态 / +8 浏览器**，
 `git diff` 里没有任何被删掉的 `it(` / `describe(`。
+
+## 21. 控件形态复刻：设置页的三种控件照官方 DOM/CSS 自绘（2026-10-09）
+
+### 21.1 为什么只能"照 DOM + CSS 复刻"，不能 require 官方组件
+
+官方 primitives（`SettingsValueField` / `Menu` / `Input`）**明文禁止插件 require**
+（`dsh-agent-preset/skills/cordis-plugin-development/references/practices.md:35`：
+"Do not `require('@deepseek-ai/dsh-client-ui-primitives')` or load any other Harness
+Client package as a module"），且该包是未打包 ESM、loader 也解析不了。
+所以本节的纪律是**只抄 DOM 结构与 CSS 取值**：颜色一律 `--dsw-*` token、
+圆角一律 `var(--dsw-radius-*)`、图标用**手写内联 SVG**（不引图标库）。
+
+### 21.2 官方三处的组件来源（逐条 `文件:行`，都在 `resources/app.asar` 里核过原文）
+
+| 用户给的样子 | 官方组件 | 官方 DOM / CSS 证据 | 关键取值 |
+|---|---|---|---|
+| 「权限」那一行 | `PermissionRow`（`dsh-client-ui-permission-presets`） | 行：`PermissionRow.module.css` = 同包 `lib/client.js:438` 的内联 CSS 字符串；下拉触发器：同文件 `.selector`；菜单：`primitives/lib/Menu.module.css` | 行 `.row{align-items:center;gap:8px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2);display:flex}`；左列 `.rowText{flex-direction:column;flex:1;gap:4px;min-width:0;padding-right:48px}`；标题 14px/400/22px；说明 `label-tertiary` 12px/18px；触发器 `.selector{height:36px;padding:0 14px;gap:12px;font-size:14px;line-height:22px;border-radius:var(--dsw-radius-md);border:none;background:var(--dsw-alias-bg-module-platform)}` |
+| 下拉弹层 + ✓ | `primitives` 的 `Menu` / `MenuSurface` | `primitives/lib/index.js:3927`（`Menu`）、`:4198`（`selected && selection==='check'` → `IconCheckOutlineRegular`）、`:3782`（`MenuSurface`）；`Menu.module.css:7-35`（`.list`）、`:95-122`（`.item` / `:hover` / `:focus-visible`）、`:209-212`（`.check`）、`:216-218`（`.selected`）；`MenuSurface.module.css:1-33` | `.list{padding:4px;min-width:144px;max-width:360px;top:calc(100% + 4px);z-index:100;box-shadow:var(--dsw-elevation-prominent)}` + `border-radius:var(--dsw-radius-lg)`；`.item{min-height:34px;padding:6px 8px;border-radius:var(--dsw-radius-md);font-size:13px;line-height:20px}`；`.item:hover{background:var(--dsw-alias-interactive-bg-hover)}`；`.check{width:14px;height:14px}` |
+| 「搜索插件」输入框 | **不是** `settings-form` 的字段，而是 `dsh-client-ui-settings-plugin-inventory` 自己的搜索框 | `settings-plugin-inventory/lib/client.js:57` 的内联 CSS（类名 `RotMhW_search`）+ 标记在 `:488-505` | `label>svg{position:absolute;left:12px;pointer-events:none}`；`input{width:100%;height:36px;padding:0 34px 0 36px;font-size:13px;border-radius:var(--dsw-radius-md);border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-1)}`；`::placeholder{color:var(--dsw-alias-label-tertiary)}` |
+| 「字号大小」数字字段 | `FontSizeRow`（`dsh-client-ui-theme`） | `dsh-client-ui-theme/lib/client.js:1013` 的内联 CSS（类名 `_0Fr0Ha_*`）+ 标记在 `:1050-1098` | `.stepper{min-width:72px;height:36px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);display:inline-flex;position:relative}`；`.value{font-variant-numeric:tabular-nums;min-width:18px;font-size:14px;line-height:22px}`；`.unit{color:var(--dsw-alias-label-secondary);font-size:14px;line-height:22px}`；`.arrows{flex-direction:column;gap:2px;position:absolute;right:8px;opacity:0}`（hover / focus-within 才显形）；`.arrow{width:17px;height:12px;border-radius:var(--dsw-radius-xs)}`；到边界（10/22）`disabled` |
+
+**"表单值字段"与"搜索框"确实不是同一个组件**（用户特别要求核这一条）：
+`primitives/lib/settings-form/fields.module.css:107-118` 的 `.input` 是 **34px / `0 12px` /
+13px / `bg-layer-3` / `border-l4`**，而搜索框是 **36px / `0 34px 0 36px` / `bg-layer-1`**。
+本插件设置页的文本框沿用前者、作品库搜索框对齐后者（`sizes.test.mjs` 里分成
+`OFFICIAL_FIELD` 与 `OFFICIAL_SEARCH` 两套断言）。
+
+**同样重要的是**：官方 `SettingsValueField`（`fields.module.css:3-8`）本身反而是
+**堆叠式**（`.field{display:flex;flex-direction:column;gap:6px}`，标签在输入框上方）。
+用户给的"行式"参照是「权限」「字号大小」这两行 —— 它们在官方那边是**另一类**设置项
+（由各功能包自己画，用的是 `.row`/`.rowText` 那一套）。本插件设置页统一取**行式**。
+
+### 21.3 我们 → 官方 的逐项对照
+
+| 项 | 官方 | 我们（`client/client.js`） |
+|---|---|---|
+| 字段布局 | `.row` + `.rowText`（行式，标签/说明在左、控件在右） | `Field`：`display:flex;align-items:center;gap:8px;padding:16px 0;border-bottom:.5px solid border-l2`；左列 `flex-direction:column;gap:4px;padding-right:48px`；标题 14px/22px；说明 `labelTertiary` 12px/18px |
+| 下拉触发器 | `.selector` 36px / `0 14px` / 14px-22px / `radius-md` / **无描边** + chevron（展开转 180°） | `SelectField` 触发器：同上；底色取同族的 `bg-layer-3`（官方是 `bg-module-platform`，见下"偏离"）；chevron 16px、`color:labelTertiary`、`transform:rotate(180deg)` |
+| 下拉弹层 | `Menu.module.css` 的 `.list` + `MenuSurface`（`radius-lg` + 阴影） | `pxm-select-list`：`padding:4px`、`min-width:100%`、`max-width:360px`、`radius-lg`、底 `bgOverlay`、0.5px `border-l1`、阴影由 `shadow()` 从 `label` token 派生、`top:calc(100% + 4px)`、`z-index:100`、`max-height:60vh` |
+| 当前项标记 | 行尾 `IconCheckOutlineRegular`（`Menu` 的 `selection='check'`） | 行尾同路径的**手写内联 SVG**（`Icon name="check"`，14px），行上带 `aria-checked="true"` |
+| 选项 hover / 键盘焦点 | `--dsw-alias-interactive-bg-hover`，且 `:focus-visible{outline:none}` | `<style>` 里同语义：`tint(T.labelTertiary, 12)` 填充 + `outline:none`（该 token 不在本插件已用清单内，见下"偏离"） |
+| 搜索框 | 36px / `0 34px 0 36px` / 13px / `radius-md` / `border-l4` / `bg-layer-1` + 前置 16px 放大镜 `left:12px` | `SearchInput`：逐项相同；图标是同路径的**手写内联 SVG** |
+| 数字步进器 | 36px / `min-width:72px` / `radius-md` / 数值 `tabular-nums` + 右侧单位 + 右侧上下两枚 17×12 的 chevron 按钮，边界 `disabled` | `NumberStepper`：几何逐项相同；单位是「张」（官方是 `px`）；上下按钮 `aria-label=增加/减少每次张数`，1/4 边界 `disabled` |
+| 焦点可见 | 官方 `.helpButton:focus-visible` 等用 `--dsw-focus-ring-*` / 状态色 | 触发器与两枚步进箭头：`outline:2px solid labelTertiary;outline-offset:1px`（与既有按钮同一套，颜色仍只来自 token） |
+
+**两处有意偏离（如实记）**：
+
+1. **底槽 token**：官方触发器/步进器用 `--dsw-alias-bg-module-platform`，弹层 hover 用
+   `--dsw-alias-interactive-bg-hover`。这两枚**不在**本插件已用的 token 清单里，
+   而 `test/client-tokens.test.mjs` 有一条"代码里出现的 token 种类 == 清单"的硬约束
+   （加 token 要同步改静态用例，等于放宽那一条）。本次**没有**动那条清单，
+   改用同族、同在清单里的 `bg-layer-3`（控件层）与 `labelTertiary` 的 12% 半透明填充。
+   **代价**：这两处的色值与官方不完全相同；**收益**：token 契约一条没动。
+   如果后续要求"逐色相同"，正确的做法是把这两枚 token 加进 `REQUIRED_TOKENS` 并同步
+   `theme.test.mjs` 的 token 表，而不是改成硬编码。
+2. **步进器箭头常显**：官方 `.arrows{opacity:0}` 只在 hover / focus-within 时显形。
+   本插件改成**常显**——验收项要求"两枚 chevron 可点、可键盘"，默认不可见的箭头
+   对触屏/键盘用户等于不存在。几何照抄不变。
+
+### 21.4 可用性（不弱于原生 `<select>`）
+
+- `Tab` 能进触发器（原生 `<button>`）；`Enter` / `Space` 展开（`<button>` 的原生激活行为）。
+- 展开后 `↑` / `↓` 在选项上移动**真实焦点**（照官方 `Menu` 的做法），`Home` / `End` 到首尾，
+  `Enter` / `Space` 选中；`↑↓` 与 `Enter` 都 `preventDefault`（否则页面会跟着滚）。
+- `Esc` 关闭并把焦点交回触发器；**点击外部（`pointerdown`）关闭**；关闭**不等于**选中。
+- `aria-haspopup="menu"` / `aria-expanded` / `role="menu"` / `role="menuitem"` /
+  `aria-checked` / `aria-labelledby`（`Field` 用 `htmlFor` 显式关联）齐备。
+
+### 21.5 新增断言（浏览器 lane，新文件 + 9 条用例）
+
+`test/browser/controls.test.mjs`（新文件，9 条）：
+
+| 用例 | 钉住什么 |
+|---|---|
+| `1.1` | 触发器是 `BUTTON` + `aria-haspopup=menu` + **有 chevron**；展开后弹层存在、`role=menu`、**恰好一项带 ✓ 且它 `aria-checked=true`**（两种"当前项"表达必须落在同一项） |
+| `1.2` | 搜索框是 `input`；**有前置图标**、`pointer-events:none`、距输入框左边界 **12px**、**16×16**；输入框**整宽**且图标在框内 |
+| `1.3` | 步进器有**两枚** chevron 且落在容器内、上下排列；有单位后缀；点上/下改值；**n=1 时下箭头 disabled、n=4 时上箭头 disabled** |
+| `2.1` | 四个字段逐个：标签与控件**纵向重叠 ≥ 半个标签高**且控件在标签右侧；说明文字在标签**下方**、同左列、不越到控件底下 |
+| `3.1` | 展开后焦点在**当前项**；`↑`/`↓` 移动焦点（并 `preventDefault`）；`Enter` 选中后弹层收起、值写回触发器 |
+| `3.2` | `Esc` 关闭弹层且焦点回到触发器 |
+| `3.3` | 点外部关闭、**值不变** |
+| `3.4` | **真键盘**（`page.keyboard`）：聚焦触发器 → 真 `Enter` 展开 → 真 `↑`/`↓` → 真 `Esc` 关闭并归还焦点（3.1~3.3 用的是合成事件，这一条补真按键链路） |
+| `0` | lane 自证：探针都在 |
+
+lane 侧新增探针（`test/browser/lane.js`）：`fieldRow` / `selectFacts` / `stepperFacts` /
+`searchFacts` / `pressKey` / `pointerDownAt`。定位一律走**语义锚点**
+（`data-pxm-field*` / `data-pxm-role` / `data-pxm-icon`），不写样式类名。
+
+### 21.6 反向变异（5 条新变异，全部 ✔）
+
+| 变异 | 改坏的实现 | 抓住它的用例（真实报错首行） |
+|---|---|---|
+| `M27-no-select-chevron` | 触发器不再渲染 chevron | `1.1`：**「触发器里必须有 chevron（官方 PermissionRow 的 .selector 就是标签+chevron）」**；`3.1`：「收起后 chevron 仍在（只是转回 0°）」 |
+| `M28-no-select-list` | 点击后**永不渲染弹层** | `1.1`/`3.1`/`3.2`/`3.3`：**「page.waitForSelector: Timeout 5000ms exceeded」** |
+| `M29-field-row-to-stack` | `Field` 退回**堆叠式** | `2.1`：「厂商：标签与控件必须在同一行（纵向重叠 ≥ 半个标签高）」；`layout.test.mjs` 的「「默认值」卡片：每个字段是行式」 |
+| `M30-no-search-icon` | 搜索框去掉前置放大镜 | `1.2`：**「搜索框必须有前置图标（内联 SVG）」** |
+| `M31-stepper-one-arrow` | 步进器只剩向上那一枚 | `1.3`：**「下箭头必须是一枚 chevron（内联 SVG）」** |
+
+`tools/lane-mutations.mjs` 的 `TEST_FILES` 由 3 → **4**（+`controls.test.mjs`）。
+另：`M10` 因 `Field` 结构变了而**换了变异点**（旧形态的 `flexDirection:column` 已不存在，
+改成把左列的列方向写坏）；`M22` 的预期用例名跟着 `sizes.test.mjs` 的新标题更新。
+两条都**没有被删除或放宽**。
+
+### 21.7 因控件替换而调整过的既有断言（逐条）
+
+1. `test/client-settings-dom.test.mjs` 的 `选择s`：`lane.selects()`（原生 `<select>`）
+   → `lane.selectTriggers()` / `lane.selectList()` / `lane.pick()`（自绘触发器 + 弹层）。
+   **强度不变**：仍然逐个证明"厂商/模型/尺寸的候选项真的在选项集合里"（改成展开弹层读
+   `data-pxm-option`），并且**新增**了一条"展开后弹层必须存在"的断言。
+   此路径只剩作品库「排序」一个原生 `<select>`（官方无对照物，保持原生），
+   `lane.select()` 保留给那条。
+2. `test/client-settings-dom.test.mjs` 的 `exportDirCard()`：卡片定位从"含标题的
+   flex-column"改成"含标题 + flex-column + `padding:12px 14px`"。**不是放宽**：
+   行式改造后标题不再直接住在卡片容器里，旧判据会连外层 `.pxm-settings` 一起收进来。
+3. `test/browser/lane.js` 的 `settingsSlots`：`select` 角色从 `root.querySelector('select')`
+   → `[data-pxm-role="select"]`；`button` 角色加 `.pxm-btn` 限定（行式布局里自绘触发器与
+   两枚步进箭头也是 `<button>`，不限定就会量错元素）。**角色语义不变**。
+4. `test/browser/sizes.test.mjs`：`fieldExpectation()` 分流——
+   `select` → **新增**的 `OFFICIAL_SELECT`（36px / `0 14px` / 14px / **无描边**）、
+   `searchInput` → **新增**的 `OFFICIAL_SEARCH`（36px / `0 34px 0 36px` / `bg-layer-1`）、
+   `sortSelect` 仍按 `OFFICIAL_FIELD` 去掉 `lineHeight`。`borderDiff()` 增加
+   `expectNoBorder` 分支（官方触发器确实没有描边）。**每一条都是"换成官方对应物的确切值"，
+   没有任何一条被放宽或删掉**；1.1 的用例标题改成"输入框 = 官方表单控件；自绘下拉触发器
+   = 官方 .selector"。
+5. `test/browser/layout.test.mjs` 的 7a：**方向反转**——原来断言"控件必须在标签下方、
+   左边界对齐"（旧形态），现在断言"控件必须与标签**纵向重叠**且排在右侧"（行式）。
+   这是需求要求的形态变更（同一行 vs 上下），**不是放宽**：断言数量与严格度相当，
+   而且新增了"说明文字必须在标签下方"这一条。另三处 `waitForSelector('select')`
+   改成 `waitForSelector('[data-pxm-field]')`；导出路径输入框改用 `#pxm-export-dir` 定位
+   （原来用文档里第一个 `input`，行式改造后会绑错元素）。
+6. `test/browser/theme.test.mjs` 的 8.9：`select` 选择器改自绘触发器；该控件的**描边**
+   那一半改成"不适用"（官方触发器 `border:none`，是另一个模板），底色那半照旧判
+   `bg-layer-3`。用例标题与那张对照表注释同步更新。
+7. `test/client-tokens.test.mjs`：**一条都没改**（没有新增 token）。
+
+**没有删除或放宽任何一条断言**：`pnpm test` 仍是 **323**（2 条既有用例被改写、`it` 数量不变），
+`pnpm test:browser` **30 → 39**（+9）。
+
+`git diff` 里出现的 4 行被删掉的 `it(` 全部是**同名替换**（用例体保留、只换标题与定位方式）：
+
+| 旧标题 | 新标题 | 为什么 |
+|---|---|---|
+| `默认值卡片：三个字段是可选的 select，模型选项来自当前厂商` | `…三个字段是自绘下拉…` | 控件换了，"select" 这个词不再准确 |
+| `「默认值」卡片：每个字段的标签与控件同列（控件在标签下方、左边界对齐）` | `「默认值」卡片：每个字段是行式（标签+说明在左、控件在右，纵向重叠）` | 形态方向反转（堆叠 → 行式） |
+| `1.1 输入框 / 下拉 = 官方设置页表单控件（34px / …）` | `1.1 输入框 = 官方表单控件；自绘下拉触发器 = 官方 .selector（36px / …）` | 两套尺寸分开断言 |
+| `8.9 input / password / select 的底色与描边逐个等于官方解析值；提示词 textarea 同` | `8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值；提示词 textarea 同` | 控件换了名字 |
+
+### 21.8 结果
+
+`pnpm verify`：**323 + 39**，全绿。`git diff` 里被删掉的 `it(` 只有上面那 4 行**改名**，
+没有任何用例体被删。
+
+### 21.9 没做到 / 没把握（诚实记录）
+
+1. **弹层定位在窄屏下的表现只做了"不溢出"层面**：弹层是 `position:absolute` +
+   `min-width:100%` / `max-width:360px`，随触发器走。若某个字段的右列本身很窄
+   （例如 375px 下），弹层最窄就是那个宽度 —— 选项文字靠 `text-overflow:ellipsis` 收，
+   **没有**做官方 `Menu` 的 portal + 视口翻转（`portal:true` 那一套）。
+   触发器的祖先若有 `overflow:hidden` 也会裁掉弹层；当前设置弹窗的滚动层是
+   `overflow-y:auto`，实测在 520/375 两档没有裁切，但这条**没有被专门断言覆盖**。
+2. **"Tab 进入触发器"这条链路仍然只是近似**：3.4 走的是真 `page.keyboard`，但用
+   `page.focus()` 把焦点**放到**触发器上，而不是"从上一个控件按 Tab 走过来"
+   （真 Tab 序列会被设置弹窗自己的焦点陷阱影响，断言会变得很脆）。合成事件那条
+   （3.1~3.3）另外补齐了 `keyCode` / `which`（`lane.js` 的 `pressKey`），但它毕竟不是真按键。
+3. **`aria-checked` 用在 `role="menuitem"` 上**：官方 `Menu` 用的是"行尾 ✓"，
+   `aria-checked` 是本次为可断言性补的（`menuitemradio` 才是 ARIA 的标准搭配）。
+   屏幕阅读器行为**未实测**。
+4. **步进器箭头常显是对官方的一处偏离**（见 21.3），观感与官方 hover 才显形不同。
+5. **`bg-module-platform` / `interactive-bg-hover` 两枚官方 token 没有引入**（见 21.3），
+   这两处的色值与官方不是逐色相同。
+6. 作品库的「排序」仍是原生 `<select>`：官方 client 侧没有同形态对照物，
+   **保持现状**（没有硬造一个"像官方"的样子）。

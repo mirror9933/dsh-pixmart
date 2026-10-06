@@ -605,7 +605,7 @@ if (launched.browser === null) {
   // ── 7. 标签与值不被拆散 ───────────────────────────────────────────────────
 
   describe('7. 设置页：标签与它的值不被拆散', () => {
-    it('「默认值」卡片：每个字段的标签与控件同列（控件在标签下方、左边界对齐）', async () => {
+    it('「默认值」卡片：每个字段是行式（标签+说明在左、控件在右，纵向重叠）', async () => {
       const { page, context, problems } = await openLane({
         width: 520,
         height: 900,
@@ -613,20 +613,31 @@ if (launched.browser === null) {
         fixture: fixture(),
       })
       try {
-        await page.waitForSelector('select')
+        // 设置页的控件是取数之后才渲染的；等的是**行式字段**本身（2026-10-09 起
+        // 设置页的下拉是自绘触发器，`select` 这个标签已经不存在了）。
+        await page.waitForSelector('[data-pxm-field]')
         const fields = await probe(page, 'defaultsFields')
         assert.ok(Array.isArray(fields) && fields.length >= 4, '「默认值」卡片应有 4 个字段：' + JSON.stringify(fields))
-        const broken = fields.filter(
-          (field) =>
-            field.controlRect === null ||
-            field.labelRect === null ||
-            Math.abs(field.controlRect.left - field.labelRect.left) > 1 ||
-            field.controlRect.top < field.labelRect.top + field.labelRect.height * 0.5,
-        )
+        /*
+         * 2026-10-09 控件形态复刻：官方设置页的**行式**字段（「权限」「字号大小」）是
+         * 「左列标签+说明、右列控件」；本插件设置页统一改成这一形态。
+         *
+         * 所以本用例的**方向也反过来**了：从"控件必须在标签下方、左边界对齐"
+         * 改成"控件必须与标签**纵向重叠**（同一行）且真的排在标签右侧"。
+         * 强度没有降低——它仍然钉住"标签与它的控件属于同一行、不被换行拆散"，
+         * 只是把官方那套行式布局写成了可证伪的几何断言。
+         */
+        const broken = fields.filter((field) => {
+          if (field.controlRect === null || field.labelRect === null) return true
+          const overlap =
+            Math.min(field.controlRect.bottom, field.labelRect.bottom) -
+            Math.max(field.controlRect.top, field.labelRect.top)
+          return overlap < field.labelRect.height * 0.5 || field.controlRect.left < field.labelRect.right - 1
+        })
         assert.deepEqual(
           broken,
           [],
-          '标签与它的值必须同列堆叠（并排 = 被拆散）：' + JSON.stringify(broken),
+          '标签与它的控件必须在同一行（控件在标签右侧、纵向重叠 ≥ 半个标签高）：' + JSON.stringify(broken),
         )
         assert.deepEqual(problems, [])
       } finally {
@@ -652,7 +663,7 @@ if (launched.browser === null) {
         fixture: fixture({ providers: { ...providersFixture, dataDir: longDir } }),
       })
       try {
-        await page.waitForSelector('select')
+        await page.waitForSelector('[data-pxm-field]')
         const pair = await probe(page, 'groupedPair', '数据目录')
         assert.ok(pair !== null, '设置页里应有「数据目录」这一对标签 + 值')
         assert.ok(
@@ -705,7 +716,7 @@ if (launched.browser === null) {
           }),
         })
         try {
-          await page.waitForSelector('select')
+          await page.waitForSelector('[data-pxm-field]')
           const dialog = await probe(page, 'box', '#settingsDialog')
           assert.ok(
             dialog.scrollWidth <= dialog.clientWidth + 1,
@@ -735,7 +746,11 @@ if (launched.browser === null) {
           )
 
           // 导出路径输入框必须随容器收窄，不得自己撑破弹窗。
-          const input = await probe(page, 'rect', 'input')
+          //
+          // 2026-10-09 起这里按**语义**定位（`#pxm-export-dir`），不再用 `'input'`：
+          // 行式布局把「搜索」那一行也放进了设置区间之外的顺序里，`'input'` 这种
+          // "文档里第一个输入框"的写法会绑错元素。定位方式换、断言强度不变。
+          const input = await probe(page, 'rect', '#pxm-export-dir')
           assert.ok(input !== null, '设置页里应有导出路径输入框')
           assert.ok(
             input.right <= dialog.rect.left + dialog.clientWidth + 1,

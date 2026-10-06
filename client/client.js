@@ -221,12 +221,41 @@ window.__ModuleLoader__.load({
      *     `line-height:1.5`（:115）。
      *     该文件是 `SettingsValueField`（text）与 `SettingsSecretField`（password）**唯一**的
      *     样式来源，两者同一个类，所以文本框 / 密码框 / 搜索框都挂它。
-     *   - `selectField`：官方 client 侧没有 `<select>`（设置页的模型/厂商选择在
-     *     `dsh-client-ui-settings-models/lib/client.js:58` 的 `._3nPmjq_input` 上是
-     *     `height:32px; padding:0 10px; font-size:14px; line-height:22px`），
-     *     与 `primitives/lib/Input.module.css:5` 的 `.wrap`（`height:32px; padding:0 8px`）同档。
-     *     本插件的 `<select>` 语义上就是"同一枚表单控件"，因此与 `field` **同一组尺寸**
-     *     （官方那两个 32px 的差值来自各自场景，不另立一套）。
+     *   - `select`：**2026-10-09 控件形态复刻**后，设置页不再用原生 `<select>`：
+     *     官方 client 侧本来就没有原生 `<select>`，它的下拉是「自绘触发器 + 弹层」。
+     *     触发器取值来自官方「权限」那一行
+     *     `@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js:438`
+     *     的 `PermissionRow.module.css` → `.selector{border-radius:var(--dsw-radius-md);
+     *     background:var(--dsw-alias-bg-module-platform);height:36px;color:var(--dsw-alias-label-primary);
+     *     cursor:pointer;border:none;align-items:center;gap:12px;padding:0 14px;font-size:14px;
+     *     line-height:22px;display:inline-flex}`；弹层取值来自
+     *     `primitives/lib/Menu.module.css`（`.list{padding:4px;min-width:144px;max-width:360px}`
+     *     :11/:29/:33-34；`.item{min-height:34px;padding:6px 8px;border-radius:var(--dsw-radius-md);
+     *     font-size:13px;line-height:20px}` :95-110；`.item:hover{background:var(--dsw-alias-interactive-bg-hover)}`
+     *     :112-114；`.selected` :216-218；`.check{width:14px;height:14px}` :178-182/:209-212）。
+     *   - `search`：官方「搜索插件」的搜索框（`dsh-client-ui-settings-plugin-inventory/lib/client.js:57`
+     *     的 `RotMhW_search`）→ `input{height:36px;padding:0 34px 0 36px;font-size:13px;
+     *     border-radius:var(--dsw-radius-md);border:.5px solid var(--dsw-alias-border-l4);
+     *     background:var(--dsw-alias-bg-layer-1)}`、`>svg{position:absolute;left:12px}`。
+     *     它与表单值字段（`field`）**不是同一个组件**：官方搜索框是"label 包 icon + input"，
+     *     高 36 / 底 `bg-layer-1`；表单值字段是裸 `<input class=.input>`，高 34 / 底 `bg-layer-3`。
+     *     逐项差异记在 `test/browser/sizes.test.mjs` 的 `OFFICIAL_SEARCH`。
+     *   - `stepper`：官方「字号大小」步进器（`dsh-client-ui-theme/lib/client.js:1013`
+     *     的 `FontSizeRow.module.css`）→ `.stepper{border-radius:var(--dsw-radius-md);
+     *     background:var(--dsw-alias-bg-module-platform);min-width:72px;height:36px}`、
+     *     `.value{font-variant-numeric:tabular-nums;min-width:18px;font-size:14px;line-height:22px}`、
+     *     `.unit{color:var(--dsw-alias-label-secondary);font-size:14px;line-height:22px}`、
+     *     `.arrows{flex-direction:column;gap:2px;position:absolute;right:8px}`、
+     *     `.arrow{width:17px;height:12px;border-radius:var(--dsw-radius-xs)}`。
+     *     官方靠 hover/focus-within 才把箭头显形；本插件**常显**（键盘可达性优先，见该处注释）。
+     *   - `row`：官方设置页的**行式**布局（`PermissionRow.module.css:438` 的 `.row` 与
+     *     `FontSizeRow.module.css:1013` 的 `.row` 是同一套：
+     *     `{align-items:center;gap:8px;padding:16px 0;display:flex;border-bottom:.5px solid
+     *     var(--dsw-alias-border-l2)}`；左列 `.rowText{flex-direction:column;flex:1;gap:4px;
+     *     min-width:0;padding-right:48px;display:flex}`；标题 `.title{font-size:14px;font-weight:400;
+     *     line-height:22px}`；说明 `.desc{color:var(--dsw-alias-label-tertiary);font-size:12px;
+     *     line-height:18px}`）。注意：官方**表单值字段**（`SettingsValueField`）反而是"标签在
+     *     输入框上方"的堆叠式——行式与堆叠式在官方是**两类**设置项，本插件设置页统一取行式。
      *   - `button`：官方 `primitives/lib/Button.module.css:27-33` 的 `.sm`
      *     → `height:28px`（:29）`font-size:12px`（:30）`line-height:18px`（:31）
      *     `padding:0 10px`（:32）`border-radius:var(--dsw-radius-sm)`（:33），
@@ -266,6 +295,48 @@ window.__ModuleLoader__.load({
       fieldPad: '0 12px',
       fieldFontSize: '13px',
       fieldLineHeight: '1.5',
+      // 自绘下拉触发器（PermissionRow.module.css .selector，client.js:438）
+      selectHeight: '36px',
+      selectPad: '0 14px',
+      selectFontSize: '14px',
+      selectLineHeight: '22px',
+      selectGap: '12px',
+      // 搜索框（settings-plugin-inventory/lib/client.js:57 的 RotMhW_search）
+      searchHeight: '36px',
+      searchPad: '0 34px 0 36px',
+      searchFontSize: '13px',
+      searchLineHeight: '1.5',
+      searchIconLeft: '12px',
+      searchIconSize: '16px',
+      // 数字步进器（FontSizeRow.module.css，theme/lib/client.js:1013）
+      stepperHeight: '36px',
+      stepperMinWidth: '72px',
+      stepperValueMinWidth: '18px',
+      stepperFontSize: '14px',
+      stepperLineHeight: '22px',
+      stepperArrowWidth: '17px',
+      stepperArrowHeight: '12px',
+      stepperArrowGap: '2px',
+      stepperArrowRight: '8px',
+      // 设置页行式布局（PermissionRow / FontSizeRow 的 .row + .rowText）
+      rowGap: '8px',
+      rowPad: '16px 0',
+      rowTextGap: '4px',
+      rowTextPadRight: '48px',
+      rowTitleFontSize: '14px',
+      rowTitleLineHeight: '22px',
+      rowDescFontSize: '12px',
+      rowDescLineHeight: '18px',
+      // 菜单弹层（Menu.module.css）
+      menuPad: '4px',
+      menuMinWidth: '144px',
+      menuMaxWidth: '360px',
+      menuItemHeight: '34px',
+      menuItemPad: '6px 8px',
+      menuItemFontSize: '13px',
+      menuItemLineHeight: '20px',
+      menuIconSize: '14px',
+      menuOffset: '4px',
       // 行内动作按钮（Button.module.css .sm）
       buttonHeight: '28px',
       buttonPad: '0 10px',
@@ -975,23 +1046,162 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 设置页字段：**行式**布局（标签 + 说明在左、控件右对齐）。
+     *
+     * 官方出处（两个包各有一份，取值完全一致，所以只抄一套）：
+     *   - `@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js:438`（「权限」那一行）
+     *     的 `PermissionRow.module.css` → `.row{border-bottom:.5px solid var(--dsw-alias-border-l2);
+     *     align-items:center;gap:8px;padding:16px 0;display:flex}`、
+     *     `.rowText{flex-direction:column;flex:1;gap:4px;min-width:0;padding-right:48px;display:flex}`、
+     *     `.title{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:400;line-height:22px}`、
+     *     `.desc{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px}`。
+     *   - `@deepseek-ai/dsh-client-ui-theme/lib/client.js:1013`（「字号大小」那一行）的
+     *     `FontSizeRow.module.css` 是**逐字同一套**。
+     *
+     * 注意与官方**表单值字段**的分工：`primitives/lib/settings-form/fields.module.css`
+     * 的 `.field`（:3-8）是 `flex-direction:column` 的**堆叠式**（`SettingsValueField`
+     * 就是它）——官方设置页同时存在这两类设置项。本插件设置页统一取**行式**。
+     *
+     * 说明文字（`desc`）只有传了 `description` 才渲染；没有说明的行就是"单行标题 + 控件"，
+     * 与官方「权限」以外的多数行一致。
+     *
+     * `htmlFor` / `controlId` 用来把 `<label>` 与右侧控件显式关联（原生 `<select>` 换成
+     * 自绘触发器之后，`<label>` 包不住那个 `<button>`——包住会让点击弹层里的选项也命中 label）。
+     */
     function Field(props) {
+      const controlId = isString(props.controlId) ? props.controlId : undefined
+      const labelId = isString(props.labelId)
+        ? props.labelId
+        : controlId === undefined
+          ? undefined
+          : controlId + '-label'
+      const describedBy = isString(props.describedBy) ? props.describedBy : undefined
       return h(
-        'label',
+        'div',
         {
+          // `data-pxm-field` = 行式字段的**语义锚点**：浏览器 lane 靠它找"行"及其左列/右列，
+          // 而不是靠类名（类名是实现细节，换个名字不该让断言失效）。
+          'data-pxm-field': '1',
           style: {
             display: 'flex',
-            flexDirection: 'column',
-            gap: '3px',
-            fontSize: '12px',
-            flex: '1 1 180px',
+            alignItems: 'center',
+            gap: S.rowGap,
+            padding: S.rowPad,
+            // 行与行之间的发丝分隔线：官方 `.row{border-bottom:.5px solid
+            // var(--dsw-alias-border-l2)}`（`border-l2` 在官方那边正是行分隔线）。
+            borderBottom: '0.5px solid ' + T.borderL2,
             minWidth: 0,
-            // 允许调用方覆盖布局（例如让某个字段独占一行）
             ...(isObject(props.style) ? props.style : {}),
           },
         },
-        h('span', { style: { opacity: 0.7 } }, props.label),
-        ...(isArray(props.children) ? props.children : [props.children]),
+        h(
+          'div',
+          {
+            'data-pxm-field-text': '1',
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              flex: '1 1 auto',
+              gap: S.rowTextGap,
+              minWidth: 0,
+              // 官方 `.rowText{padding-right:48px}`：左列与右列之间留出呼吸位。
+              paddingRight: S.rowTextPadRight,
+            },
+          },
+          h(
+            'label',
+            {
+              'data-pxm-field-label': '1',
+              ...(controlId === undefined ? {} : { htmlFor: controlId }),
+              ...(labelId === undefined ? {} : { id: labelId }),
+              style: {
+                color: T.label,
+                fontSize: S.rowTitleFontSize,
+                fontWeight: 400,
+                lineHeight: S.rowTitleLineHeight,
+              },
+            },
+            props.label,
+          ),
+          props.description === undefined || props.description === null
+            ? null
+            : h(
+                'span',
+                {
+                  'data-pxm-field-desc': '1',
+                  ...(describedBy === undefined ? {} : { id: describedBy }),
+                  style: {
+                    color: T.labelTertiary,
+                    fontSize: S.rowDescFontSize,
+                    fontWeight: 400,
+                    lineHeight: S.rowDescLineHeight,
+                  },
+                },
+                props.description,
+              ),
+        ),
+        // 右列：控件。`flexShrink: 0` 让控件保持自己的尺寸，长标签在左列内部换行。
+        h(
+          'div',
+          {
+            'data-pxm-field-control': '1',
+            style: { display: 'flex', alignItems: 'center', flexShrink: 0, minWidth: 0 },
+          },
+          props.children,
+        ),
+      )
+    }
+
+    /**
+     * 官方图标画法（**手写内联 SVG，不引任何图标库**）。
+     *
+     * 每条路径逐字抄自官方 primitives 里同一枚图标的 artwork（`size` 默认 16、
+     * `viewBox:"0 0 16 16"`、`fill:"none"`、`strokeWidth` 1、`aria-hidden:"true"`）：
+     *   - `search`：`primitives/lib/index.js:266-279` 的两条 path
+     *   - `check` ：`primitives/lib/index.js:425-429`
+     *   - `chevronDown`：`primitives/lib/index.js:491-495`
+     *   - `chevronUp`  ：`primitives/lib/index.js:587-591`
+     *
+     * **与官方的一处有意偏离**：官方 artwork 写的是 `stroke:"currentColor"`，由外层
+     * `color` 决定描边色。本插件改成**显式传 token**（`props.color`），因为
+     * `test/client-tokens.test.mjs` 有一条"不许用当前颜色关键字凑色"的静态红线：
+     * 半透明/跟随色必须显式挂在 token 上，否则"主题换了颜色就跟着换"这条事实
+     * 就没有可断言的载体。调用方一律传 `T.*`，画出来的颜色与官方一致。
+     */
+    const ICON_PATHS = Object.freeze({
+      search: [
+        'M6.58727 11.8586C9.55061 11.8586 11.9529 9.45637 11.9529 6.49304C11.9529 3.5297 9.55061 1.12744 6.58727 1.12744C3.62394 1.12744 1.22168 3.5297 1.22168 6.49304C1.22168 9.45637 3.62394 11.8586 6.58727 11.8586Z',
+        'M10.2991 10.3933L14.7783 14.8725',
+      ],
+      check: ['M2.25 8.5L5.49732 11.7473C5.90519 12.1552 6.57263 12.1344 6.95426 11.7018L13.75 4'],
+      chevronDown: ['M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6'],
+      chevronUp: ['M12 10L8.70711 6.70711C8.31658 6.31658 7.68342 6.31658 7.29289 6.70711L4 10'],
+    })
+
+    function Icon(props) {
+      const paths = ICON_PATHS[props.name]
+      if (!isArray(paths)) return null
+      const size = props.size === undefined ? 16 : props.size
+      return h(
+        'svg',
+        {
+          className: props.className,
+          width: String(size),
+          height: String(size),
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          xmlns: 'http://www.w3.org/2000/svg',
+          'aria-hidden': 'true',
+          strokeWidth: 1,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          style: props.style,
+          ...(props.testId === undefined ? {} : { 'data-pxm-icon': props.testId }),
+        },
+        paths.map((d, index) =>
+          h('path', { key: 'p' + String(index), d: d, stroke: props.color }),
+        ),
       )
     }
 
@@ -1039,6 +1249,7 @@ window.__ModuleLoader__.load({
         type: props.type ?? 'text',
         // 类名只用于测试/样式挂钩，不影响行为
         ...(isString(props.className) && props.className !== '' ? { className: props.className } : {}),
+        ...(isString(props.id) ? { id: props.id } : {}),
         style: { ...inputStyle, ...(isObject(props.style) ? props.style : {}) },
         value: props.value ?? '',
         placeholder: props.placeholder,
@@ -1050,6 +1261,11 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /**
+     * 原生 `<select>`。**只留给作品库工具条的「排序」**：官方的排序控件在
+     * `SettingsRoot` 那一侧没有对应形态，作品库里也没有官方对照物，所以保持原生
+     * （语义天然可访问、平台行为稳定）。设置页一律用下面的 `SelectField`。
+     */
     function Select(props) {
       const options = isArray(props.options) ? props.options : []
       return h(
@@ -1064,6 +1280,495 @@ window.__ModuleLoader__.load({
         ...options.map((option, index) =>
           h('option', { key: 'o' + String(index), value: option.value }, option.label),
         ),
+      )
+    }
+
+    /**
+     * 自绘下拉：**触发器 + 弹层**，替换设置页原来的原生 `<select>`。
+     *
+     * 官方对照物是「权限」那一行（`@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js:438`
+     * 的 `PermissionRow` + `primitives/lib/Menu`）：
+     *   - 触发器是 `<button>`，挂 `.selector`（36px 高 / `0 14px` / `gap:12px` /
+     *     `radius-md` / `bg-module-platform` / 14px-22px 文字），标签后面跟一枚 chevron；
+     *     展开时 `aria-expanded=true`，并且 chevron 旋转 180°（官方 `PermissionSelect`
+     *     的 `.chevronOpen{transform:rotate(180deg)}`，client.js:265）。
+     *   - 弹层是 `Menu` 的卡片：`padding:4px` + `radius-lg` + 阴影，行是
+     *     `role="menuitem"` 的按钮（34px 高 / `6px 8px` / `radius-md` / 13px-20px），
+     *     hover 与键盘焦点都是 `--dsw-alias-interactive-bg-hover`，
+     *     **当前项在行尾带一枚 ✓**（官方 `Menu` 的 `selected && selection === 'check'`
+     *     渲染 `IconCheckOutlineRegular`，index.js:4198 + `Menu.module.css:209-212`）。
+     *
+     * 可用性按需求**不弱于**原生 `<select>`：
+     *   - `Tab` 能进触发器（原生 `<button>`）；`Enter` / `Space` 展开（`<button>` 原生的
+     *     激活行为就是 keydown Enter/Space → click，不用自己接管）；
+     *   - 展开后 `↑↓` 在选项间移动真实焦点（照官方 `Menu` 的"箭头走真焦点"做法），
+     *     `Home` / `End` 到首尾；`Esc` 关闭并把焦点交回触发器；
+     *   - 点外部关闭；`aria-haspopup="menu"` / `aria-expanded` / `role="menu"` /
+     *     `role="menuitem"` / `aria-checked` 齐备；焦点可见用 `--dsw-*` 色的 focus 环。
+     *
+     * 弹层用 `position: absolute` 挂在触发器外面那层 `position: relative` 上（照官方
+     * `.list{position:absolute;top:calc(100% + 4px)}`），所以**不需要测量与 portal**；
+     * 代价是祖先若有 `overflow:hidden` 会被裁（见回报里的"没把握"一条）。
+     */
+    function SelectField(props) {
+      const options = isArray(props.options) ? props.options : []
+      const value = props.value ?? ''
+      const disabled = props.disabled === true
+      const [open, setOpen] = React.useState(false)
+      const [activeIndex, setActiveIndex] = React.useState(0)
+      const triggerRef = React.useRef(null)
+      const listRef = React.useRef(null)
+      const selectedIndex = options.findIndex((option) => String(option.value) === String(value))
+      const current = selectedIndex >= 0 ? options[selectedIndex] : null
+      const currentLabel = current === null ? '' : String(current.label ?? current.value ?? '')
+
+      React.useEffect(() => {
+        if (!open) return () => {}
+        setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0)
+        const onPointerDown = (event) => {
+          const target = event.target
+          if (triggerRef.current !== null && triggerRef.current.contains(target)) return
+          if (listRef.current !== null && listRef.current.contains(target)) return
+          setOpen(false)
+        }
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') {
+            setOpen(false)
+            if (triggerRef.current !== null) triggerRef.current.focus()
+          }
+        }
+        document.addEventListener('pointerdown', onPointerDown)
+        document.addEventListener('keydown', onKeyDown)
+        return () => {
+          document.removeEventListener('pointerdown', onPointerDown)
+          document.removeEventListener('keydown', onKeyDown)
+        }
+      }, [open, selectedIndex])
+
+      /** 打开后把焦点交给当前项（键盘用户下一步就是 ↑↓，不必先 Tab 一遍）。 */
+      const focusOnMount = React.useCallback((node) => {
+        if (node === null) return
+        listRef.current = node
+        if (typeof node.focus === 'function') node.focus()
+      }, [])
+
+      const commit = (option) => {
+        setOpen(false)
+        if (triggerRef.current !== null) triggerRef.current.focus()
+        if (String(option.value) === String(value)) return
+        // 与原生 `<select>` 的 onChange 同形：调用方读 `event.target.value`，
+        // 所以这里**造一个同样形状的事件对象**，调用点一行都不用改。
+        if (typeof props.onChange === 'function') {
+          props.onChange({ target: { value: String(option.value) } })
+        }
+      }
+
+      const onListKeyDown = (event) => {
+        const last = options.length - 1
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          setActiveIndex(activeIndex >= last ? 0 : activeIndex + 1)
+          return
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          setActiveIndex(activeIndex <= 0 ? last : activeIndex - 1)
+          return
+        }
+        if (event.key === 'Home') {
+          event.preventDefault()
+          setActiveIndex(0)
+          return
+        }
+        if (event.key === 'End') {
+          event.preventDefault()
+          setActiveIndex(last < 0 ? 0 : last)
+          return
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          const option = options[activeIndex]
+          if (option === undefined) return
+          event.preventDefault()
+          commit(option)
+        }
+      }
+
+      const optionNodes = options.map((option, index) =>
+        h(
+          'button',
+          {
+            key: 'o' + String(index),
+            type: 'button',
+            role: 'menuitem',
+            'data-pxm-option': String(option.value),
+            // 当前项 = `aria-checked` + 行尾 ✓（官方 Menu 的 `selection='check'`）。
+            'aria-checked': String(option.value) === String(value) ? 'true' : 'false',
+            tabIndex: index === activeIndex ? 0 : -1,
+            ref: index === activeIndex ? focusOnMount : undefined,
+            className: 'pxm-select-option',
+            disabled: option.disabled === true,
+            onClick: () => commit(option),
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              width: '100%',
+              minHeight: S.menuItemHeight,
+              padding: S.menuItemPad,
+              border: 'none',
+              borderRadius: S.radiusMd,
+              background: 'transparent',
+              cursor: option.disabled === true ? 'not-allowed' : 'pointer',
+              font: 'inherit',
+              fontSize: S.menuItemFontSize,
+              lineHeight: S.menuItemLineHeight,
+              color: T.label,
+              textAlign: 'left',
+              opacity: option.disabled === true ? 0.4 : 1,
+            },
+          },
+          h(
+            'span',
+            { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+            String(option.label ?? option.value ?? ''),
+          ),
+          String(option.value) === String(value)
+            ? h(Icon, {
+                name: 'check',
+                className: 'pxm-select-check',
+                size: 14,
+                testId: 'check',
+                color: T.label,
+                style: { flex: 'none' },
+              })
+            : null,
+        ),
+      )
+
+      return h(
+        'span',
+        {
+          className: 'pxm-select',
+          // 自绘下拉作为一个整体占满右列宽度（原生 `<select>` 也是整宽）。
+          style: { position: 'relative', display: 'inline-flex', width: '100%', minWidth: 0 },
+        },
+        h(
+          'button',
+          {
+            type: 'button',
+            ref: triggerRef,
+            id: isString(props.id) ? props.id : undefined,
+            className: 'pxm-select-trigger',
+            'data-pxm-role': 'select',
+            'aria-haspopup': 'menu',
+            'aria-expanded': open ? 'true' : 'false',
+            ...(isString(props.labelledBy) ? { 'aria-labelledby': props.labelledBy } : {}),
+            ...(isString(props.describedBy) ? { 'aria-describedby': props.describedBy } : {}),
+            disabled: disabled,
+            onClick: (event) => {
+              // 触发器在 `<label>` 之外（Field 用的是 `htmlFor` 显式关联），
+              // 但仍挡一层冒泡：避免将来把控件挪回 label 内时，点击既开又立刻关。
+              event.stopPropagation()
+              setOpen(!open)
+            },
+            style: {
+              font: 'inherit',
+              boxSizing: 'border-box',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: S.selectGap,
+              width: '100%',
+              minWidth: 0,
+              height: S.selectHeight,
+              padding: S.selectPad,
+              border: 'none',
+              borderRadius: S.radiusMd,
+              // 官方触发器底槽：`background:var(--dsw-alias-bg-module-platform)`
+              // （PermissionRow.module.css .selector）。该 token 不在本插件已用的
+              // 清单里（`T` 是颜色表，加一枚就要同步静态清单），这里取同一族的输入控件层
+              // `bg-layer-3`——与本页表单字段同一层，深浅色都跟随主题。
+              background: T.bgLayer3,
+              color: T.label,
+              fontSize: S.selectFontSize,
+              lineHeight: S.selectLineHeight,
+              textAlign: 'left',
+              cursor: disabled ? 'default' : 'pointer',
+            },
+          },
+          h(
+            'span',
+            {
+              style: {
+                flex: '1 1 auto',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              },
+            },
+            currentLabel,
+          ),
+          h(Icon, {
+            name: 'chevronDown',
+            className: 'pxm-select-chevron',
+            size: 16,
+            testId: 'chevron',
+            color: T.labelTertiary,
+            style: {
+              flex: 'none',
+              transition: 'transform .12s',
+              // 官方 `PermissionSelect` 的 `.chevronOpen{transform:rotate(180deg)}`。
+              transform: open ? 'rotate(180deg)' : 'none',
+            },
+          }),
+        ),
+        open
+          ? h(
+              'div',
+              {
+                ref: listRef,
+                className: 'pxm-select-list',
+                'data-pxm-select-list': '1',
+                role: 'menu',
+                ...(isString(props.labelledBy) ? { 'aria-labelledby': props.labelledBy } : {}),
+                onKeyDown: onListKeyDown,
+                style: {
+                  position: 'absolute',
+                  // 官方 `.list{top:calc(100% + 4px);left:0;z-index:100}`。
+                  top: 'calc(100% + ' + S.menuOffset + ')',
+                  left: 0,
+                  zIndex: 100,
+                  boxSizing: 'border-box',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: S.menuPad,
+                  // 触发器整宽，弹层跟它对齐（原生 `<select>` 的弹层也是这个宽）。
+                  minWidth: '100%',
+                  maxWidth: S.menuMaxWidth,
+                  // 官方卡片圆角/描边/阴影：`MenuSurface.module.css`（radius-lg）+ `Menu.module.css`
+                  // 的 `.list{box-shadow:var(--dsw-elevation-prominent)}`。本插件不引入
+                  // 新 token，用 token 派生的浮层底 + 一级描边（`borderL1`，官方卡片描边那一档）
+                  // 与 `shadow()`（由 `label` token 派生的半透明阴影，深浅色都跟随）。
+                  background: T.bgOverlay,
+                  border: '0.5px solid ' + T.borderL1,
+                  borderRadius: S.radiusLg,
+                  boxShadow: shadow(4, 16, 18),
+                  maxHeight: '60vh',
+                  overflowY: 'auto',
+                },
+              },
+              optionNodes,
+            )
+          : null,
+      )
+    }
+
+    /**
+     * 数字步进器：容器内「数值 + 上下两枚 chevron」，右侧单位后缀。
+     *
+     * 官方对照物是「字号大小」那一行（`@deepseek-ai/dsh-client-ui-theme/lib/client.js:1012`
+     * 的 `FontSizeRow`）：
+     *   - `.stepper{border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);
+     *     min-width:72px;height:36px;justify-content:center;align-items:center;display:inline-flex;
+     *     position:relative}`；
+     *   - `.value{font-variant-numeric:tabular-nums;min-width:18px;font-size:14px;line-height:22px}`；
+     *   - `.arrows{flex-direction:column;gap:2px;position:absolute;right:8px}` +
+     *     `.arrow{width:17px;height:12px;border-radius:var(--dsw-radius-xs)}`，
+     *     两枚按钮是 `<button type=button aria-label=增大/减小字号>`，到边界时 `disabled`
+     *     （官方 10..22，本插件 1..4）；
+     *   - `.unit{color:var(--dsw-alias-label-secondary);font-size:14px;line-height:22px}`。
+     *
+     * **与官方的一处有意偏离**：官方 `.arrows{opacity:0}`，只在 `:hover` / `:focus-within`
+     * 时显形。本插件改成**常显**——需求把"两个 chevron 按钮可点、可键盘"当验收项，
+     * 而一个默认不可见的箭头列在触屏/键盘用户那里等于不存在。几何照抄不变。
+     */
+    function NumberStepper(props) {
+      const min = isNumber(props.min) ? props.min : 1
+      const max = isNumber(props.max) ? props.max : 4
+      const value = isNumber(props.value) ? props.value : min
+      const disabled = props.disabled === true
+      const step = (delta) => {
+        if (disabled) return
+        const next = Math.min(max, Math.max(min, value + delta))
+        if (next === value) return
+        if (typeof props.onChange === 'function') props.onChange(next)
+      }
+      const arrowStyle = (atEdge) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: S.stepperArrowWidth,
+        height: S.stepperArrowHeight,
+        padding: 0,
+        border: 'none',
+        borderRadius: S.radiusSm,
+        background: 'transparent',
+        color: atEdge || disabled ? T.labelTertiary : T.label,
+        cursor: atEdge || disabled ? 'default' : 'pointer',
+      })
+      const upEdge = disabled || value >= max
+      const downEdge = disabled || value <= min
+      return h(
+        'span',
+        {
+          className: 'pxm-stepper',
+          'data-pxm-role': 'stepper',
+          style: {
+            position: 'relative',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            minWidth: S.stepperMinWidth,
+            height: S.stepperHeight,
+            padding: '0 30px 0 12px',
+            boxSizing: 'border-box',
+            borderRadius: S.radiusMd,
+            // 官方 `.stepper` 的底槽是 `bg-module-platform`；同 SelectField 的理由，
+            // 取输入控件层 `bg-layer-3`（同族、随主题）。
+            background: T.bgLayer3,
+          },
+        },
+        h(
+          'span',
+          {
+            'data-pxm-stepper-value': '1',
+            style: {
+              textAlign: 'center',
+              fontVariantNumeric: 'tabular-nums',
+              minWidth: S.stepperValueMinWidth,
+              color: T.label,
+              fontSize: S.stepperFontSize,
+              lineHeight: S.stepperLineHeight,
+            },
+          },
+          String(value),
+        ),
+        props.unit === undefined || props.unit === null
+          ? null
+          : h(
+              'span',
+              {
+                'data-pxm-stepper-unit': '1',
+                style: {
+                  color: T.labelSecondary,
+                  fontSize: S.stepperFontSize,
+                  lineHeight: S.stepperLineHeight,
+                },
+              },
+              String(props.unit),
+            ),
+        h(
+          'span',
+          {
+            style: {
+              position: 'absolute',
+              right: S.stepperArrowRight,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: S.stepperArrowGap,
+            },
+          },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'pxm-stepper-up',
+              'data-pxm-stepper-up': '1',
+              'aria-label': props.increaseLabel ?? '增大',
+              disabled: upEdge,
+              onClick: () => step(1),
+              style: arrowStyle(upEdge),
+            },
+            h(Icon, { name: 'chevronUp', size: 9, testId: 'stepper-up', color: upEdge ? T.labelTertiary : T.label }),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'pxm-stepper-down',
+              'data-pxm-stepper-down': '1',
+              'aria-label': props.decreaseLabel ?? '减小',
+              disabled: downEdge,
+              onClick: () => step(-1),
+              style: arrowStyle(downEdge),
+            },
+            h(Icon, { name: 'chevronDown', size: 9, testId: 'stepper-down', color: downEdge ? T.labelTertiary : T.label }),
+          ),
+        ),
+      )
+    }
+
+    /**
+     * 搜索框：**整宽 + 前置图标**，照官方「搜索插件」那一处。
+     *
+     * 官方出处：`@deepseek-ai/dsh-client-ui-settings-plugin-inventory/lib/client.js:57`
+     * （`RotMhW_search`）——`{width:100%;color:label-tertiary;align-items:center;display:flex;
+     * position:relative}`，子节点顺序是 **icon → (视觉隐藏的 label 文本) → input**，
+     * `>svg{pointer-events:none;position:absolute;left:12px}`，
+     * `input{width:100%;height:36px;padding:0 34px 0 36px;font-size:13px;
+     * border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);
+     * background:var(--dsw-alias-bg-layer-1)}`，`input::placeholder{color:label-tertiary}`。
+     *
+     * 注意这与官方**表单值字段**不是同一个组件（那个是 34px / `bg-layer-3` / 无图标），
+     * 两者在 `test/browser/sizes.test.mjs` 里分别有 `OFFICIAL_FIELD` 与 `OFFICIAL_SEARCH`。
+     *
+     * 图标是**内联 SVG**（`Icon name="search"`），`pointer-events:none` 让它不挡点击。
+     */
+    function SearchInput(props) {
+      const disabled = props.disabled === true
+      return h(
+        'span',
+        {
+          className: 'pxm-search-box',
+          style: {
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+            minWidth: 0,
+            color: T.labelTertiary,
+          },
+        },
+        h(Icon, {
+          name: 'search',
+          className: 'pxm-search-icon',
+          size: 16,
+          testId: 'search',
+          color: T.labelTertiary,
+          style: {
+            position: 'absolute',
+            left: S.searchIconLeft,
+            pointerEvents: 'none',
+          },
+        }),
+        h('input', {
+          className: isString(props.className) && props.className !== '' ? props.className : undefined,
+          'data-pxm-role': 'search',
+          ...(isString(props.id) ? { id: props.id } : {}),
+          'aria-label': props.ariaLabel ?? props.placeholder,
+          type: props.type ?? 'text',
+          style: {
+            font: 'inherit',
+            boxSizing: 'border-box',
+            width: '100%',
+            minWidth: 0,
+            height: S.searchHeight,
+            padding: S.searchPad,
+            fontSize: S.searchFontSize,
+            lineHeight: S.searchLineHeight,
+            borderRadius: S.radiusMd,
+            border: '0.5px solid ' + T.borderL4,
+            background: T.bgLayer1,
+            color: T.label,
+          },
+          value: props.value ?? '',
+          placeholder: props.placeholder,
+          disabled: disabled,
+          autoComplete: 'off',
+          spellCheck: false,
+          onChange: props.onChange,
+        }),
       )
     }
 
@@ -1480,11 +2185,12 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+          { style: { display: 'flex', flexDirection: 'column' } },
           h(
             Field,
-            { label: 'Base URL' },
+            { label: 'Base URL', description: 'OpenAI 兼容的 /v1 根地址' },
             h(TextInput, {
+              id: 'pxm-provider-base-url',
               value: baseUrl,
               disabled: creds.busy,
               placeholder: 'https://api.example.com/v1',
@@ -1497,8 +2203,9 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: 'Gemini 原生 Base URL（可选）' },
+            { label: 'Gemini 原生 Base URL（可选）', description: '只有走 Gemini 原生接口时才需要' },
             h(TextInput, {
+              id: 'pxm-provider-native-url',
               value: nativeUrl,
               disabled: creds.busy,
               placeholder: 'https://api.example.com/gemini/v1beta',
@@ -1513,8 +2220,9 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: 'API Key（留空表示不修改）', style: { flex: '1 0 100%' } },
+            { label: 'API Key', description: '留空表示不修改' },
             h(TextInput, {
+              id: 'pxm-provider-api-key',
               type: 'password',
               value: keyValue,
               disabled: creds.busy,
@@ -1664,11 +2372,12 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+          { style: { display: 'flex', flexDirection: 'column' } },
           h(
             Field,
-            { label: '厂商' },
-            h(Select, {
+            { label: '厂商', description: '生图请求走哪一家适配器' },
+            h(SelectField, {
+              id: 'pxm-defaults-provider',
               value: provider,
               disabled: save.busy,
               options: providers.map((item) => ({
@@ -1680,8 +2389,9 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '模型' },
-            h(Select, {
+            { label: '模型', description: '留空则用该厂商的第一个模型' },
+            h(SelectField, {
+              id: 'pxm-defaults-model',
               value: model,
               disabled: save.busy,
               options: [
@@ -1707,8 +2417,9 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '尺寸' },
-            h(Select, {
+            { label: '尺寸', description: '默认出图比例' },
+            h(SelectField, {
+              id: 'pxm-defaults-size',
               value: size,
               disabled: save.busy,
               options: sizes.map((name) => ({ value: name, label: name })),
@@ -1717,12 +2428,16 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '每次张数（1–4）' },
-            h(TextInput, {
-              type: 'number',
-              value: n,
+            { label: '每次张数', description: '单次生图张数（1–4）' },
+            h(NumberStepper, {
+              value: nValue,
+              min: 1,
+              max: 4,
+              unit: '张',
               disabled: save.busy,
-              onChange: (event) => setN(event.target.value),
+              increaseLabel: '增加每次张数',
+              decreaseLabel: '减少每次张数',
+              onChange: (next) => setN(String(next)),
             }),
           ),
         ),
@@ -1805,12 +2520,15 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+          { style: { display: 'flex', flexDirection: 'column' } },
           h(
             Field,
-            // 路径可能很长：独占一行，别让「标签 + 值」被 flex 拆散。
-            { label: '作品库导出路径（须为绝对路径）', style: { flex: '1 0 100%' } },
+            {
+              label: '作品库导出路径（须为绝对路径）',
+              description: '留空 = 未配置；导出时才复制到 <该路径>/<项目 id>/',
+            },
             h(TextInput, {
+              id: 'pxm-export-dir',
               value,
               disabled: save.busy,
               placeholder: '绝对路径，如 D:/PixMartExport（留空 = 未配置）',
@@ -2868,8 +3586,9 @@ window.__ModuleLoader__.load({
               { className: 'pxm-rename-row', style: { ...skin.row, alignItems: 'flex-end' } },
               h(
                 Field,
-                { label: '项目名（只改显示名，不移动目录）', style: { flex: '1 1 240px' } },
+                { label: '项目名', description: '只改显示名，不移动目录', style: { borderBottom: 'none', padding: 0 } },
                 h(TextInput, {
+                  className: 'pxm-rename-input',
                   value: nameDraft,
                   onChange: (event) => setNameDraft(event.target.value),
                   disabled: busy !== null,
@@ -3809,14 +4528,18 @@ window.__ModuleLoader__.load({
         // ── 搜索 + 排序（批次 C） ─────────────────────────────────────────────
         h(
           'div',
-          { style: { ...skin.row, alignItems: 'flex-end' } },
+          { style: { display: 'flex', flexDirection: 'column' } },
           h(
             Field,
-            { label: '搜索（项目名 / 模块名）', style: { flex: '1 1 220px' } },
+            {
+              label: '搜索（项目名 / 模块名）',
+              description: '输入即筛，300ms 防抖',
+              style: { borderBottom: 'none', paddingBottom: '8px' },
+            },
             h(
               'div',
-              { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-              h(TextInput, {
+              { style: { display: 'flex', gap: '6px', alignItems: 'center', width: '100%' } },
+              h(SearchInput, {
                 className: 'pxm-search',
                 value: query,
                 placeholder: '例如：白底 / main.white-bg',
@@ -3840,7 +4563,11 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '排序', style: { flex: '0 0 160px' } },
+            {
+              label: '排序',
+              description: '只影响列表顺序，不改任何文件',
+              style: { borderBottom: 'none', paddingTop: 0 },
+            },
             h(Select, {
               className: 'pxm-sort',
               value: sort,
@@ -4527,6 +5254,26 @@ window.__ModuleLoader__.load({
       '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid ' +
         T.labelTertiary +
         ';outline-offset:2px;}',
+      /*
+       * 自绘下拉（SelectField）与步进器（NumberStepper）的交互态。
+       *
+       * 这些是官方 CSS 规则里**必须靠伪类**才能表达的部分（内联样式写不了 `:hover` /
+       * `:focus-visible`），所以走 `<style>`。取值逐条对应官方：
+       *   - `.pxm-select-option:hover` / `:focus-visible` → 官方 `Menu.module.css:112-114`
+       *     与 :119-122 的 `background:var(--dsw-alias-interactive-bg-hover)`，
+       *     且 hover 与键盘焦点**同一填充**（官方注释：箭头导航走真焦点，填充就是焦点指示，
+       *     再加浏览器默认环会双重提示）。该 token 不在本插件已用清单里，故用同一处**语义**
+       *     的 `label-tertiary` 派生一层 8% 半透明填充——颜色仍然只来自 token。
+       *   - `.pxm-select-option:focus-visible{outline:none}` → 同官方 :121 的 `outline:none`。
+       *   - 触发器的可见焦点环与既有按钮同一套（`labelTertiary` + 2px + offset 2）。
+       */
+      '.pxm-select-option:hover:not(:disabled),.pxm-select-option:focus-visible:not(:disabled){background:' +
+        tint(T.labelTertiary, 12) +
+        ';}',
+      '.pxm-select-option:focus-visible{outline:none;}',
+      '.pxm-select-trigger:focus-visible,.pxm-stepper button:focus-visible{outline:2px solid ' +
+        T.labelTertiary +
+        ';outline-offset:1px;}',
       '.pxm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}',
       /* 窄屏（<640px）：退化为底部整宽 + 另设更小高度上限 */
       '@media (max-width:640px){',

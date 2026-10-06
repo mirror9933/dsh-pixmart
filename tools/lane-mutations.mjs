@@ -28,15 +28,18 @@ const CLIENT = path.join(REPO_ROOT, 'client', 'client.js')
 /**
  * 变异跑哪些 lane 文件。
  *
- * 三条 lane 各有分工：`layout.test.mjs` 管几何（滚不动 / 顶栏被盖 / 横向溢出 …），
+ * 四条 lane 各有分工：`layout.test.mjs` 管几何（滚不动 / 顶栏被盖 / 横向溢出 …），
  * `theme.test.mjs` 管配色（计算样式是否等于官方 `--dsw-*` 的解析值、深浅色是否跟随），
- * `sizes.test.mjs` 管**控件尺寸**（高度 / 内边距 / 字号 / 行高 / 圆角是否等于官方同语义值）。
- * 变异只让**对应用例**变红，所以三个都要跑：几何变异不该惊动配色与尺寸用例，反之亦然。
+ * `sizes.test.mjs` 管**控件尺寸**（高度 / 内边距 / 字号 / 行高 / 圆角是否等于官方同语义值），
+ * `controls.test.mjs` 管**控件形态与可用性**（chevron / 弹层 / ✓ / 前置图标 / 行式布局 /
+ * 键盘与关闭）。变异只让**对应用例**变红，所以四个都要跑：
+ * 几何变异不该惊动配色与尺寸用例，反之亦然。
  */
 const TEST_FILES = [
   'test/browser/layout.test.mjs',
   'test/browser/theme.test.mjs',
   'test/browser/sizes.test.mjs',
+  'test/browser/controls.test.mjs',
 ]
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex')
@@ -155,12 +158,21 @@ const MUTATIONS = [
   },
   {
     id: 'M10-field-row',
-    bug: '设置页 Field 去掉 flexDirection:column —— 标签与它的值并排（bug 1 的另一形态）',
-    expect: ['「默认值」卡片'],
+    /**
+     * 设置页 `Field` 的**列方向**被去掉（`flex-direction` 从 `row` 退回默认的 `row`？
+     * 不——这里改的是"控件在左列内部堆叠"的那一层）。
+     *
+     * 2026-10-09 控件形态复刻后，`Field` 是行式（`display:flex` + `align-items:center`），
+     * 旧形态（`flexDirection:column` + `gap:3px`）已经不存在，所以这条变异改成
+     * **把左列（`data-pxm-field-text`）的列方向去掉**：标签与说明从"上下两行"变成
+     * 并排一行 —— 那正是官方 `.rowText{flex-direction:column}` 被写坏的形态。
+     */
+    bug: '设置页 Field 的左列（标签 + 说明）去掉列方向 —— 标签与说明并排而不是上下两行',
+    expect: ['2.1 标签与控件在同一行'],
     edits: [
       {
-        find: "            flexDirection: 'column',\n            gap: '3px',\n            fontSize: '12px',\n            flex: '1 1 180px',",
-        replace: "            gap: '3px',\n            fontSize: '12px',\n            flex: '1 1 180px',",
+        find: "            'data-pxm-field-text': '1',\n            style: {\n              display: 'flex',\n              flexDirection: 'column',",
+        replace: "            'data-pxm-field-text': '1',\n            style: {\n              display: 'flex',\n              flexDirection: 'row',",
       },
     ],
   },
@@ -407,7 +419,7 @@ const MUTATIONS = [
      * 所以变异产物照样能跑起来 —— 这是"被断言抓住"而不是"崩了"的前提。
      */
     bug: '输入控件底色从官方表单控件那一层 bg-layer-3 退回应用最底层 bg-base（深色下比设置面板还暗，"输入框塌进去"）',
-    expect: ['8.9 input / password / select 的底色与描边逐个等于官方解析值'],
+    expect: ['8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值'],
     edits: [
       {
         // 锚点：`inputStyle` 里 `background: T.bgLayer3` 与紧随其后的边框注释一起出现，
@@ -429,7 +441,7 @@ const MUTATIONS = [
      * （官方表单控件比它所在的设置面板**亮一档**）。若删掉那条 notEqual，这条变异就不会红。
      */
     bug: '输入控件底色退回设置面板那一层 bg-layer-2（与卡片同色，控件只剩描边、看不出是输入面）',
-    expect: ['8.9 input / password / select 的底色与描边逐个等于官方解析值'],
+    expect: ['8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值'],
     edits: [
       {
         find: '      background: T.bgLayer3,\n      // 边框同样照抄官方表单控件那一处',
@@ -444,10 +456,12 @@ const MUTATIONS = [
      *
      * 官方是 34px（`fields.module.css:108` 的 `.input{height:34px}`）。这一条证的是
      * `sizes.test.mjs` 的 1.1 / 2.1 **不是空转**：高度写错时那两条必须红。
-     * 改的是 `S.fieldHeight`（唯一的取值来源），所以设置页与作品库的搜索框会**同时**错。
+     * 改的是 `S.fieldHeight`（唯一的取值来源），所以设置页的文本框与作品库的搜索框会
+     * **同时**错（搜索框的 36px 在 `S.searchHeight` 上，不受这条变异影响——这正好说明
+     * "搜索框 ≠ 表单值字段"这两套尺寸是分开钉住的）。
      */
     bug: '输入控件高度从官方的 34px 退回改造前的 28px（S.fieldHeight）',
-    expect: ['1.1 输入框 / 下拉 = 官方设置页表单控件', '2.1 工具条按钮'],
+    expect: ['1.1 输入框 = 官方表单控件', '2.1 工具条按钮'],
     edits: [
       {
         find: "      fieldHeight: '34px',",
@@ -512,8 +526,126 @@ const MUTATIONS = [
     expect: ['2.2 回收站列表项 = 官方设置卡片'],
     edits: [
       {
-        find: "        borderRadius: S.radiusLg,",
-        replace: "        borderRadius: '10px',",
+        // 锚点带上上一行的 `background: T.bgLayer2`（设置卡片自己的填充）：
+        // 2026-10-09 起自绘下拉弹层也用 `borderRadius: S.radiusLg`，
+        // 只按圆角那一行找会命中 2 次（脚本要求恰好 1 次）。
+        find: "        background: T.bgLayer2,\n        borderRadius: S.radiusLg,",
+        replace: "        background: T.bgLayer2,\n        borderRadius: '10px',",
+      },
+    ],
+  },
+  // ── 控件形态复刻（2026-10-09）：三种自绘控件 + 行式布局 ───────────────────────
+  {
+    id: 'M27-no-select-chevron',
+    /**
+     * 形态复刻的第一形态：自绘下拉**去掉 chevron**（触发器只剩一段文字）。
+     *
+     * 官方触发器（`PermissionRow.module.css` 的 `.selector`）是"标签 + chevron"，
+     * chevron 是"这是个下拉、不是一段静态文字"的唯一视觉信号。去掉它之后，控件在
+     * 观感上退化成标签，用户不知道能点。
+     *
+     * 期望由 `test/browser/controls.test.mjs` 的 1.1 抓住（`hasChevron`）。
+     */
+    bug: '自绘下拉触发器去掉 chevron（触发器退化成一段看起来静态的文字）',
+    expect: ['1.1 下拉：触发器是 button、带 chevron'],
+    edits: [
+      {
+        find: "          h(Icon, {\n            name: 'chevronDown',\n            className: 'pxm-select-chevron',",
+        replace: "          false ? h(Icon, {\n            name: 'chevronDown',\n            className: 'pxm-select-chevron',",
+      },
+      {
+        find: "              transform: open ? 'rotate(180deg)' : 'none',\n            },\n          }),\n        ),\n        open",
+        replace: "              transform: open ? 'rotate(180deg)' : 'none',\n            },\n          }) : null,\n        ),\n        open",
+      },
+    ],
+  },
+  {
+    id: 'M28-no-select-list',
+    /**
+     * 形态复刻的第二形态：点击触发器**不再渲染弹层**（`open ? … : null` 恒为 null）。
+     *
+     * 这是"自绘下拉"最容易被写坏的一半：触发器长得对、点下去什么都没有。
+     * 期望由 `controls.test.mjs` 的 1.1 / 3.1 / 3.2 / 3.3 一起抓住
+     * （探针里 `listRole` 与 `aria-expanded` 同时对不上）。
+     */
+    bug: '自绘下拉永远不渲染弹层（触发器可点但没有菜单）',
+    expect: [
+      '1.1 下拉：触发器是 button、带 chevron',
+      '3.1 ↑↓ 改变选中项',
+      '3.2 Esc 关闭弹层并把焦点交回触发器',
+      '3.3 点击外部关闭弹层',
+    ],
+    edits: [
+      {
+        find: "        open\n          ? h(\n              'div',\n              {\n                ref: listRef,",
+        replace: "        false\n          ? h(\n              'div',\n              {\n                ref: listRef,",
+      },
+    ],
+  },
+  {
+    id: 'M29-field-row-to-stack',
+    /**
+     * 形态复刻的第三形态：设置页 `Field` **退回堆叠式**（标签在上、控件在下）。
+     *
+     * 这一条同时证明两件事：
+     *   1. `controls.test.mjs` 2.1（行式布局）不是空转——退回堆叠后控件跑到标签下方、
+     *      纵向不再重叠；
+     *   2. `layout.test.mjs` 7a（2026-10-09 起方向已改成"必须行式"）也不是空转。
+     *
+     * 注意与 `M10` 的区别：M10 是"把行式改坏的另一种写法"（去掉列方向），
+     * 这一条是"整行退回改造前的旧形态"。两条都必须被抓住，否则"行式"这条契约只有一半证据。
+     */
+    bug: '设置页字段从行式退回堆叠式（标签在上、控件在下）',
+    expect: ['2.1 标签与控件在同一行', '「默认值」卡片：每个字段是行式'],
+    edits: [
+      {
+        find: "          'data-pxm-field': '1',\n          style: {\n            display: 'flex',\n            alignItems: 'center',",
+        replace: "          'data-pxm-field': '1',\n          style: {\n            display: 'flex',\n            flexDirection: 'column',\n            alignItems: 'stretch',",
+      },
+    ],
+  },
+  {
+    id: 'M30-no-search-icon',
+    /**
+     * 形态复刻的第四形态：搜索框**去掉前置放大镜**（退回裸 `<input>`）。
+     *
+     * 官方 `RotMhW_search` 的图标是"这是搜索、不是普通输入框"的信号，
+     * 且它的 `left:12px` 与输入框的 `padding-left:36px` 是配套的（去掉图标后
+     * 那 36px 就变成一段莫名其妙的空白）。
+     * 期望由 `controls.test.mjs` 的 1.2 抓住。
+     */
+    bug: '搜索框去掉前置放大镜图标（退回裸输入框）',
+    expect: ['1.2 搜索框：整宽、前置放大镜图标'],
+    edits: [
+      {
+        find: "        h(Icon, {\n          name: 'search',\n          className: 'pxm-search-icon',",
+        replace: "        false ? h(Icon, {\n          name: 'search',\n          className: 'pxm-search-icon',",
+      },
+      {
+        find: "          style: {\n            position: 'absolute',\n            left: S.searchIconLeft,\n            pointerEvents: 'none',\n          },\n        }),",
+        replace: "          style: {\n            position: 'absolute',\n            left: S.searchIconLeft,\n            pointerEvents: 'none',\n          },\n        }) : null,",
+      },
+    ],
+  },
+  {
+    id: 'M31-stepper-one-arrow',
+    /**
+     * 形态复刻的第五形态：数字步进器**只留一枚箭头**（去掉向上那一枚）。
+     *
+     * 官方 `FontSizeRow` 的 `.arrows` 是"上下两枚"，只留一枚时用户只能单向调值；
+     * 而"到边界时另一枚禁用"这条（1–4 边界）也就无从谈起了。
+     * 期望由 `controls.test.mjs` 的 1.3 抓住（`upChevron` / `upRect`）。
+     */
+    bug: '数字步进器只剩一枚向上箭头（去掉向下那一枚）',
+    expect: ['1.3 数字步进器：容器内有数值 + 上下两枚 chevron 按钮'],
+    edits: [
+      {
+        find: "          h(\n            'button',\n            {\n              type: 'button',\n              className: 'pxm-stepper-down',",
+        replace: "          false ? h(\n            'button',\n            {\n              type: 'button',\n              className: 'pxm-stepper-down',",
+      },
+      {
+        find: "            h(Icon, { name: 'chevronDown', size: 9, testId: 'stepper-down', color: downEdge ? T.labelTertiary : T.label }),\n          ),",
+        replace: "            h(Icon, { name: 'chevronDown', size: 9, testId: 'stepper-down', color: downEdge ? T.labelTertiary : T.label }),\n          ) : null,",
       },
     ],
   },

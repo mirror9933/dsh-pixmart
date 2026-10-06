@@ -171,6 +171,24 @@ async function createLane(options = {}) {
       return lane.inputs().find((node) => node.getAttribute('placeholder') === placeholder) ?? null
     },
     selects: () => [...container.querySelectorAll('select')],
+    /**
+     * 设置页的自绘下拉触发器（`SelectField`）。
+     *
+     * 2026-10-09 控件形态复刻：设置页不再有原生 `<select>`（官方 client 侧也没有），
+     * 下拉 = `<button class="pxm-select-trigger">` + `role="menu"` 弹层。定位锚点是
+     * `data-pxm-role="select"`（语义角色），不是类名。
+     */
+    selectTriggers: () => [...container.querySelectorAll('[data-pxm-role="select"]')],
+    selectTriggerByLabel(label) {
+      const field = [...container.querySelectorAll('[data-pxm-field]')].find((node) =>
+        (node.querySelector('[data-pxm-field-label]')?.textContent ?? '').includes(label),
+      )
+      return field?.querySelector('[data-pxm-role="select"]') ?? null
+    },
+    /** 弹层（只在展开时存在）。 */
+    selectList: () => container.querySelector('[data-pxm-select-list]'),
+    /** 触发器上显示的当前值文本。 */
+    selectValue: (trigger) => (trigger?.querySelector('span')?.textContent ?? '').trim(),
     postCalls: () => fetches.filter((call) => call.method === 'POST'),
 
     async render() {
@@ -223,6 +241,38 @@ async function createLane(options = {}) {
         element.dispatchEvent(new win.Event('change', { bubbles: true }))
       })
       await settle()
+    },
+
+    /**
+     * 走**自绘下拉**选一项：点触发器展开（断言弹层真的出现）→ 点目标 `menuitem`。
+     *
+     * 这条路径同时覆盖了原生 `<select>` 换掉之后必须仍然成立的可用性：
+     * 触发器是 `<button>`（Tab 可达、Enter/Space 原生激活）、弹层是 `role="menu"`、
+     * 选项是 `role="menuitem"`。键盘路径另见 `test/browser/controls.test.mjs`。
+     */
+    async pick(trigger, optionValue) {
+      assert.ok(trigger, '要操作的下拉触发器必须存在')
+      await act(async () => {
+        trigger.click()
+      })
+      await settle()
+      const list = lane.selectList()
+      assert.ok(list, '点开下拉后必须出现 role="menu" 弹层')
+      const option = list.querySelector('[data-pxm-option="' + String(optionValue) + '"]')
+      assert.ok(option, `弹层里必须有一项 value="${String(optionValue)}"`)
+      await act(async () => {
+        option.click()
+      })
+      await settle()
+      await settle()
+    },
+
+    /**
+     * 按 `--dsw-*` token 的**解析值**比色：证明某个元素的描边/底色真的挂在 token 上，
+     * 而不是"源码里写了 var(...)、浏览器没解析到"。
+     */
+    resolvedToken(token) {
+      return win.getComputedStyle(win.document.documentElement).getPropertyValue(token).trim()
     },
 
     async dispose() {
@@ -404,7 +454,7 @@ describe('jsdom lane：设置页可写', () => {
     assert.ok(lane.button('保存'), '请求结束后按钮应恢复')
   })
 
-  it('默认值卡片：三个字段是可选的 select，模型选项来自当前厂商', async () => {
+  it('默认值卡片：三个字段是自绘下拉，模型选项来自当前厂商', async () => {
     const lane = await createLane({
       respond: () =>
         jsonResponse(
@@ -416,12 +466,35 @@ describe('jsdom lane：设置页可写', () => {
     })
     await lane.render()
 
-    const selects = lane.selects()
-    assert.ok(selects.length >= 3, `应有至少 3 个 select（厂商/模型/尺寸），实际 ${selects.length}`)
-    const options = selects.flatMap((node) => [...node.options].map((option) => option.value))
-    assert.ok(options.includes('ofox'), '厂商 select 应含当前厂商')
-    assert.ok(options.includes('m-1') && options.includes('m-2'), '模型 select 应含该厂商的模型')
-    assert.ok(options.includes('3:4'), '尺寸 select 应含厂商允许的尺寸')
+    /*
+     * 2026-10-09 起设置页下拉是**自绘**的（官方 client 侧没有原生 `<select>`）：
+     * 断言随之从"读 `<option>` 的 value"改成"展开弹层读 `data-pxm-option`"——
+     * 强度没有降低（仍然逐个证明该厂商/该尺寸真的在选项里），只是换了定位方式。
+     */
+    const triggers = lane.selectTriggers()
+    assert.ok(triggers.length >= 3, `应有至少 3 个自绘下拉（厂商/模型/尺寸），实际 ${triggers.length}`)
+    const settleOnce = () => new Promise((resolve) => setImmediate(resolve))
+    const values = []
+    for (const trigger of triggers) {
+      await act(async () => {
+        trigger.click()
+      })
+      await settleOnce()
+      const list = lane.selectList()
+      assert.ok(list, '展开后必须有弹层')
+      values.push(
+        ...[...list.querySelectorAll('[data-pxm-option]')].map((node) =>
+          node.getAttribute('data-pxm-option'),
+        ),
+      )
+      await act(async () => {
+        trigger.click()
+      })
+      await settleOnce()
+    }
+    assert.ok(values.includes('ofox'), '厂商下拉应含当前厂商')
+    assert.ok(values.includes('m-1') && values.includes('m-2'), '模型下拉应含该厂商的模型')
+    assert.ok(values.includes('3:4'), '尺寸下拉应含厂商允许的尺寸')
     // 默认模型在列表里时不得出现警告
     assert.equal(
       lane.text().includes('不在当前厂商的模型列表里'),
@@ -470,10 +543,11 @@ describe('jsdom lane：设置页可写', () => {
     })
     await lane.render()
 
-    // select 的顺序：厂商 / 模型 / 尺寸
-    const selects = lane.selects()
-    await lane.select(selects[1], 'm-1')
-    await lane.select(selects[2], '3:4')
+    // 下拉的顺序：厂商 / 模型 / 尺寸
+    const triggers = lane.selectTriggers()
+    assert.ok(triggers.length >= 3, `应有至少 3 个自绘下拉，实际 ${triggers.length}`)
+    await lane.pick(triggers[1], 'm-1')
+    await lane.pick(triggers[2], '3:4')
     await lane.click('保存默认值')
 
     const posts = lane.postCalls()
@@ -536,7 +610,13 @@ function buttonContaining(lane, text) {
 }
 
 /**
- * 「作品库导出路径」卡片本身（最内层那个 flex-column 且含该标题的容器）。
+ * 「作品库导出路径」卡片本身（含该标题、且是 flex-column 的最内层容器）。
+ *
+ * 2026-10-09 控件形态复刻后，卡片内部的字段改成**行式** `Field`（左列标签/说明 +
+ * 右列控件），标题文字不再直接住在卡片容器里，所以这里**不能**再靠
+ * `textContent.includes(...)` 收集候选（那样会连外层 `.pxm-settings` 一起收进来，
+ * 末尾那个候选不再是卡片）。改成按卡片自身的样式特征定位：`flex-direction:column`
+ * + `padding:12px 14px`（官方 `_3nPmjq_rowCard` 那一档，见 client.js `skin.card`）。
  * 卡片里也有一个文案为「保存」的按钮，与厂商卡片的重名，所以断言必须限定在卡内。
  */
 function exportDirCard(lane) {
@@ -544,7 +624,8 @@ function exportDirCard(lane) {
     (node) =>
       (node.textContent ?? '').includes('作品库导出路径') &&
       node.style.display === 'flex' &&
-      node.style.flexDirection === 'column',
+      node.style.flexDirection === 'column' &&
+      node.style.padding === '12px 14px',
   )
   const card = candidates[candidates.length - 1] ?? null
   assert.ok(card, '必须渲染出「作品库导出路径」卡片')

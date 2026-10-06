@@ -1005,7 +1005,7 @@ if (launched.browser === null) {
    * |---|---|---|
    * | 设置页文本字段 | `settings-form/fields.module.css` 的 `.input` → `bg-layer-3` + `border-l4` | `inputStyle`（`TextInput`）← **本用例钉住** |
    * | 设置页密钥字段 | `SettingsSecretField` 用的是**同一个** `css$25.input`（`type="password"`） | 同上（`TextInput` + `type:'password'`） |
-   * | 下拉 | 官方 client 侧**没有** `<select>`；语义上同为"表单控件"，对齐最接近的 `.input` | `Select`（复用 `inputStyle`） |
+   * | 下拉 | 官方 client 侧**没有** `<select>`；它的下拉是「自绘触发器 + 弹层」（`PermissionRow.module.css` 的 `.selector`：`bg-module-platform` + **无描边**） | `SelectField` 的触发器（取同族的 `bg-layer-3`；**无描边**，与官方一致） |
    * | 大段文本 | 官方 client 侧**没有** `<textarea>`；同上 | 提示词降级文本域 `.pxm-copy-fallback` |
    * | 原子 `<Input>`（**不是**表单字段） | 外层 `.wrap` 是 `bg-layer-1` + `border-l4`（README：它"没有设计源"） | 不适用（我们画的是表单控件，不是这枚原子） |
    *
@@ -1020,10 +1020,10 @@ if (launched.browser === null) {
    * （发丝分隔线）不同色，所以两套主题都断言"== border-l4 且 != border-l1"。
    */
   describe('8.9 输入控件：底色 == 官方表单控件那一层（bg-layer-3）而不是应用底色，描边 == border-l4', () => {
-    it('8.9 input / password / select 的底色与描边逐个等于官方解析值；提示词 textarea 同', async () => {
+    it('8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值；提示词 textarea 同', async () => {
       const { page, context, problems } = await openThemedLane({ mountSlot: 'settings.section' })
       try {
-        await page.waitForSelector('.pxm-settings select', { timeout: 15000 })
+        await page.waitForSelector('.pxm-settings [data-pxm-role="select"]', { timeout: 15000 })
 
         /**
          * 三类控件的选择器 + 它们在源码里挂的那个**内联样式键**。
@@ -1046,9 +1046,12 @@ if (launched.browser === null) {
           },
           {
             key: 'select',
-            selector: '.pxm-settings select',
-            bgKey: 'inputStyle.background',
-            borderKey: 'inputStyle.border',
+            // 2026-10-09：设置页下拉换成**自绘触发器**（官方 client 侧本来也没有
+            // `<select>`）。底色判据不变（仍必须是 `bg-layer-3` 那一层），
+            // 但**不声明 `borderKey`**：官方触发器是 `.selector{border:none}`，
+            // 它没有描边，拿 `border-l4` 去量是比错模板。
+            selector: '.pxm-settings [data-pxm-role="select"]',
+            bgKey: 'selectTrigger.background',
           },
           {
             key: 'textarea.prompt',
@@ -1195,6 +1198,12 @@ if (launched.browser === null) {
             }
 
             // 描边：浅深都可判（border-l4 与 border-l1 两套主题都不同色）。
+            //
+            // 2026-10-09 起这一半**只判有描边的控件**：官方的下拉触发器是
+            // `.selector{border:none}`（`PermissionRow.module.css`），它本来就没有描边，
+            // 硬套 `border-l4` 会把"官方确实没有描边"误判成缺陷。声明 `borderKey` 的控件
+            // 才走这条断言——判据强度不变，只是不再拿错模板去量。
+            if (control.borderKey === undefined) continue
             assert.equal(
               got.border,
               reading.official.borderL4,

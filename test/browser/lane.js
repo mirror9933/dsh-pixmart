@@ -296,21 +296,187 @@
     return node
   }
 
-  /** 「默认值」卡片里每个字段：标签与它的控件各自的矩形。 */
+  /** 「默认值」卡片里每个字段：左列（标签/说明）与右列（控件）各自的矩形。 */
   function defaultsFields() {
     var card = findDefaultsCard()
     if (card === null || card === document.body) return null
-    return Array.prototype.map.call(card.querySelectorAll('label'), function (label) {
-      var labelSpan = label.children[0]
-      var control = label.children[1]
+    return Array.prototype.map.call(card.querySelectorAll('[data-pxm-field]'), function (field) {
+      var label = field.querySelector('[data-pxm-field-label]')
+      var desc = field.querySelector('[data-pxm-field-desc]')
+      var control = field.querySelector('[data-pxm-field-control]')
       return {
-        label: (labelSpan && labelSpan.textContent ? labelSpan.textContent : '').trim(),
-        labelRect: labelSpan ? rectOf(labelSpan) : null,
+        label: (label && label.textContent ? label.textContent : '').trim(),
+        labelRect: label ? rectOf(label) : null,
+        descRect: desc ? rectOf(desc) : null,
+        hasDesc: desc !== null,
         controlRect: control ? rectOf(control) : null,
-        fieldRect: rectOf(label),
-        controlTag: control ? control.tagName : null,
+        fieldRect: rectOf(field),
+        controlTag: control && control.firstElementChild ? control.firstElementChild.tagName : null,
       }
     })
+  }
+
+  /**
+   * 单个字段（按标签文本找）：左列标签、说明、右列控件的矩形。
+   *
+   * 与 `defaultsFields` 同一套 DOM 契约（`data-pxm-field*`），但可以按标签点名，
+   * 供"某个具体字段是不是行式"这类断言使用。
+   */
+  function fieldRow(labelText) {
+    var fields = Array.prototype.slice.call(document.querySelectorAll('[data-pxm-field]'))
+    var field = fields.filter(function (node) {
+      var label = node.querySelector('[data-pxm-field-label]')
+      return label !== null && (label.textContent || '').indexOf(labelText) >= 0
+    })[0]
+    if (!field) return null
+    var label = field.querySelector('[data-pxm-field-label]')
+    var desc = field.querySelector('[data-pxm-field-desc]')
+    var control = field.querySelector('[data-pxm-field-control]')
+    return {
+      fieldRect: rectOf(field),
+      labelRect: label ? rectOf(label) : null,
+      descRect: desc ? rectOf(desc) : null,
+      controlRect: control ? rectOf(control) : null,
+      hasDesc: desc !== null,
+    }
+  }
+
+  /**
+   * 自绘下拉（`SelectField`）：触发器 / chevron / 弹层 / 选项 / ✓ 的事实。
+   *
+   * 只在展开时才返回 `list`；`checks` 是"哪几个选项带 ✓"（带 `data-pxm-icon="check"`）。
+   * 仍然只有事实，判断留在用例里。
+   */
+  function selectFacts(labelText) {
+    var fields = Array.prototype.slice.call(document.querySelectorAll('[data-pxm-field]'))
+    var field = labelText
+      ? fields.filter(function (node) {
+          var label = node.querySelector('[data-pxm-field-label]')
+          return label !== null && (label.textContent || '').indexOf(labelText) >= 0
+        })[0]
+      : fields[0]
+    if (!field) return null
+    var trigger = field.querySelector('[data-pxm-role="select"]')
+    if (!trigger) return null
+    var list = field.querySelector('[data-pxm-select-list]')
+    var options = list
+      ? Array.prototype.map.call(list.querySelectorAll('[data-pxm-option]'), function (node) {
+          return {
+            value: node.getAttribute('data-pxm-option'),
+            checked: node.getAttribute('aria-checked'),
+            hasCheck: node.querySelector('[data-pxm-icon="check"]') !== null,
+            rect: rectOf(node),
+          }
+        })
+      : []
+    return {
+      triggerRect: rectOf(trigger),
+      triggerTag: trigger.tagName,
+      expanded: trigger.getAttribute('aria-expanded'),
+      hasPopup: trigger.getAttribute('aria-haspopup'),
+      text: (trigger.textContent || '').trim(),
+      hasChevron: trigger.querySelector('[data-pxm-icon="chevron"]') !== null,
+      listRole: list === null ? null : list.getAttribute('role'),
+      listRect: list === null ? null : rectOf(list),
+      options: options,
+      activeTag: document.activeElement === null ? null : document.activeElement.tagName,
+      activeOption: document.activeElement === null ? null : document.activeElement.getAttribute('data-pxm-option'),
+    }
+  }
+
+  /**
+   * 数字步进器（`NumberStepper`）：值 / 单位 / 两枚 chevron 按钮的尺寸与禁用态。
+   */
+  function stepperFacts(labelText) {
+    var fields = Array.prototype.slice.call(document.querySelectorAll('[data-pxm-field]'))
+    var field = labelText
+      ? fields.filter(function (node) {
+          var label = node.querySelector('[data-pxm-field-label]')
+          return label !== null && (label.textContent || '').indexOf(labelText) >= 0
+        })[0]
+      : fields[0]
+    if (!field) return null
+    var stepper = field.querySelector('[data-pxm-role="stepper"]')
+    if (!stepper) return null
+    var value = stepper.querySelector('[data-pxm-stepper-value]')
+    var unit = stepper.querySelector('[data-pxm-stepper-unit]')
+    var up = stepper.querySelector('[data-pxm-stepper-up]')
+    var down = stepper.querySelector('[data-pxm-stepper-down]')
+    return {
+      stepperRect: rectOf(stepper),
+      value: value === null ? null : (value.textContent || '').trim(),
+      valueRect: value === null ? null : rectOf(value),
+      unit: unit === null ? null : (unit.textContent || '').trim(),
+      upRect: up === null ? null : rectOf(up),
+      downRect: down === null ? null : rectOf(down),
+      upDisabled: up === null ? null : up.disabled,
+      downDisabled: down === null ? null : down.disabled,
+      upChevron: up !== null && up.querySelector('[data-pxm-icon="stepper-up"]') !== null,
+      downChevron: down !== null && down.querySelector('[data-pxm-icon="stepper-down"]') !== null,
+    }
+  }
+
+  /**
+   * 搜索框（`SearchInput`）：整宽 + 前置图标的事实。
+   *
+   * 前置图标是搜索框**内部**的 `[data-pxm-icon="search"]`（`position:absolute; left:12px`），
+   * 只认搜索框里的那一枚，不认别处可能出现的同名图标。
+   */
+  function searchFacts(selector) {
+    var box = document.querySelector(selector || '.pxm-search-box')
+    if (box === null) return null
+    var input = box.querySelector('input')
+    var icon = box.querySelector('[data-pxm-icon="search"]')
+    return {
+      boxRect: rectOf(box),
+      inputRect: input === null ? null : rectOf(input),
+      iconRect: icon === null ? null : rectOf(icon),
+      iconPointerEvents: icon === null ? null : window.getComputedStyle(icon).pointerEvents,
+      placeholder: input === null ? null : input.getAttribute('placeholder'),
+      tag: input === null ? null : input.tagName,
+    }
+  }
+
+  /**
+   * 键盘事件辅助：在某个元素上按下某个键（用例自己决定按下之后看什么）。
+   *
+   * 与 `page.keyboard.press` 的关键差别：这里补上 `keyCode` / `which`。
+   * 真实按键在 Chromium 里带这两个属性，而 `document.dispatchEvent(new KeyboardEvent(...))`
+   * 造出来的事件默认是 0；React 对 `keydown` 的按键归一化会读 `keyCode`，
+   * 只派发一个"没有 keyCode"的合成事件与真实键盘并不等价。
+   * 返回 `defaultPrevented`：用例靠它判断"这个键有没有被页面接管"。
+   */
+  function pressKey(selector, key, options) {
+    var target = document.querySelector(selector)
+    if (target === null) return null
+    var opts = options || {}
+    var KEY_CODES = { ArrowDown: 40, ArrowUp: 38, Enter: 13, Escape: 27, ' ': 32, Home: 36, End: 35 }
+    var event = new KeyboardEvent('keydown', {
+      key: key,
+      bubbles: true,
+      cancelable: true,
+      shiftKey: opts.shiftKey === true,
+    })
+    if (Object.prototype.hasOwnProperty.call(KEY_CODES, key)) {
+      try {
+        Object.defineProperty(event, 'keyCode', { get: function () { return KEY_CODES[key] } })
+        Object.defineProperty(event, 'which', { get: function () { return KEY_CODES[key] } })
+      } catch (err) {
+        /* 只读属性挡住的浏览器上退化成"只有 key"——用例仍会通过 key 分支工作 */
+      }
+    }
+    target.dispatchEvent(event)
+    return event.defaultPrevented
+  }
+
+  /** 在某个坐标点派发一次真实的 `pointerdown`（用于"点击外部关闭"）。 */
+  function pointerDownAt(x, y) {
+    var target = document.elementFromPoint(x, y)
+    if (target === null) return null
+    target.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y }),
+    )
+    return { tag: target.tagName, className: String(target.className || '') }
   }
 
   /** 「标签 + 值」成组的那一对（累计用量卡片里的数据目录）。 */
@@ -464,8 +630,15 @@
     push('pageTitle', root.querySelector('h2'))
     push('textInput', root.querySelector('input[type="text"]'))
     push('passwordInput', root.querySelector('input[type="password"]'))
-    push('select', root.querySelector('select'))
-    push('button', root.querySelector('button'))
+    /*
+     * 下拉：2026-10-09 控件形态复刻后设置页是**自绘**触发器（`<button>` + 弹层），
+     * 不再是原生 `<select>`（官方 client 侧本来也没有）。仍然按**语义角色**找：
+     * `data-pxm-role="select"` 是触发器自己声明的角色，不是样式类名。
+     */
+    push('select', root.querySelector('[data-pxm-role="select"]'))
+    // 行内动作按钮：**必须**避开上面那枚自绘下拉触发器与步进器的两枚 chevron
+    // （它们也是 `<button>`，形状完全不同）。`.pxm-btn` 是本插件按钮自己的类。
+    push('button', root.querySelector('button.pxm-btn'))
     // 胶囊标签：**必须在 `.pxm-settings` 里面找**。`.pxm-pill` 在页面里可能有多处
     // （例如折叠态的实时预览徽标里就嵌了一枚），文档级查询会绑到那一枚上。
     push('tag', root.querySelector('.pxm-pill'))
@@ -556,6 +729,16 @@
       var value = el.style[name]
       if (value !== undefined && value !== '') declared[name] = value
     })
+    /*
+     * 描边的**显式声明**单独取一次：`el.style.borderTopWidth` 在"从未写过任何边框"时
+     * Chromium 会回 `medium`（UA 初始值），与"显式声明成 medium"在 `declared` 里
+     * 长得一样，分不出"没描边"与"描边宽度是 medium"。这里按 CSS 声明的原始事实取：
+     * `border` 简写为空 且 `borderTopWidth` 为空或 `medium` ⇒ 这一处没有声明描边。
+     */
+    var declaredBorder = {
+      shorthand: el.style.getPropertyValue('border'),
+      topWidth: el.style.getPropertyValue('border-top-width'),
+    }
     return {
       tag: el.tagName,
       className: typeof el.className === 'string' ? el.className : '',
@@ -573,6 +756,7 @@
       borderRadius: cs.borderRadius,
       borderTopWidth: cs.borderTopWidth,
       declared: declared,
+      declaredBorder: declaredBorder,
       rect: rectOf(el),
     }
   }
@@ -618,6 +802,13 @@
     imageProbe: imageProbe,
     defaultsFields: defaultsFields,
     groupedPair: groupedPair,
+    // 控件形态（2026-10-09 复刻）：行式字段 / 自绘下拉 / 数字步进器 / 搜索框 / 键盘
+    fieldRow: fieldRow,
+    selectFacts: selectFacts,
+    stepperFacts: stepperFacts,
+    searchFacts: searchFacts,
+    pressKey: pressKey,
+    pointerDownAt: pointerDownAt,
     panelScroll: panelScroll,
     viewer: viewer,
     // 主题 token：计算样式 / token 解析值 / 声明值 / 换一组 token / 官方表面色
