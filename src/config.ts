@@ -154,6 +154,10 @@ export function defaultAgnesProvider(): ProviderConfig {
       'agnes-3.0-flash',
     ],
     // 官方「Size and Ratio」表里 ratio 支持的全部取值（21:9 在档位表内有）。
+    // 注意：**校验用的清单不是这一份**——agnes 走 `sizes.ts` 的内置能力表
+    // （`AGNES_ALLOWED_SIZES`：这 8 个比例 + 32 个精确像素尺寸）。这里只保留比例，
+    // 是因为它同时喂给设置页的「默认尺寸」下拉框（40 项会把控件撑得很难用），
+    // 而比例是不挑厂商的通用写法。要改能力就改内置表，见 docs/contract-notes.md §27。
     allowedSizes: ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'],
     sizeMode: 'whitelist',
     extraHeaders: {},

@@ -16,7 +16,7 @@
  */
 import type { ApiMode, Dialect, ProviderConfig } from '../config.js'
 import type { AbortSignalLike } from '../host-types.js'
-import { pixelToRatio } from '../sizes.js'
+import { agnesSizeSpec } from '../sizes.js'
 
 export interface VendorReference {
   readonly data: Uint8Array
@@ -57,6 +57,15 @@ export interface VendorError {
      * 请求再花一次钱并再被拒一次（见 contract-notes §18 的实测事件）。
      */
     | 'insufficient_credits'
+    /**
+     * **模型在这条链路上不可用**（`model_not_found` / "无可用渠道" / "not available"）。
+     *
+     * 实测：agnes 的 `agnes-image-2.0-flash` 在**国内站**返回 HTTP 503 +
+     * `model_not_found`（"分组 default 下模型 … 无可用渠道"）。503 一般被当成
+     * 服务端瞬时故障（`server`，可重试），但这一条重试一万次也一样，而且会顺着
+     * 降级链把同一个请求再发几次。所以单独成码、**终态**返回。
+     */
+    | 'model_unavailable'
     | 'rate_limit'
     | 'server'
     | 'moderation'
@@ -274,64 +283,6 @@ function dialectFields(dialect: Dialect): DialectFields {
   return { references: 'image', format: 'response_format', formatValue: 'b64_json' }
 }
 
-/**
- * Agnes 的 32 个**官方精确尺寸**（8 比例 × 4 档位），用于把像素输入反解成档位。
- *
- * 出处：官方文档「Output Dimension Reference」（agnes-image-2.5-flash 页；
- * 2.1-flash 同表，2.5 明言"request 与 size 与 2.1 完全一致"）。
- * 有了它，用户/Agent 说 `2048x2048` 才能真的拿到 2K（此前一律回落 1K）。
- */
-const AGNES_SIZE_TABLE: readonly (readonly [string, string])[] = [
-  ['1024x1024', '1K'], ['2048x2048', '2K'], ['3072x3072', '3K'], ['4096x4096', '4K'],
-  ['864x1152', '1K'], ['1728x2304', '2K'], ['2592x3456', '3K'], ['3456x4608', '4K'],
-  ['1152x864', '1K'], ['2304x1728', '2K'], ['3456x2592', '3K'], ['4608x3456', '4K'],
-  ['1312x736', '1K'], ['2624x1472', '2K'], ['3936x2208', '3K'], ['5248x2944', '4K'],
-  ['736x1312', '1K'], ['1472x2624', '2K'], ['2208x3936', '3K'], ['2944x5248', '4K'],
-  ['832x1248', '1K'], ['1664x2496', '2K'], ['2496x3744', '3K'], ['3328x4992', '4K'],
-  ['1248x832', '1K'], ['2496x1664', '2K'], ['3744x2496', '3K'], ['4992x3328', '4K'],
-  ['1568x672', '1K'], ['3136x1344', '2K'], ['4704x2016', '3K'], ['6272x2688', '4K'],
-]
-
-function agnesSizeTier(size: string): string {
-  const tier = /^\s*([1-4])K\s*$/i.exec(size)
-  if (tier !== null) return `${tier[1]}K`
-
-  const trimmed = size.trim()
-  for (const entry of AGNES_SIZE_TABLE) {
-    if (entry[0] === trimmed) return entry[1]
-  }
-
-  // 表外像素：按**最长边**就近归档位。官方原文："If you request an unsupported exact
-  // size … the service may map it to the nearest supported tier and aspect ratio."
-  const pixel = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(trimmed)
-  if (pixel !== null) {
-    const longest = Math.max(Number(pixel[1]), Number(pixel[2]))
-    if (longest <= 1024) return '1K'
-    if (longest <= 2048) return '2K'
-    if (longest <= 3072) return '3K'
-    return '4K'
-  }
-
-  return '1K'
-}
-
-/** Agnes 支持的 8 种比例；不在表内时退回 `1:1`（官方文档：默认 `1:1`）。 */
-const AGNES_RATIOS: readonly string[] = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9']
-
-/** 把归一化后的尺寸（比例或像素）转成 Agnes 的 `ratio` 取值。 */
-function agnesRatio(size: string): string {
-  const trimmed = size.trim()
-  if (AGNES_RATIOS.includes(trimmed)) return trimmed
-
-  const pixel = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(trimmed)
-  if (pixel !== null) {
-    const ratio = pixelToRatio(`${pixel[1]}x${pixel[2]}`)
-    if (ratio !== undefined && AGNES_RATIOS.includes(ratio)) return ratio
-  }
-
-  return '1:1'
-}
-
 interface PreparedRequest {
   readonly url: string
   readonly headers: Record<string, string>
@@ -415,6 +366,8 @@ function buildRequest(
   //   1. `response_format` 必须嵌在 `extra_body` 内（官方明文：放顶层会报错）；
   //   2. 参考图必须在 `extra_body.image` 里（顶层 `image` 会不被采用）；
   //   3. 尺寸是「档位 + 比例」：`size: '1K'` + `ratio: '3:4'`，不是 `1024x768` 那种像素。
+  //      档位/比例的换算在 `agnesSizeSpec`（sizes.ts）里，与 `pixmart_check_size`
+  //      共用同一张官方表——否则校验说 2K、请求却发 1K。
   // 另外**不发 `n`**：官方请求参数表里没有它（发了可能被拒或影响请求形状），
   // 多张输出靠多次调用（与 `pixmart_generate` 的 n 语义一致）。
   // size 缺失由 `generateImages` 的前置检查挡下（返回结构化 config 错误），到这里必然有值。
@@ -422,8 +375,9 @@ function buildRequest(
     const body: Record<string, unknown> = { model, prompt }
     const extraBody: Record<string, unknown> = {}
     if (variant.includeSize && request.size !== undefined) {
-      body.size = agnesSizeTier(request.size)
-      body.ratio = agnesRatio(request.size)
+      const spec = agnesSizeSpec(request.size)
+      body.size = spec.tier
+      body.ratio = spec.ratio
     }
     if (references.length > 0) extraBody.image = references.map(toDataUri)
     if (variant.includeFormat) extraBody.response_format = fields.formatValue
@@ -539,6 +493,21 @@ function isInsufficientCredits(status: number, bodyText: string): boolean {
   return INSUFFICIENT_CREDITS_PATTERN.test(bodyText)
 }
 
+/**
+ * 服务端明确表示"这个模型走不通"的标记。
+ *
+ * agnes 国内站在模型未开通时返回的是 **503 + `model_not_found`**，正文是
+ * 「分组 default 下模型 agnes-image-2.0-flash 无可用渠道（distributor）」。
+ * 只看状态码会误判成瞬时故障，进而重试 + 降级重发（实测被拒两次）。
+ */
+const MODEL_UNAVAILABLE_PATTERN =
+  /model[_ ]?not[_ ]?found|no available (?:channel|model)|无可用渠道|模型不存在|model (?:is )?not available/i
+
+/** 该响应是否表示"模型在这条链路上不可用"。 */
+function isModelUnavailable(bodyText: string): boolean {
+  return MODEL_UNAVAILABLE_PATTERN.test(bodyText)
+}
+
 function insufficientCreditsError(status: number | undefined, bodyText: string): VendorError {
   const excerpt = bodyText.slice(0, 400)
   return {
@@ -557,6 +526,16 @@ function classify(status: number, bodyText: string): VendorError {
   // 先于泛化的 bad_request 判定：402 属于典型 bad_request 区间，一旦漏到这里就会被
   // 当成"参数写错"而去走降级链——那正是要修的行为问题。
   if (isInsufficientCredits(status, bodyText)) return insufficientCreditsError(status, bodyText)
+  // 503 也可能是"这个模型没渠道"这种**非瞬时**错误（agnes 国内站实测：HTTP 503 +
+  // `model_not_found`）。它必须先于 `status >= 500` 判定，否则会被重试并降级重发。
+  if (isModelUnavailable(bodyText)) {
+    return {
+      code: 'model_unavailable',
+      retryable: false,
+      status,
+      message: `模型在该厂商不可用（HTTP ${status}）：${excerpt}`,
+    }
+  }
   if (status === 401 || status === 403) {
     return { code: 'auth', retryable: false, status, message: `鉴权失败（HTTP ${status}）：${excerpt}` }
   }

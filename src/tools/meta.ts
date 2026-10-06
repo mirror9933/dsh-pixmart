@@ -18,6 +18,29 @@ function pickString(source: unknown, key: string): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
+/**
+ * 取布尔参数。
+ *
+ * **必须同时认布尔与字符串**：模型按 schema 传的是布尔 `true`，但历史上这里用
+ * `pickString(...) === 'true'` 判断，于是 `listModules: true`（系统提示里就是这么写的）
+ * 会被静默忽略——工具照常返回，只是不给清单。这种"看起来生效、其实没生效"的坑
+ * 与尺寸归一化塌缩是同一类，一并修掉。
+ */
+function pickBool(source: unknown, key: string): boolean | undefined {
+  if (typeof source !== 'object' || source === null) return undefined
+  const value = (source as Record<string, unknown>)[key]
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase()
+    if (text === 'true' || text === '1' || text === 'yes') return true
+    if (text === 'false' || text === '0' || text === 'no') return false
+  }
+  return undefined
+}
+
+/** `list: true` 时最多回多少个尺寸，避免一屏尺寸把上下文吃掉。 */
+const MAX_LISTED_SIZES = 64
+
 function pickRecord(source: unknown, key: string): Record<string, string> | undefined {
   if (typeof source !== 'object' || source === null) return undefined
   const value = (source as Record<string, unknown>)[key]
@@ -158,6 +181,8 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
       '校验某个模型是否支持目标尺寸，并给出最近可用的替代尺寸。',
       '调用时机：**生图之前**。不支持的尺寸会在这里被挡住，不会产生任何厂商请求。',
       '尺寸可以用比例（1:1、3:4）或像素（1024x1024）；适配器会按调用形态自动归一化。',
+      'agnes 的清晰度（档位 1K/2K/3K/4K）由**精确像素尺寸**决定（如 2048x2048 = 2K + 1:1），',
+      '传比例则用官方默认档位 1K；传 `list: true` 取该厂商的完整可用清单。',
       TOOL_FOOTER,
     ].join('\n'),
     parameters: {
@@ -166,6 +191,10 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         size: { type: 'string', description: '目标尺寸，如 1:1 或 1024x1024。' },
         model: { type: 'string', description: '模型名；省略用默认模型。' },
         provider: { type: 'string', description: '厂商 id；省略用默认厂商。' },
+        list: {
+          type: 'boolean',
+          description: '为 true 时在结果里带上该厂商/模型的完整可用尺寸清单。',
+        },
         apiMode: {
           type: 'string',
           enum: ['images-generations', 'images-edits', 'chat-image', 'gemini-native'],
@@ -182,6 +211,8 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           supported: { type: 'boolean' },
           normalized: { type: 'string' },
           nearest: { type: 'array', items: { type: 'string' } },
+          supportedSizes: { type: 'array', items: { type: 'string' } },
+          supportedSizesTruncated: { type: 'boolean' },
           capability: { type: 'string' },
           reason: { type: 'string' },
           provider: { type: 'string' },
@@ -196,17 +227,22 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         if (value.ok !== true) {
           return [textBlock(`尺寸校验未能完成：${String(value.reason ?? '未知原因')}`)]
         }
+        const listed = Array.isArray(value.supportedSizes) ? value.supportedSizes.map(String) : []
+        const listing =
+          listed.length === 0
+            ? ''
+            : `\n可用清单（${listed.length}${value.supportedSizesTruncated === true ? '+' : ''}）：${listed.join('、')}`
         if (value.supported === true) {
           return [
             textBlock(
-              `尺寸可用：${String(value.normalized)}（${String(value.capability)}，${String(value.apiMode)}）`,
+              `尺寸可用：${String(value.normalized)}（${String(value.capability)}，${String(value.apiMode)}）${listing}`,
             ),
           ]
         }
         const nearest = Array.isArray(value.nearest) ? value.nearest.join('、') : ''
         return [
           textBlock(
-            `尺寸不可用：${String(value.reason)}\n最近可用：${nearest || '（无候选）'}`,
+            `尺寸不可用：${String(value.reason)}\n最近可用：${nearest || '（无候选）'}${listing}`,
           ),
         ]
       },
@@ -236,9 +272,16 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           apiMode: target.apiMode,
           capability: result.capability,
         }
+        // 完整清单按需返回：默认只在"不支持"时给 3 个最近邻，避免每次校验都灌一屏尺寸。
+        const listing =
+          pickBool(args, 'list') === true
+            ? result.declaredSizes.length > MAX_LISTED_SIZES
+              ? { supportedSizes: result.declaredSizes.slice(0, MAX_LISTED_SIZES), supportedSizesTruncated: true }
+              : { supportedSizes: [...result.declaredSizes] }
+            : {}
         return result.supported
-          ? { ...base, supported: true, normalized: result.normalized }
-          : { ...base, supported: false, reason: result.reason, nearest: [...result.nearest] }
+          ? { ...base, supported: true, normalized: result.normalized, ...listing }
+          : { ...base, supported: false, reason: result.reason, nearest: [...result.nearest], ...listing }
       } catch (error) {
         return fromException(error, 'check_size')
       }
@@ -316,7 +359,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
 
         const wantList =
           (typeof args === 'object' && args !== null && (args as Record<string, unknown>).listModules === true) ||
-          pickString(args, 'listModules') === 'true'
+          pickBool(args, 'listModules') === true
 
         if (wantList) {
           return { ok: true, moduleIds: MODULES.map((module) => `${module.id}  ${module.label}`) }

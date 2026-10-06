@@ -64,6 +64,16 @@ before(async () => {
       if (req.url === '/v1/images/generations') {
         if (behavior === 'auth') return json(401, { error: { message: 'invalid api key' } })
         if (behavior === 'bad-request') return json(400, { error: { message: 'unknown parameter' } })
+        // 国内站实测形状：模型没开通时不是 404，而是 **503 + model_not_found**。
+        if (behavior === 'model-unavailable') {
+          return json(503, {
+            error: {
+              message: '分组 default 下模型 agnes-image-2.0-flash 无可用渠道（distributor）',
+              type: 'model_not_found',
+              code: 'model_not_found',
+            },
+          })
+        }
         if (behavior === 'empty') return json(200, { created: 1780000000, data: [] })
         if (behavior === 'url') {
           return json(200, {
@@ -189,19 +199,33 @@ describe('Agnes 厂商预设', () => {
     assert.equal(plan.apiMode, 'images-generations')
   })
 
-  it('尺寸归一化成**比例**（agnes 的 size 是档位 + ratio，不是像素）', () => {
+  it('尺寸归一化：比例保留比例，精确像素**保留像素**（档位不能被丢掉）', () => {
     const provider = agnes()
 
     const fromRatio = checkSize({ model: 'agnes-image-2.1-flash', size: '3:4', apiMode: 'images-generations', provider })
     assert.equal(fromRatio.supported, true)
     assert.equal(fromRatio.normalized, '3:4', 'agnes 方言下必须保留比例，不能转成 960x1280')
 
-    const fromPixel = checkSize({ model: 'agnes-image-2.1-flash', size: '1024x1024', apiMode: 'images-generations', provider })
+    // 这一条是回归断言：曾经把 2048x2048 一律塌缩成 `1:1`，于是"要 2K"在到达适配器
+    // 之前就丢了档位，用户静默拿到 1K。像素是档位的唯一载体，必须原样带下去。
+    const fromPixel = checkSize({ model: 'agnes-image-2.1-flash', size: '2048x2048', apiMode: 'images-generations', provider })
     assert.equal(fromPixel.supported, true)
-    assert.equal(fromPixel.normalized, '1:1', '像素输入也应归一化成比例')
+    assert.equal(fromPixel.normalized, '2048x2048', '精确像素必须保真，塌缩成比例就等于丢档位')
 
+    // 表外像素按纵横比就近**吸附到官方尺寸**（1280x960 不是官方 4:3 的 1K 尺寸，
+    // 官方 4:3 1K 是 1152x864），而不是折算成比例后自由发挥。
     const fromDims = checkSize({ model: 'agnes-image-2.1-flash', size: '1280x960', apiMode: 'images-generations', provider })
-    assert.equal(fromDims.normalized, '4:3')
+    assert.equal(fromDims.supported, true)
+    assert.equal(fromDims.normalized, '1152x864')
+
+    // 比例仍按官方支持的 8 种判定，5:4 不在其中，给最近邻而不是静默通过。
+    const unsupported = checkSize({ model: 'agnes-image-2.1-flash', size: '1280x1024', apiMode: 'images-generations', provider })
+    assert.equal(unsupported.supported, false)
+
+    // 超出该比例最大档位（1:1 最大 4096）的像素请求必须被挡住，不能静默吸附成 4K。
+    const tooLarge = checkSize({ model: 'agnes-image-2.1-flash', size: '9999x9999', apiMode: 'images-generations', provider })
+    assert.equal(tooLarge.supported, false)
+    assert.deepEqual([...tooLarge.nearest].slice(0, 1), ['4096x4096'], '最近邻应先给同比例的最大档位')
 
     // 同一份输入在 standard 方言下仍是像素（方言确实改变了归一化格式）
     const pixelDialect = checkSize({
@@ -211,6 +235,27 @@ describe('Agnes 厂商预设', () => {
       provider: { ...defaultOfoxProvider(), dialect: 'standard' },
     })
     assert.equal(pixelDialect.normalized, '960x1280')
+  })
+
+  it('agnes 的内置尺寸能力不依赖 config 里的 allowedSizes（老配置也生效）', () => {
+    // 出厂预设的 allowedSizes 只有 8 个比例；32 个精确像素尺寸来自 sizes.ts 的内置能力表。
+    // 这样"代码改了、用户的老配置不生效"这个坑就不会再来一次。
+    const provider = { ...agnes(), allowedSizes: ['1:1'] }
+    const result = checkSize({ model: 'agnes-image-2.5-flash', size: '2624x1472', apiMode: 'images-generations', provider })
+    assert.equal(result.supported, true)
+    assert.equal(result.normalized, '2624x1472')
+  })
+
+  it('只给档位（`2K`）时拒绝并给出可用像素，而不是替用户默认一个比例', () => {
+    const result = checkSize({
+      model: 'agnes-image-2.1-flash',
+      size: '2K',
+      apiMode: 'images-generations',
+      provider: agnes(),
+    })
+    assert.equal(result.supported, false)
+    assert.match(result.reason, /不能单独给档位/)
+    assert.ok(result.nearest.includes('2048x2048'), `提示里要出现 2K 对应的像素，实际：${JSON.stringify(result.nearest)}`)
   })
 
   it('不支持的比例给出最近邻而不是静默通过', () => {
@@ -287,6 +332,26 @@ describe('Agnes 请求构造', () => {
     assert.equal(body.ratio, '4:3', '1024x768 归一到 4:3（agnes 支持的 8 种比例之一）')
   })
 
+  it('档位由精确像素尺寸决定：2048x2048 → 2K，2624x1472 → 2K + 16:9', async () => {
+    await generateImages(request({ size: '2048x2048' }))
+    const square = JSON.parse(seen.at(-1).body)
+    assert.equal(square.size, '2K', '要 2K 就必须发 2K，不能回落 1K')
+    assert.equal(square.ratio, '1:1')
+
+    // 16:9 的官方像素不是精确 16:9（1312x736 化简是 41:23），所以只能查表得出比例；
+    // 靠"化简比例是否等于 16:9"会得到 1:1 —— 那正是之前的 bug。
+    await generateImages(request({ size: '2624x1472' }))
+    const wide = JSON.parse(seen.at(-1).body)
+    assert.equal(wide.size, '2K')
+    assert.equal(wide.ratio, '16:9')
+
+    // 直接给档位也认（官方默认比例 1:1）。
+    await generateImages(request({ size: '3K' }))
+    const tiered = JSON.parse(seen.at(-1).body)
+    assert.equal(tiered.size, '3K')
+    assert.equal(tiered.ratio, '1:1')
+  })
+
   it('standard 方言**没有**被 agnes 分支影响（字段仍在顶层）', async () => {
     await generateImages(
       request({
@@ -349,6 +414,21 @@ describe('Agnes 错误分支', () => {
     assert.equal(result.attempts, 1, '401 换档位毫无意义，只该发一次')
     assert.deepEqual(result.degraded, [])
     assert.match(result.error.message, /鉴权失败/)
+  })
+
+  it('模型没渠道（503 + model_not_found）→ 终态 model_unavailable，且只发一次', async () => {
+    // 503 通常被当成服务端瞬时故障（可重试）。agnes 国内站在模型未开通时用的就是
+    // 503 + `model_not_found`：重试一万次也一样，顺降级链重发更是白花钱。
+    behavior = 'model-unavailable'
+    const result = await generateImages(request({ maxRetries: 2 }))
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, 'model_unavailable')
+    assert.equal(result.error.retryable, false)
+    assert.equal(seen.length, 1, '不能重试，也不能顺降级链重发')
+    assert.deepEqual(result.degraded, [])
+    assert.match(result.error.message, /不可用/)
+    // 原始正文必须保留：模型名与"分组"是用户找客服时报的依据。
+    assert.match(result.error.message, /无可用渠道/)
   })
 
   it('缺少 size → 结构化 config 错误，且**一个请求都不发**', async () => {

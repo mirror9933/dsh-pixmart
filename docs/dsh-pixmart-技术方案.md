@@ -580,6 +580,11 @@ export interface SizeCheckResult {
 
 **取值格式随 apiMode 变化**：`gemini-native` 用**比例**字符串并写入 `generationConfig.imageConfig.aspectRatio`；OpenAI 兼容路径用**像素** `WxH`。`check_size` 因此必须接收 `apiMode` 一起判断，不能只按模型名返回一种格式。
 
+> **现状修订（2026-10-12，见 contract-notes §27）**：上面的草图已落地为 `forms: SizeForm[]`
+> （"请求体能携带哪些格式，首个为首选"），判定改成**同格式优先**：精确命中就原样返回，
+> 不再把所有输入塌缩成比例——`agnes` 的 `2048x2048` 曾因此丢掉档位（要 2K 给 1K）。
+> Agnes 的 32 个官方精确尺寸作为**内置能力**（`AGNES_SIZE_TABLE`），不依赖 `config.json`。
+
 **未知模型**：完全依赖配置里的 `allowedSizes` + `sizeMode`；`sizeMode: 'free'` 时只做格式校验（`^\d+x\d+$`）与上下限，不猜。
 
 ### 7.7 工具清单
@@ -1207,7 +1212,7 @@ pnpm build:client     # = node tools/strip-test-hooks.mjs → 写 dist/client.js
 ```sh
 pnpm typecheck      # host + client 两个 program
 pnpm build:client   # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js（§11.5）
-pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，269 项；pretest 会先跑 build:client）
+pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，353 项；pretest 会先跑 build:client）
 pnpm test:browser   # 真实排版引擎 lane（需系统 Edge/Chrome，见 §13.7）
 pnpm build          # host tsc（client bundle 是手写产物，无转译构建步骤）
 pnpm verify         # 上面四条串起来；无浏览器时 test:browser 会醒目失败（可用 PXM_LANE_ALLOW_SKIP=1 显式放行）

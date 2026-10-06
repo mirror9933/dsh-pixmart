@@ -89,6 +89,9 @@ describe('installGuidance', () => {
     // 删除语义：默认是软删（可恢复），永久删必须由用户明确要求——这是防"顺手 permanent"的一句话。
     assert.match(GUIDANCE_TEXT, /软删/)
     assert.match(GUIDANCE_TEXT, /permanent: true/)
+    // 8) 尺寸/档位：agnes 的清晰度只能靠精确像素表达，不说清就会一直拿到默认 1K。
+    assert.match(GUIDANCE_TEXT, /2K/)
+    assert.match(GUIDANCE_TEXT, /list: true/)
     // 语义变更：不得再宣称"配了路径就自动另存一份"
     assert.equal(/另行复制/.test(GUIDANCE_TEXT), false, '不得再宣称生成时会自动复制')
   })
