@@ -12,10 +12,11 @@
  * 因此补齐对称的 `restore` action：Agent 删错了可以自己救回来，不必让用户去界面点
  * （作品库优化方案 §4 决定①、§6.1；contract-notes §16.4）。
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { historicalTotals } from '../store/historical.js'
 import type { ToolContentBlock, ToolDefinitionLike } from '../host-types.js'
+import { exportImages, planProjectExport, resolveExportRoot } from './export-output.js'
 import { TOOL_FOOTER, failure, fromException, type ToolRuntime } from './runtime.js'
 
 function pickString(source: unknown, key: string): string | undefined {
@@ -44,7 +45,8 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
       'delete 默认是**软删**：项目被移入回收站（可恢复、磁盘上的字节一个都没丢），仍需显式传 confirm: true。',
       '只有再传 permanent: true 才是**永久删除、不可恢复**——用户没明确说要永久删就用默认的软删。',
       'delete 之后可以用 restore（ids = 被删的 id，或 list 里报出的回收站条目 id）恢复。',
-      '副作剧：export 默认把该项目的图片**复制**到数据目录的 exports/<项目 id>/（原件不动）；',
+      '副作用：export 把该项目的图片**复制**到 <目标>/<项目 id>/（原件不动）。目标 = 入参 dir，',
+      '未给 dir 时用设置里的「作品库导出路径」；两者都没有 → 失败并提示去设置里配，**不会**有默认落点。',
       'delete 默认只移入回收站，permanent: true 才真的删除项目目录。',
     ].join('\n'),
     parameters: {
@@ -61,6 +63,11 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
           items: { type: 'string' },
           description:
             '项目 id 列表（delete 用）；restore 也用它，元素可以是回收站条目 id 或原项目 id。',
+        },
+        dir: {
+          type: 'string',
+          description:
+            'export 用：导出目标目录（绝对路径），覆盖设置里的「作品库导出路径」；省略则用设置里的那一个，两者都没有就失败。',
         },
         limit: { type: 'integer', minimum: 1, maximum: 200, description: 'list / usage 的条数上限。' },
         confirm: { type: 'boolean', description: 'delete 必须为 true 才执行（软删与永久删都要求）。' },
@@ -165,26 +172,38 @@ export function createProjectsTool(runtime: ToolRuntime): ToolDefinitionLike {
         if (action === 'export') {
           const id = pickString(args, 'id')
           if (id === undefined) return failure('invalid_args', 'export 需要 id')
-          const record = runtime.projectStore.read(id)
-          const imagesDir = runtime.projectStore.imagesDir(id)
-          const targetDir = join(runtime.dataDir, 'exports', id)
-          mkdirSync(targetDir, { recursive: true })
 
-          const copied: string[] = []
-          for (const item of record.items) {
-            for (const image of item.images) {
-              const name = image.file.split('/').pop() ?? ''
-              if (name === '') continue
-              const from = join(imagesDir, name)
-              if (!existsSync(from)) continue
-              const to = join(targetDir, name)
-              writeFileSync(to, readFileSync(from))
-              copied.push(to)
-            }
-          }
+          // 目标：入参 `dir` 覆盖 > 配置里的「作品库导出路径」> 失败。
+          // 与 HTTP 路由共用 `resolveExportRoot`，**没有**插件自作的默认落点：
+          // 曾经默认写 `<dataDir>/exports/`，那让"导出到底去哪"有了两个答案。
+          // 判定顺序也与 HTTP 一致（先判目标再读项目），免得同一份输入两个入口给出不同的错。
+          const config = await runtime.config()
+          const resolved = resolveExportRoot(pickString(args, 'dir'), config.exportDir)
+          if (!resolved.ok) return failure(resolved.code, resolved.message)
+
+          const record = runtime.projectStore.read(id)
+
+          // 落点与 HTTP 完全一致：`<目标>/<projectId>/`，文件名同样内容寻址。
+          const plan = planProjectExport(
+            resolved.root,
+            id,
+            runtime.projectStore.imagesDir(id),
+            record.items,
+          )
+          if (!plan.ok) return failure(plan.code, plan.message)
+
+          const outcome = exportImages(plan.target, plan.sources)
           // 字段名是 `targetDir` 而**不是** `exportDir`：后者已经是设置里的
           // 「作品库导出路径」配置项，两者同名却毫无关系，读代码的人必然误会（决定①的落地）。
-          return { ok: true, action, id, count: copied.length, targetDir, files: copied }
+          return {
+            ok: true,
+            action,
+            id,
+            count: outcome.exported.length,
+            targetDir: plan.target,
+            files: outcome.exported,
+            warnings: outcome.warnings,
+          }
         }
 
         if (action === 'delete') {
@@ -332,6 +351,9 @@ function renderProjects(value: Record<string, unknown>): ToolContentBlock[] {
 
   if (action === 'export') {
     lines.push(`已导出 ${String(value.count)} 个文件到 ${String(value.targetDir)}`)
+    // 复制失败被收敛成警告（原件仍在），必须说出来——否则"已导出 0 个文件"会被读成没找到图。
+    const warnings = Array.isArray(value.warnings) ? value.warnings : []
+    for (const warning of warnings) lines.push(`⚠ ${String(warning)}`)
     return [{ type: 'text', text: lines.join('\n') }]
   }
 

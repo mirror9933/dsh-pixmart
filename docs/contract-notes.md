@@ -673,8 +673,8 @@ return loaded.then(() => configStore.get())
 目标不可写时仍是 `200` + `warnings[]`，**原项目一个字节都不受影响**。
 项目不存在 → `404`（不会凭空造目录）；`dir` 相对路径 → `400 invalid_export_dir`。
 
-**边界**：`pixmart_projects` 工具的 `export` action 行为**未动**（仍默认导出到
-`<dataDir>/exports/<id>`）——它是 Agent 侧的独立口径，本次只改 HTTP/界面那条用户路径。
+**边界（已被 §16.5 取代）**：`pixmart_projects` 工具的 `export` action 当初行为**未动**
+（默认导出到 `<dataDir>/exports/<id>`）——它是 Agent 侧的独立口径，本次只改 HTTP/界面那条用户路径。
 `pixmart_projects` 工具回传的字段由 `outputDir` 改成 `exportDir`（文本里明确写"生成时不复制"）。
 **（2026-10-06 修正）**：该字段随后又改名为 **`targetDir`**——`exportDir` 已经是配置项
 「作品库导出路径」的名字，工具里再用同一个词指"数据目录内的导出落点"是必然的误读源，
@@ -704,7 +704,7 @@ return loaded.then(() => configStore.get())
 | 渲染文本 | 「已删除 N 个项目」 | 软删：「已移入回收站 N 个项目：…（可用 `pixmart_projects action=restore` 恢复；`permanent: true` 才是永久删除）」；真删：「已永久删除 N 个项目：…（不可恢复）」 |
 | `restore` | **不存在** | 新增 action：入参 `ids: string[]`，走 `restoreFromTrash`，返回 `restored[]` / `skipped[]` |
 | `list` | 只报项目 | **新增** `trashCount` 与 `trash[]`（回收站条目 id / projectId / name / deletedAt / imageCount），**绝不混进 `projects`** |
-| `export` 落点字段 | `exportDir` | **`targetDir`**（行为不变：默认仍是 `<dataDir>/exports/<id>`） |
+| `export` 落点字段 | `exportDir` | **`targetDir`**（当时的默认落点仍是 `<dataDir>/exports/<id>`，该默认落点已被 §16.5 删除） |
 
 **为什么 `restore` 不要求 `confirm`**：它是**非破坏性**的（原 id 被占用时 store 抛 `conflict`
 拒绝，绝不覆盖），加一道确认只会让"删错了赶紧救回来"变慢。与 HTTP 的
@@ -730,6 +730,38 @@ return loaded.then(() => configStore.get())
 客户端本次零改动（`client/client.js` 不涉及 `pixmart_projects` 工具）。
 `purgeTrash`（清空回收站）**没有**暴露给 Agent 工具：那是真正的不可逆批量销毁，
 让它只留在用户显式点按钮的界面里。
+
+### 16.5 导出落点收敛（2026-10-06）：只留用户显式指定的那一个
+
+**问题**：同一个"导出"有两条同义但**落点不同**的实现——界面/HTTP 用配置里的 `exportDir`
+（空则 `400 no_export_dir`），而 `pixmart_projects action=export` 自作主张写
+`<dataDir>/exports/<id>/`。两者并存的结果是：用户分不清"导出到底去哪"，数据目录里还会
+莫名多出一份副本（实测就在那里留下了文件）。
+
+**决定：`exportDir` 胜出，`<dataDir>/exports/` 这条落点彻底取消（不留兜底）。**
+理由是 `exportDir` 是用户**显式配置的意图**，隐式默认是插件自作主张。
+
+| 入口 | 之前 | 之后 |
+|---|---|---|
+| `POST /pixmart/api/projects/<id>/export` | `dir` > `exportDir` > `400 no_export_dir` | **语义与错误码不变**（只把"没有可用目录"的文案换成与工具共用的那一条） |
+| `pixmart_projects action=export` | 固定 `<dataDir>/exports/<id>` | 新增可选入参 `dir` > 配置 `exportDir` > **失败**（`no_export_dir`） |
+
+**共用的唯一实现**（`src/tools/export-output.ts`）：`resolveExportRoot(overrideDir, configuredExportDir)`
+给出 `{ok:true, root}` 或 `{ok:false, code, message}`；`planProjectExport(root, projectId, imagesDir, items)`
+给出落点 `<root>/<projectId>/` 与待复制原件（源与目标**两条**路径都过 `assertContained`）。
+两个入口都调它们，所以错误码与文案**不可能分叉**——有一条用例直接断言两边 `message` 逐字节相同。
+
+**"两者皆无"的文案**（唯一一句，HTTP 与工具共用）：
+
+> 没有可用的导出目录：请先在设置里配置作品库导出路径（设置 → PixMart → 作品库导出路径），或显式指定目标目录（绝对路径）
+
+**不删用户已有的数据**：磁盘上已经存在的 `<dataDir>/exports/` 与其中的文件**原样保留**
+（那是用户的数据），插件只是不再往里写任何东西。
+
+**同批清掉的另一个死字段**：`exportToWorkspace`（默认 `false`）在 schema 里存在，
+但**没有任何代码读它**——工作区副本是无条件自动的（§7.9），它"像开关却不是开关"。
+故从 `PixmartConfig` / 默认值 / `parseConfig` 中删除；写盘时（`ConfigStore.save` / `update`）
+顺手把残留键抹掉，读盘遇到残留键**不报错也不告警**（旧 `config.json` 必须照常可用）。
 
 ---
 

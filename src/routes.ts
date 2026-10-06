@@ -15,12 +15,12 @@
  *   5. **任何响应体都不含 apiKey**：厂商一律回脱敏后的 `ProviderView`。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { findProvider, toProviderView, type PixmartConfig, type ProviderConfig } from './config.js'
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
 import { TrashError, type ProjectSummaryWithModules } from './store/project-store.js'
-import { exportFileName, exportImages, type ExportSource } from './tools/export-output.js'
+import { exportImages, planProjectExport, resolveExportRoot } from './tools/export-output.js'
 import { fetchProviderModels, type ModelProbeCode } from './vendor/models.js'
 import type { HostContext, HttpResponseLike, HttpRequestLike, WebServerLike } from './host-types.js'
 import type { ToolRuntime } from './tools/runtime.js'
@@ -289,12 +289,6 @@ function isConfirmed(body: Record<string, unknown>): boolean {
 }
 
 const CONFIRM_REQUIRED = '这是破坏性操作，需要显式 confirm: true'
-
-/** `images/<name>` → `<name>`；只用最后一段，天然挡掉记录里被写脏的路径。 */
-function lastSegment(file: string): string {
-  const parts = file.split(/[\\/]/).filter((part) => part !== '')
-  return parts.length === 0 ? '' : (parts[parts.length - 1] as string)
-}
 
 /** 把 `projects/<id>/project.json` 转成客户端需要的形状（不回传完整提示词）。 */
 function projectSummaryOf(record: {
@@ -1131,8 +1125,8 @@ async function handlePurgeTrash(
 /**
  * `POST /pixmart/api/projects/<id>/export` —— 把项目图片**复制**到目标目录。
  *
- * 这是**唯一**会往数据目录之外写用户文件的路径，且必须由用户/界面显式触发：
- * 生成（generate / edit / batch）不再自动复制任何东西。
+ * 这条与 `pixmart_projects action=export` 是**仅有的两条**往数据目录之外写用户文件的
+ * 路径，都必须显式触发：生成（generate / edit / batch）不再自动复制任何东西。
  *
  * 目标目录的优先级（顺序即优先级）：
  *   1. 请求体里的 `dir`（绝对路径，覆盖配置）；
@@ -1141,9 +1135,13 @@ async function handlePurgeTrash(
  *
  * 实际落点是 `<目标目录>/<projectId>/`：不同项目各占一格，重复导出不会互相覆盖。
  *
+ * 目标解析与落点规划都**不在这里**：HTTP 与 `pixmart_projects action=export` 共用
+ * `tools/export-output.ts` 里的 `resolveExportRoot` / `planProjectExport`——
+ * 两个入口曾经各写一遍，于是同一句"导出"落到了两个不同的地方（配置里的 `exportDir`
+ * vs 数据目录下隐式的 `exports/`）。现在只剩用户显式配置/显式指定的那一个。
+ *
  * 复用 `tools/export-output.ts` 的三条不变量：只复制（原件是数据源，绝不移动）、
  * 失败不上抛（收敛成 `warnings`，原项目不受影响）、文件名内容寻址。
- * 每一张图的落点都过 `assertContained`，因此记录里被写脏的文件名也越不出去。
  */
 async function handleExportProject(
   runtime: ToolRuntime,
@@ -1155,30 +1153,11 @@ async function handleExportProject(
   const override = pickStringField(body, 'dir')
   const config = await runtime.config()
 
-  // 目标根：请求体覆盖 > 配置 > 未配置（400）。
-  let root: string
-  if (override.present && override.value !== '') {
-    if (!isAbsolute(override.value)) {
-      fail(response, 400, 'invalid_export_dir', `导出目录必须是绝对路径："${override.value}"`)
-      return
-    }
-    root = resolve(override.value)
-  } else {
-    const configured = typeof config.exportDir === 'string' ? config.exportDir.trim() : ''
-    if (configured === '') {
-      fail(
-        response,
-        400,
-        'no_export_dir',
-        '没有可用的导出目录：请先在设置里配置作品库导出路径（设置 → Pixmart → 作品库导出路径），或在请求里带 dir（绝对路径）',
-      )
-      return
-    }
-    if (!isAbsolute(configured)) {
-      fail(response, 400, 'invalid_export_dir', `配置里的作品库导出路径不是绝对路径："${configured}"`)
-      return
-    }
-    root = resolve(configured)
+  // 目标根：请求体覆盖 > 配置 > 未配置（400）。与工具入口**同一段代码、同一句文案**。
+  const resolved = resolveExportRoot(override.present ? override.value : undefined, config.exportDir)
+  if (!resolved.ok) {
+    fail(response, 400, resolved.code, resolved.message)
+    return
   }
 
   // 项目必须先存在：否则"不存在的项目"会在盘上凭空造出一个空目录。
@@ -1191,37 +1170,22 @@ async function handleExportProject(
   }
 
   // 落点固定在目标根之下的项目子目录里；越界（例如被喂了 `..`）直接 400。
-  let target: string
-  try {
-    target = assertContained(root, join(root, projectId))
-  } catch {
-    fail(response, 400, 'bad_export_dir', `导出落点越界：${join(root, projectId)}`)
+  const plan = planProjectExport(
+    resolved.root,
+    projectId,
+    runtime.projectStore.imagesDir(projectId),
+    record.items,
+  )
+  if (!plan.ok) {
+    fail(response, 400, plan.code, plan.message)
     return
   }
 
-  const imagesDir = runtime.projectStore.imagesDir(projectId)
-  const sources: ExportSource[] = []
-  for (const item of record.items) {
-    for (const image of item.images) {
-      const name = lastSegment(image.file)
-      if (name === '') continue
-      try {
-        // 源与目标**两条**路径都过包含校验：文件名来自 project.json，
-        // 不能假设它一定干净（记录被手改脏时越不出去）。
-        const absolutePath = assertContained(imagesDir, join(imagesDir, name))
-        assertContained(target, join(target, exportFileName(image.sha256, name)))
-        sources.push({ absolutePath, sha256: image.sha256 })
-      } catch {
-        // 记录里的文件名越界 → **跳过这一张**，不让整个导出失败（与复制失败的收敛口径一致）。
-      }
-    }
-  }
-
-  const outcome = exportImages(target, sources)
+  const outcome = exportImages(plan.target, plan.sources)
   sendJson(response, 200, {
     ok: true,
     id: projectId,
-    dir: target,
+    dir: plan.target,
     count: outcome.exported.length,
     files: outcome.exported,
     warnings: outcome.warnings,

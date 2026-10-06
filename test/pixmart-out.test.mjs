@@ -118,7 +118,6 @@ function makeWorld({ withWorkspace = true } = {}) {
     defaults: { provider: 'mock', model: 'test-image-model', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 0, retentionDays: 0 },
     promptOverrides: {},
-    exportToWorkspace: false,
     attachmentInConversation: false,
     exportDir: '',
   }

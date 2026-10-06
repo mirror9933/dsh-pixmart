@@ -350,7 +350,6 @@ export const Config = z.object({
     retentionDays: z.number().default(0),    // 0 = 不自动清理
   }).default({}),
   promptOverrides: z.dict(z.string()).default({}),  // moduleId -> 覆盖文本
-  exportToWorkspace: z.boolean().default(false),
   attachmentInConversation: z.boolean().default(true),
 })
 ```
@@ -682,7 +681,8 @@ $DSH_HOME/pixmart/
 1. **落盘为唯一真相**：字节写进 `projects/<id>/images/`。
 2. **对话内可见**：`attachments` 服务可用时 `saveImages()` 拿 `ImageAttachmentRef`，`output.render` 返回 `[{type:'text',…}, {type:'image', attachment: <ImageAttachmentRef>}]`——**该形状已由 P0 取证**（[contract-notes §2](./contract-notes.md)）。
 3. **画廊显示**：client 用 `<img src="/pixmart/file/<projectId>/<encodedName>">`。
-4. **可选导出**：`exportToWorkspace: true` 时额外复制一份到会话工作目录。
+4. **工作区副本（无条件自动）**：每张成功落盘的图复制一份到会话工作区的 `pixmart-out/<项目 id>/`——它不是"帮用户留文件"，而是 DSH 官方内嵌写法 `![说明](<路径>)` **只渲染工作区之内**的路径（见 §11.2 / `src/tools/workspace-copy.ts`）。
+   用户要的文件形式副本走**显式导出**：目标 = 请求/入参 `dir` > 配置里的「作品库导出路径」(`exportDir`)，两者都没有就失败并提示去设置里配（**没有**隐式默认落点）。
 
 ### 7.10 图片只读路由
 
@@ -713,7 +713,7 @@ GET /pixmart/file/<projectId>/<name>
 | `listProjects` | `{limit?, offset?}` | `ProjectSummary[]` | |
 | `getProject` | `{id}` | `ProjectDetail` | |
 | `deleteProjects` | `{ids[]}` | `{deleted}` | 二次确认由前端做 |
-| `exportProject` | `{id, dir?}` | `{files[]}` | 默认导出到 `dataDir/exports/` |
+| `exportProject` | `{id, dir?}` | `{files[], warnings[], dir, count}` | 落点 `<目标>/<id>/`；目标 = `dir` > 配置 `exportDir` > 失败（`400 no_export_dir`）；**无** `dataDir/exports/` 默认落点 |
 | `previewPrompt` | `{module, vars?, overrides?}` | `{prompt, size}` | 等价于 `pixmart_prompt` |
 | `getUsage` | `{since?}` | `UsageSummary` | 按模型/天聚合 |
 | `openDataDir` | `{}` | `{path}` | 只返回路径，不执行打开（避免任意命令执行面） |
@@ -1403,7 +1403,7 @@ pnpm verify           # typecheck + build + test(260) + test:browser
 | # | 决策项 | **确认结论** | 落点 |
 |---|---|---|---|
 | 1 | 插件数据目录位置 | `$DSH_HOME/pixmart` | §7.3 / §7.8 / §9 |
-| 2 | 是否额外导出一份到会话工作目录 | **否** → `exportToWorkspace: false` | §7.2 / §7.9 |
+| 2 | 是否额外导出一份到会话工作目录 | **否**（当初落的字段是 `exportToWorkspace`；**该字段已删除**——没有任何代码读它，工作区副本是无条件自动的，见 §7.9 / 变更记录 v1.10） | §7.2 / §7.9 |
 | 3 | 生成的图是否在对话内直接可见 | **是** → `attachmentInConversation: true`（附件服务可用时） | §7.9 |
 | 4 | P0 完成后是否先交付「契约笔记 + 最小演示」再推 P1 | **是** | §12 / §12.1 |
 | 5 | 是否需要 3D / 视频 / 原生 Gemini 协议 | **否**，v2 再议（Ofox 的 `gemini-native` 调用路径除外，见 §3.2） | §3.2 |
@@ -1504,3 +1504,4 @@ Agent 调用 pixmart_batch {
 | v1.7 | 2026-10-05 | **修掉 lane 抓到的"长路径撑破设置弹窗"**（`#settingsDialog.scrollWidth 687 > clientWidth 520`，520px + 87 字符路径）。根因是 v1.6 之前为修 bug 1 把 `whiteSpace:nowrap` 加在「标签 + 值」的**整组**上：短值没问题，长路径一个断点都没有 → 组的 `min-content` = 整条路径宽度。改法：组去掉 `nowrap`（保持 `inline-flex` + `baseline` + `gap`）；标签 `nowrap` + `flexShrink:0`（不拆散、不压缩）；值 `minWidth:0` + `overflowWrap:anywhere`（在**自己内部**换行，`min-content` 压到一个字符）；`<input>` 补 `minWidth:0`。**故意不加** `flexWrap:wrap`：实测它会把长值整行推到标签下面（拆散回归，`M15` 为证）。浏览器 lane 10 → **11** 条断言（新增 520px/375px 两条 87 字符路径的无溢出用例），严格变异 11 → **14** 条（`M13`/`M14`/`M15`），`pnpm test` 仍为 **260** 项全绿 |
 | v1.8 | 2026-10-05 | **P4 待办第 1 条落地：打包步骤剥离 client bundle 的 `__test__`**（§11.5 新增）。新增 `tools/strip-test-hooks.mjs`（按锚句定位 + 花括号配平 + 前缀/后缀逐行自证 + `node --check`，**不引入打包器、不加依赖**）、`pnpm build:client`，`files` 加 `dist`，`pretest` / `prepack` 自动产出，`dist/` 写入 `.gitignore`（产物不入库）。新增 `test/strip-test-hooks.test.mjs`（9 项，含**陈旧性守卫**：把当前源码现场剥一遍与 `dist/client.js` 逐字节比对；缺失→带原因跳过，陈旧→失败并提示 `pnpm build:client`）。**源码 `client/client.js` 一个字节未改**（五套 node:test + 浏览器 lane 仍从它的 `__test__` 取件）。**⚠️ `exports["./client"]` 仍指向 `./client/client.js`**：切换是 P4 打包的最后一步，等停止迭代后再做。`pnpm test` 260 → **269** 项、`pnpm test:browser` **11** 项全绿 |
 | v1.9 | 2026-10-05 | **README 重写为用户视角**（安装 / 首次配置 / 怎么用 / 产物在哪 / 费用 / FAQ / 已知限制 / 开发者），不再写「P0 进行中」这类内部阶段状态。诚实标注：**未发布到 registry、`private: true`**，只能用本地路径 / git 地址安装；P0–P3 已完成、**P4 未完成**；不做 3D / 视频、不做服务端缩略图、macOS 未验证、当前 0.0.1 |
+| v1.10 | 2026-10-06 | **导出落点收敛 + 死字段清理**。① 导出只剩一条口径：`resolveExportRoot` / `planProjectExport`（`src/tools/export-output.ts`）被 `POST /projects/<id>/export` 与 `pixmart_projects action=export` **共用**——工具新增可选入参 `dir`，未给则用配置 `exportDir`，两者都没有即失败（错误码 `no_export_dir`，与 HTTP **同一句文案**）。**彻底删除** `<dataDir>/exports/` 这条隐式默认落点（用户磁盘上已存在的该目录不动，只是不再写入）。② 删除死字段 `exportToWorkspace`：类型 / 默认值 / `parseConfig` 里都没有了，`ConfigStore` 每次写盘顺手把它从盘上抹掉（残留键读盘不报错）。③ 相应更新 README、contract-notes §16.3/§16.4、作品库优化方案。`pnpm test` 291 → **298** 项、`pnpm test:browser` **11** 项全绿 |

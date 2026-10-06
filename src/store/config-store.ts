@@ -12,6 +12,21 @@ import { assertContained } from './paths.js'
 
 const CONFIG_FILE = 'config.json'
 
+/**
+ * 写盘前抹掉**已废弃**的字段。
+ *
+ * `exportToWorkspace` 曾出现在配置 schema 里（默认 `false`），但**没有任何代码读它**——
+ * "工作区副本"早已是无条件自动的（见 tools/workspace-copy.ts）。一个像开关却不是开关的
+ * 字段只会误导人，所以它从类型、默认值与解析里都被删掉了；这里在**每次写盘**时顺手把
+ * 磁盘上的残留键抹掉（与写路由把废弃 `outputDir` 清成 `''` 同一立场：不让后来的人以为
+ * 它还有用）。读盘时不报错、不警告——旧 `config.json` 必须照常能用。
+ */
+function withoutDeprecatedKeys(config: PixmartConfig): PixmartConfig {
+  const next: Record<string, unknown> = { ...config }
+  delete next.exportToWorkspace
+  return next as unknown as PixmartConfig
+}
+
 export interface ConfigLoadResult {
   readonly config: PixmartConfig
   readonly warnings: readonly string[]
@@ -64,8 +79,9 @@ export class ConfigStore {
   /** 原子保存并更新内存副本。 */
   async save(next: PixmartConfig): Promise<void> {
     await this.mutex.run(this.configPath, async () => {
-      writeFileAtomic(this.configPath, `${JSON.stringify(next, null, 2)}\n`)
-      this.current = next
+      const clean = withoutDeprecatedKeys(next)
+      writeFileAtomic(this.configPath, `${JSON.stringify(clean, null, 2)}\n`)
+      this.current = clean
     })
   }
 
@@ -75,7 +91,7 @@ export class ConfigStore {
    */
   async update(mutate: (current: PixmartConfig) => PixmartConfig): Promise<PixmartConfig> {
     return this.mutex.run(this.configPath, async () => {
-      const next = mutate(this.current)
+      const next = withoutDeprecatedKeys(mutate(this.current))
       writeFileAtomic(this.configPath, `${JSON.stringify(next, null, 2)}\n`)
       this.current = next
       return next

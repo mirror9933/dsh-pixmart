@@ -48,6 +48,7 @@ import { createRuntime } from '../lib/tools/runtime.js'
 import { createGenerateTools } from '../lib/tools/generate.js'
 import { createBatchTool } from '../lib/tools/batch.js'
 import { createMetaTools } from '../lib/tools/meta.js'
+import { createProjectsTool } from '../lib/tools/projects.js'
 import { registerRoutes } from '../lib/routes.js'
 
 const PNG_B64 =
@@ -110,7 +111,6 @@ function makeWorkspace() {
     defaults: { provider: 'mock', model: 'test-image-model', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 0, retentionDays: 0 },
     promptOverrides: {},
-    exportToWorkspace: false,
     attachmentInConversation: false,
     exportDir: '',
   }
@@ -949,6 +949,127 @@ describe('ConfigStore 上的一次真实迁移', () => {
       assert.equal(result.json.count, 1)
       assert.equal(existsSync(absolutePath), true, '导出是复制，不是移动')
       assert.equal(existsSync(join(outDir, record.id, image.file.split('/').pop())), true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── H. 导出只有一条口径：HTTP 与工具共用同一套判定与文案 ─────────────────────
+
+describe('导出的目标口径在两个入口之间不许分叉', () => {
+  it('两者皆无时，HTTP 与 pixmart_projects 回的是**同一句**文案', async () => {
+    const { dataDir, root } = makeWorkspace()
+    try {
+      const { id } = await seedProject(dataDir)
+
+      const viaHttp = await call(
+        makeFakeWebServer(),
+        makeRuntime(dataDir),
+        'POST',
+        `/pixmart/api/projects/${id}/export`,
+        { body: {} },
+      )
+      assert.equal(viaHttp.status, 400)
+      assert.equal(viaHttp.json.error.code, 'no_export_dir')
+
+      const tool = createProjectsTool(makeRuntime(dataDir))
+      const viaTool = await tool.execute({ action: 'export', id }, stubExec)
+
+      assert.equal(viaTool.ok, false)
+      assert.equal(viaTool.error.code, viaHttp.json.error.code, '错误码必须一致')
+      assert.equal(
+        viaTool.error.message,
+        viaHttp.json.error.message,
+        '同一件失败事，两个入口必须说同一句话（否则用户会以为是两种问题）',
+      )
+      assert.match(viaTool.error.message, /设置 → PixMart → 作品库导出路径/)
+
+      // 判定顺序也一样：目标不可用**先于**"项目不存在"被报出来（否则同一份输入，
+      // 两个入口会说成两种问题）。这里用一个不存在的 id 把这条顺序钉住。
+      const httpMissing = await call(
+        makeFakeWebServer(),
+        makeRuntime(dataDir),
+        'POST',
+        '/pixmart/api/projects/nope/export',
+        { body: {} },
+      )
+      const toolMissing = await createProjectsTool(makeRuntime(dataDir)).execute(
+        { action: 'export', id: 'nope' },
+        stubExec,
+      )
+      assert.equal(httpMissing.json.error.code, 'no_export_dir')
+      assert.equal(toolMissing.error.code, httpMissing.json.error.code)
+      assert.equal(toolMissing.error.message, httpMissing.json.error.message)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('工具带 dir 时也不在数据目录里造 exports/：唯一的落点就是目标目录', async () => {
+    const { dataDir, root } = makeWorkspace()
+    const target = join(root, 'tool-target')
+    try {
+      const { runtime, id } = await seedProject(dataDir)
+      const tool = createProjectsTool(runtime)
+      const exported = await tool.execute({ action: 'export', id, dir: target }, stubExec)
+
+      assert.equal(exported.ok, true)
+      assert.equal(exported.count, 1)
+      assert.equal(exported.targetDir, join(target, id))
+      assert.equal(existsSync(exported.files[0]), true)
+      assert.equal(existsSync(join(dataDir, 'exports')), false, '数据目录里的 exports/ 必须不再出现')
+      assert.equal(existsSync(join(target, 'exports')), false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── I. 死字段 exportToWorkspace 的移除 ───────────────────────────────────────
+
+describe('已废弃字段 exportToWorkspace 不复存在', () => {
+  it('出厂配置与解析结果里都没有这个键（它曾经"像开关却不是开关"）', () => {
+    assert.equal('exportToWorkspace' in defaultConfig(), false)
+    const parsed = parseConfig({ version: 1, providers: [], exportToWorkspace: true })
+    assert.equal('exportToWorkspace' in parsed.config, false)
+    assert.deepEqual(
+      parsed.warnings.filter((line) => line.includes('exportToWorkspace')),
+      [],
+      '残留键不该报错也不该告警（旧 config.json 必须照常能用）',
+    )
+  })
+
+  it('config.json 里残留该字段时照常工作；下一次写盘把它从盘上抹掉', async () => {
+    const { root, dataDir, outDir } = makeWorkspace()
+    patchConfigFile(dataDir, { exportToWorkspace: true })
+    try {
+      stubVendorFeed()
+      const runtime = makeRuntime(dataDir)
+      const result = await runGenerate(runtime)
+      assert.equal(result.ok, true, '残留的死字段不得让生图失败')
+      assert.equal(
+        Object.keys(await runtime.config()).some((key) => key.includes('Workspace')),
+        false,
+      )
+      // 读配置是**纯读**：不该顺手改写用户的文件（否则"手改 config.json"的行为变得不可预期）
+      const before = JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8'))
+      assert.equal(before.exportToWorkspace, true)
+
+      const store = new ConfigStore(dataDir)
+      await store.load()
+      const written = await call(
+        makeFakeWebServer(),
+        makeFakeRuntime(store),
+        'POST',
+        '/pixmart/api/settings/export-dir',
+        { body: { exportDir: outDir } },
+      )
+      assert.equal(written.status, 200)
+
+      const onDisk = JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8'))
+      assert.equal('exportToWorkspace' in onDisk, false, '写盘时必须把它抹掉')
+      assert.equal(onDisk.exportDir, outDir)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

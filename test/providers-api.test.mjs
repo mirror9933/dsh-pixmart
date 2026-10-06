@@ -107,7 +107,6 @@ function makeStore(providerOverrides = {}) {
     defaults: { provider: 'ofox', model: '', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 1, retentionDays: 0 },
     promptOverrides: {},
-    exportToWorkspace: false,
     attachmentInConversation: true,
   }
   // 先写 config.json、再 load 进 store：这条路径与生产完全一致

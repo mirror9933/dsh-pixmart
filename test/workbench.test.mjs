@@ -1038,7 +1038,6 @@ describe('真实 runtime：删除 → 回收站 → 恢复 / 导出', () => {
         defaults: { provider: '', model: '', size: '1:1', n: 1 },
         limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 0, retentionDays: 0 },
         promptOverrides: {},
-        exportToWorkspace: false,
         attachmentInConversation: false,
         ...(options.exportDir === undefined ? {} : { exportDir: options.exportDir }),
       }),

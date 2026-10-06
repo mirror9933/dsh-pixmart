@@ -60,7 +60,6 @@ export interface PixmartConfig {
   readonly limits: LimitsConfig
   /** `<moduleId>` 或 `<moduleId>.<fragment>` → 覆盖文本（见 prompts/build.ts）。 */
   readonly promptOverrides: Readonly<Record<string, string>>
-  readonly exportToWorkspace: boolean
   readonly attachmentInConversation: boolean
   /**
    * **作品库导出路径**：用户在作品库点「导出」时，项目图片被**复制**到
@@ -122,7 +121,6 @@ export function defaultConfig(): PixmartConfig {
     },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 3, retentionDays: 0 },
     promptOverrides: {},
-    exportToWorkspace: false,
     attachmentInConversation: true,
     exportDir: '',
   }
@@ -436,7 +434,6 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
         retentionDays: pickNumber(limitsRaw, 'retentionDays', 0, warnings, 'limits', { min: 0, max: 3_650 }),
       },
       promptOverrides: pickStringRecord(raw, 'promptOverrides', {}, warnings, 'config'),
-      exportToWorkspace: pickBool(raw, 'exportToWorkspace', false, warnings, 'config'),
       attachmentInConversation: pickBool(raw, 'attachmentInConversation', true, warnings, 'config'),
       exportDir: pickExportDir(raw, fallback.exportDir, warnings),
     },

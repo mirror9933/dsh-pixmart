@@ -102,7 +102,6 @@ function makeRuntime(tweaks = {}) {
     defaults: { provider: 'mock', model: 'test-image-model', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 0, retentionDays: 0 },
     promptOverrides: {},
-    exportToWorkspace: false,
     attachmentInConversation: false,
     ...(tweaks.config ?? {}),
   }
@@ -323,10 +322,16 @@ describe('pixmart_projects', () => {
       assert.equal(usage.summary.requests, 1)
       assert.equal(usage.summary.images, 1)
 
-      // 导出
-      const exported = await tool.execute({ action: 'export', id: made.projectId }, stubExec)
+      // 导出：目标取自入参 `dir`（或设置里的「作品库导出路径」）——**没有**默认落点，
+      // 未配也未给就明确失败。落点固定是 <目标>/<项目 id>/。
+      const exportDir = join(dir, 'export-out')
+      const exported = await tool.execute(
+        { action: 'export', id: made.projectId, dir: exportDir },
+        stubExec,
+      )
       assert.equal(exported.ok, true)
       assert.equal(exported.count, 1)
+      assert.equal(exported.targetDir, join(exportDir, made.projectId))
       assert.ok(existsSync(exported.files[0]))
 
       // 未确认的删除被拒绝，且项目仍在
