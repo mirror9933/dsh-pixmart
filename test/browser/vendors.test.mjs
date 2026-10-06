@@ -221,11 +221,16 @@ const OFFICIAL_MODEL_ROW = {
   listPadTop: '0px',
   listPadLeft: '0px',
   /**
-   * 本插件**保留**的滚动上限：官方 `._3nPmjq_candidateList{max-height:320px}`，
-   * 我们用 240px（既有 jsdom 用例把它钉在 240px，且 240 < 320 —— 改大等于放宽
-   * "150 项不许把卡片撑爆"这条保证）。偏差见 §23。
+   * 滚动上限 = 官方值 `._3nPmjq_candidateList{max-height:320px}`
+   * （`settings-backends`… 不，是 `settings-models/lib/client.js:58` 那一行内联 CSS）。
+   *
+   * 2026-10-12 修正偏差 ③：早先本插件取 240px，理由是"既有 jsdom 用例把它钉在 240px，
+   * 改大等于放宽保证"—— 方向错了：目标是"与官方一致"，官方值就是标准，
+   * 那条 jsdom 断言应当按官方值**更新**（更新断言 ≠ 放宽断言）。
+   * "150 项不许把卡片撑爆"这条保证没有被削弱：`overflowY:auto` 与上限本身都还在
+   * （见下面 2.3 里 `scrollHeight >= clientHeight` 那条互补断言）。
    */
-  listMaxHeight: '240px',
+  listMaxHeight: '320px',
 }
 
 // ── lane 启动 ───────────────────────────────────────────────────────────────

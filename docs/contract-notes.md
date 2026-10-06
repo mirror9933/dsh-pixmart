@@ -1835,8 +1835,12 @@ lane 侧新增探针（`test/browser/lane.js`）：`fieldRow` / `selectFacts` / 
 
 ### 23.5 与官方的偏差（每一处都说清代价）
 
-1. **输入控件仍是 `settings-form` 的 `.input`（34px / `0 12px` / 13px / `bg-layer-3`），
-   不是这一页自己的 `.input`（32px / `0 10px` / 14px / `bg-layer-1`）**。
+1. ~~**输入控件仍是 `settings-form` 的 `.input`（34px / `0 12px` / 13px / `bg-layer-3`），
+   不是这一页自己的 `.input`（32px / `0 10px` / 14px / `bg-layer-1`）**~~
+   **（2026-10-12 已修正：见 §24.2 —— 这一页私有的那枚 `._3nPmjq_input` 与
+   `settings-form` 的 `.input` 是同一页里并存的两个类，按"控件属于哪一类"各自对齐；
+   §23.5-1 原来那段理由"改它要改两条既有断言，与'不得削弱断言'冲突"方向是错的：
+   那两条断言按官方值更新即可，更新断言 ≠ 放宽断言。）**
    官方同一页里两个类并存：`.field` 里的 `<input>` 用的是**页面私有**的
    `._3nPmjq_input`（`:73`），而 `primitives` 的 `settings-form/fields.module.css` 的
    `.input` 是**跨页面共享**的表单值控件。本插件从 2026-10-07 起把设置页的全部表单控件
@@ -1848,9 +1852,13 @@ lane 侧新增探针（`test/browser/lane.js`）：`fieldRow` / `selectFacts` / 
    `#0000001f`(浅) / `#ffffff29`(深)，`border-l2` 是 `#0000001a` / `#ffffff1f` —— 差 5/255
    的 alpha。为这一处扩容 token 清单不划算（§23.4-1 的代价是实打实的），故不扩。
    形状（0.5px / 1px dashed / radius-xs / radius-lg）都按官方。
-3. **模型列表滚动上限保留 240px**（官方 `.candidateList` 是 320px）：既有 jsdom 用例
-   （`test/client-settings-dom.test.mjs`「列表必须放在 max-height: 240px 的滚动容器里」）
-   把它钉在 240px，而 240 < 320 —— 改大等于**放宽**"150 项不许把卡片撑爆"这条保证。
+3. ~~**模型列表滚动上限保留 240px**（官方 `.candidateList` 是 320px）~~
+   **（2026-10-12 已修正：见 §24.2 / §24.3 —— 上限改成官方的 320px，
+   并把那条 jsdom 断言按官方值更新；"150 项不许把卡片撑爆"这条保证没有被削弱：
+   `overflowY:auto` 与上限本身都还在，只是上限挪到官方值。）**
+   既有 jsdom 用例（`test/client-settings-dom.test.mjs`「列表必须放在 max-height: 240px
+   的滚动容器里」）把它钉在 240px，而 240 < 320 —— 改大等于**放宽**"150 项不许把卡片撑爆"
+   这条保证。
 4. **拉取结果仍在卡片内联展开，官方是 `Modal`**：官方把候选列表放在 `Modal`（`.fetchDialog`
    `max-width:520px`）里。本插件的面板开合行为（展开 / 取消 / 重开、内部滚动）被既有 jsdom
    用例逐条钉住，改成 Modal 属于"换交互形态"而不是"统一视觉"，本次不做；列表本身的几何
@@ -1912,3 +1920,194 @@ lane 侧新增探针（`test/browser/lane.js`）：`fieldRow` / `selectFacts` / 
    在视觉上"轻"**：这是官方「获取模型」的真实档位（§23.1），位置也照搬（模型区块标题行右侧）。
    若用户更看重"显眼"而不是"和官方一致"，把它换成 `Btn`（描边、`Button.sm`）是一行的事 ——
    本次按"与官方一致"取，如实标出这处取舍。
+
+---
+
+## 24. 修正 §23 的两条偏差 + 可搜索下拉（2026-10-12）
+
+用户要求三件事：① 把上一轮记的偏差 ②（输入字段尺寸/底色）与 ③（模型列表滚动上限）
+**按官方值改掉**；② 把「默认值 → 模型」下拉做成**可搜索**且**弹层不再被遮挡**；
+③ 连带的断言与反向变异。约束：只动 `client/client.js` + 测试 + 文档，不动 `src/**`。
+
+### 24.1 官方取值的确切出处（都在 app.asar 内联 CSS 里核过原文）
+
+官方那一页 = `dsh/node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js`
+（`tools/asar.mjs read` 取出的副本与仓库里 `.probe/models-client.js` 逐字节一致；
+下面行号即该文件行号，CSS 全在 `:58` 那一行内联串里）：
+
+| 位置 | 规则原文 | 出处 |
+|---|---|---|
+| **本页输入字段** | `._3nPmjq_input{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);width:100%;**height:32px**;font:inherit;**background:var(--dsw-alias-bg-layer-1)**;color:var(--dsw-alias-label-primary);padding:0 10px;font-size:14px;line-height:22px}` | `.probe/models-css-pretty.txt:73`（同一行 CSS 里的规则；`:58` 是那一行的宿主） |
+| 本页 `<select>` | `select._3nPmjq_input{cursor:pointer;max-width:240px}` —— **同一个类** | `:74` |
+| 标记结构（三个字段） | `:1295` / `:1319` / `:1336` 的 `className = input`（Base URL / Gemini 原生 URL / API Key）；`:2288` 的 `input + selectInput` | 同文件 |
+| **候选列表上限** | `._3nPmjq_candidateList{flex-direction:column;gap:2px;**max-height:320px**;margin:0;padding:0;list-style:none;display:flex;overflow-y:auto}` | `.probe/models-css-pretty.txt:88` |
+| 对照：`settings-form` 的 `.input` | `primitives/lib/settings-form/fields.module.css:108-115` → `height:34px;padding:0 12px;border-radius:var(--dsw-radius-md);border:.5px solid var(--dsw-alias-border-l4);font-size:13px;line-height:1.5`（`bg-layer-3`） | 不在本页私有类里 |
+
+**关键区分**（上一轮偏差 ② 就是在这里判断错了方向）：官方**同一页里两个类并存** ——
+`._3nPmjq_input` 是这一页私有的（32px / `bg-layer-1`），`settings-form` 的 `.input`
+是跨页面共享的（34px / `bg-layer-3`）。"与官方一致"要按**控件属于哪一类**对齐，
+不是"全站统一到共享那一个"。
+
+### 24.2 改了哪些处（client/client.js）
+
+| # | 改动 | 位置 |
+|---|---|---|
+| 1 | `S` 新增 `modelsInput{Height:32px,Pad:'0 10px',FontSize:14px,LineHeight:22px}` | `S` 表内 |
+| 2 | 新增 `modelsPageInputStyle`（32px / `0 10px` / 14px-22px / `bg-layer-1` / `border-l4` / `radius-md`） | 紧随 `inputStyle` |
+| 3 | 厂商卡片的**三个输入字段**（Base URL / Gemini 原生 URL / API Key）改用 `modelsPageInputStyle` | 厂商卡片编辑块 |
+| 4 | 自绘下拉触发器 `S.selectHeight` `36px→32px`、`selectPad` `0 14px→0 10px`，底色 `bg-layer-3→bg-layer-1` | `SelectField` |
+| 5 | `S.modelScrollMaxHeight` `240px→320px` | `S` 表内 + `ModelPickerPanel` |
+
+**没有一起改的**（仍属 `settings-form` 那一类，任务书明确警告不要动）：
+`inputStyle` 本身（34px / `bg-layer-3`）——「作品库导出路径」文本框、作品库工具条的
+排序下拉、提示词降级文本域都还挂着它；搜索框（36px / `bg-layer-1`）也没动。
+
+### 24.3 按官方值**更新**的既有断言（逐条，附官方取值依据）
+
+> 更新断言 ≠ 放宽断言：每一条都是"把期望值从旧实现抄来的数改成官方原文的数"，
+> 判据形式（等于/不等于/上限/内部滚动）一条都没削弱。
+
+| # | 文件:断言 | 改动 | 官方依据 |
+|---|---|---|---|
+| 1 | `test/client-settings-dom.test.mjs`「列表必须放在 max-height: 240px 的滚动容器里」 | `240px → 320px`（断言形式不变：`style.maxHeight === '320px'` + `overflowY === 'auto'`） | `._3nPmjq_candidateList{max-height:320px}`（`models-css-pretty.txt:88`） |
+| 2 | `test/browser/vendors.test.mjs` `OFFICIAL_MODEL_ROW.listMaxHeight` | `'240px' → '320px'` | 同上 |
+| 3 | `test/browser/sizes.test.mjs` 1.1（`fieldExpectation` 的 `textInput` / `passwordInput` / `select`） | `OFFICIAL_FIELD`（34px / `0 12px` / 13px / 19.5px）→ 新增的 `OFFICIAL_MODELS_INPUT`（**32px / `0 10px` / 14px / 22px**）；`OFFICIAL_SELECT`（36px / `0 14px`）整块删掉 —— 它引用的是官方**「权限」页**的 `.selector`，不是本页 | `._3nPmjq_input{height:32px;padding:0 10px;font-size:14px;line-height:22px}`（`:73`）；`select._3nPmjq_input`（`:74`） |
+| 4 | `test/browser/sizes.test.mjs` 1.1 的**触发器无描边**那一半 | 键名 `expectNoBorder` → `expectNoBorderForTrigger`，并且只在 `where === 'select'` 时生效（文本框照旧判 0.5px 描边） | 触发器形态沿用 `.selector{border:none}`；官方本页 `<select>` 有描边，但我们画的是"触发器 + 弹层"，这一半属**已知的形态差异**（§24.6-①） |
+| 5 | `test/browser/theme.test.mjs` 8.9 | 判据从"底色 == `bg-layer-3`"改成**按控件分类判层**（每条 `CONTROLS` 带 `layer`）：`input.text` / `input.password` / `select` → **`bg-layer-1`**；`input.exportDir` / `textarea.prompt` → `bg-layer-3`。反证从 2 层扩到 3 层（`bg-base` / 相邻的另一层 / 卡片层都不得相等）；深色"互不相同"前提从 3 层扩到 **4 层**；`input.text` 的选择器从 `.pxm-settings input[type="text"]`（会命中页面最后一枚 = 导出路径那一枚）改成 `#pxm-provider-base-url`，`select` 改成 `#pxm-defaults-provider` —— **钉住具体那一枚**，不再依赖实现顺序 | `._3nPmjq_input{background:var(--dsw-alias-bg-layer-1)}`（`:73`）；`settings-form` `.input` 仍是 `bg-layer-3` |
+| 6 | `test/browser/lane.js` 的 `selectFacts(labelText)` | 字段标签从**子串**匹配改成**精确**匹配：字段多了之后「厂商」的说明里含"模型"二字，子串匹配会静默选错行（实测：按 `模型` 找拿到的是「厂商」那一行，长列表用例全红） | 不是断言，是探针的定位纪律 |
+
+**净新增/删除的用例数**：`pnpm test` 仍 **323**（只有 1 处的期望值变化，`it` 数量不变）；
+`pnpm test:browser` **49 → 56**（+7，全部在 `controls.test.mjs` 第 4 组）。
+
+### 24.4 弹层**被什么裁掉**：证据与选定的修法
+
+**先查明**（不是猜）：用 lane 新增的 `clipChain()` 探针从弹层往上逐个祖先看
+`overflow-x/y` 与"弹层是否越出它的 padding box"，在**会裁的场景**（1280×480、不滚动、
+「尺寸」触发器 top 346 / bottom 378）下实测：
+
+```
+clipper: {"tag":"DIV","id":"settingsDialog","className":"","overflowX":"auto","overflowY":"auto",
+          "rect":{"top":40,"left":0,"right":1280,"bottom":480,...},"overflowsY":true,"clips":true}
+祖先链：span.pxm-select(visible) → div(visible) → div.card(visible) → div(visible) →
+        div(visible) → div.pxm-settings(visible) → #host:settings.section(display:contents) →
+        #settingsAnchor(display:contents) → #settingsDialog(auto/auto, **clips**) → body(hidden)
+```
+
+即：**裁它的是设置弹窗自己**（lane 的 `#settingsDialog{overflow:auto}`；真实 shell 是
+`SettingsRoot` 的 `.wCInkW_options{overflow-y:auto}`，`client.js` 里 `skin.wrap` 的注释
+早就写着"设置页的滚动由设置弹窗自己负责"）。插件自己的 `.pxm-settings` 与卡片全是
+`visible` —— 所以**不能靠"让某个祖先别裁"修**（那是 shell 的容器，不是我们的）。
+
+**选定的修法**：**(a) `position: fixed` + 自身翻转 / 夹取**（不是 portal，也不是调小
+`max-height`）。理由三条：
+
+1. **不动 DOM 结构**：portal 会把弹层移出字段子树，而
+   - 「点外部关闭」靠 `listRef.contains(target)`（跨树仍可用，但要多一个 ref 与一处特判）；
+   - `selectFacts` 探针在 `field.querySelector('[data-pxm-select-list]')` 里找弹层；
+   - 更硬的理由：React 18 的合成事件走**根容器委托**，手工 append 到 `body` 的节点不在
+     根容器里 ⇒ 选项上的 `onClick` 会失效（要额外挂原生监听器打补丁，更脆）。
+2. **`fixed` 本身就能脱离祖先裁切**：只有祖先带 `transform`/`filter`/`contain`
+   才会为 fixed 建立包含块 —— 本插件与官方 shell 都不这么写（已核对祖先链）。
+3. **调 `max-height` 不算修**：内容矮时（3 项的弹层自然高 116px）高度上限根本不起作用，
+   被裁是**位置**的问题；而且"下方只有 66px"时把上限调到 66 会让列表只剩两行。
+
+实现要点（都在内联样式里，浏览器 lane 直接断言 `rect`）：
+
+- 打开时 `getBoundingClientRect()` 量触发器 → `spaceAbove` / `spaceBelow`（各留 8px 视口边距）
+  → 向下优先，下方真的不够才翻上；高度上限 = `min(可用空间, 320)`（带搜索框时内容上限放宽到
+  360 = 320 列表 + 36 外壳），下限 44px（宁可略溢出也不给"看不见内容"的盒子）。
+- **用"贴住触发器的那一条边"定位**（向上钉 `bottom`、向下钉 `top`），不是
+  "算好高度再 `top = triggerTop − 4 − maxHeight`"。后者在**内容比上限矮**时会把弹层
+  一头栽到视口顶部：实测 3 项的弹层自然高 116px，而算出来的 `top = 346 − 4 − 320 = 22`，
+  于是它停在 22 而不是紧贴触发器（334）—— 这是本次实现里踩到并修掉的一个真 bug。
+- 左右夹取：`left = clamp(triggerLeft, 8, innerWidth − width − 8)`，宽度跟触发器一致
+  （原生 `<select>` 的弹层也是这个宽）；`max-width` 再挡一层。
+- 弹层**自身** `overflow:hidden` + 内层 `.pxm-select-scroll{overflowY:auto;maxHeight:320px}`：
+  滚动只发生在内层 ⇒ 搜索框不会被滚走；高亮项 `scrollIntoView({block:'nearest'})` ⇒
+  选中项不会被滚出视野。
+- 跟随一次 `resize` / `scroll`（`capture:true` 才收得到任意滚动容器），另外在下一帧
+  `requestAnimationFrame` **再量一次** —— 因为 `focus()` 引起的"滚动到可见"不一定派发
+  `scroll` 事件（实测设置弹窗 `scrollTop` 从 0 变到 36 而弹层还停在按滚动前的位置）。
+
+### 24.5 可搜索下拉：交互与适用范围
+
+- **触发条件**：`props.searchable === true || options.length > 8`（阈值 **8**）。
+  依据：官方给候选列表配搜索框的那一页列表动辄几十上百项；而本插件另外两枚下拉
+  （厂商 3 家、尺寸 6~8 个）在 8 项以内一屏就能看全 —— 多一个搜索框只会让弹层更高、
+  还多一次 Tab。所以**不是**全站统一启用，短列表保持"纯 ↑↓"的原形态。
+  注意阈值判定用的是**选项总数**而不是可见项数：用可见项数的话，"打开 16 项 → 打 `flux`
+  → 结果剩 2 项"会把搜索框自己抽掉（连同用户刚输入的内容），实测过这个形态。
+- **过滤**：`label` / `value` 的**大小写不敏感子串**匹配；`↑↓` 在**过滤结果**内循环
+  （落点换算回原数组下标，所以 ✓ / `aria-checked` / `Enter` 口径都不变）；`Home` / `End`
+  到过滤结果首尾；`Enter` 选中并写回触发器（与原生 `<select>` 的 `onChange` 同形）。
+- **键入选字**：打开后焦点落在**列表容器**上（长列表形态），打一个可打印字符立即把焦点
+  转到搜索框并追加该字符（`Backspace` 同理）—— 不然用户要先 Tab 一次才够得着搜索框。
+  短列表（无搜索框）形态保持改造前行为：焦点直接落在**当前项**上。
+- **清空**：搜索框右侧的 `×`（手写 SVG `close`）只在有内容时出现，点它清空并把焦点交回搜索框。
+- **空态**：过滤无结果时给出可读文案「没有匹配的选项」（`data-pxm-select-empty`），
+  此时 `Esc` / 点外部照常关闭，`Enter` 不做任何事（不会写坏值）。
+- **关闭**：`Esc`（焦点交回触发器）/ 点弹层外部 / 选中后关闭；三者都不改动未确认的值。
+- **当前项仍打 ✓** + `aria-checked="true"`（与改造前一致）。
+
+### 24.6 新增断言（`test/browser/controls.test.mjs` 第 4 组，7 条）与反向变异
+
+| 用例 | 钉住什么 |
+|---|---|
+| **4.1** | 16 项长列表的弹层**有**搜索框（且初始为空、有 placeholder、无「清空」）；3 项短列表**没有** |
+| **4.2** | 输入即过滤：选项变少且只含匹配项（含"小写 `gpt` 命中 `Gpt-Image-1`"这条大小写不敏感的证据）；「清空」恢复全量 |
+| **4.3** | `↑↓` 只在**过滤结果**内移动（判据 = `data-pxm-state="active"` 的下标）；`Enter` 选中写回触发器 |
+| **4.4** | 直接在容器上打字就进搜索框（焦点转移）；无结果显示可读空态；空态下 `Enter` 不关弹层 |
+| **4.5** | **会裁的场景**（1280×480 不滚动，下方只剩 98px）：弹层完整在视口内 + 翻到触发器上方 + 高度不小于 116px（3 项能看全） |
+| **4.6** | 长列表 + 矮窗口：完整可见、高度 = `min(可用空间, 320)`、宽度跟触发器、内层可滚；过滤后仍可见；**窗口缩到 420px 宽**后仍夹在视口内 |
+| **4.7** | `Esc` / 点外部关闭，且都不改动已选值 |
+
+**反向变异**（`tools/lane-mutations.mjs`，新增 3 条，全部 ✔ —— 脚本自证"仓库原产物
+sha256 前后一致"）：
+
+| 变异 | 改坏什么 | 抓住它的用例 | 真实报错（首条断言消息） |
+|---|---|---|---|
+| `M41-no-select-search` | 搜索框的渲染条件 `enableSearch → false`（长列表退化成纯 ↑↓） | 4.1 / 4.2 / 4.3 / 4.4 / 4.6 | `4.1`：`16 项的长列表必须有搜索框：null`；`4.2`/`4.3`：`page.fill: Timeout 30000ms exceeded.`；`4.4`：`Cannot read properties of null (reading 'value')`；`4.6`：`16 项必须带搜索框` |
+| `M42-select-list-clipped` | 弹层退回 `position:absolute` + `left:0`（不再固定/翻转/夹取） | 4.5 / 4.6 | `4.5`：`弹层底边不许超出视口：{"list":{"top":382,...,"bottom":498,...},"viewport":{"width":1280,"height":480,...}}`；`4.6`：`弹层高度不得超过 min(可用空间 257px, 官方上限 320px)：{"top":161,...,"height":311}` |
+| `M43-models-input-old-34px` | 模型页输入控件退回 34px / `bg-layer-3` | 1.1（`sizes`）/ 8.9（`theme`） | `1.1`：`设置页 textInput 的尺寸与官方「模型」页本页的 ._3nPmjq_input 不一致：`（高度 34 ≠ 32）；`8.9`：`深色：input.text 的底色是 bg-layer-3（rgb(53, 54, 56)，源码挂在 modelsPageInputStyle.background）。官方同类控件用的是 --dsw-alias-bg-layer-1` |
+| `M41` 的连带失败 | — | — | 没有搜索框 ⇒ 4.2 / 4.3 连"往搜索框里写字"这一步都做不到（`page.fill` 超时），如实记下而不是当成噪声 |
+
+**被这次改造影响、锚点/期望一并更新的既有变异**（不是放宽，是"被它覆盖的对象变了"）：
+
+| 变异 | 为什么必须改 | 改成了什么 |
+|---|---|---|
+| `M20-input-surface-is-bg-base` | 设置页的输入控件已从 `inputStyle`（`bg-layer-3`）改挂 `modelsPageInputStyle`（`bg-layer-1`）；8.9 现在是"按控件分类判层"，只有动**这一类**才会走到"最近色命中 `bg-layer-1`"那条断言上 | 锚点改成 `modelsPageInputStyle` 的 `background: T.bgLayer1`，`expect` 换成 8.9 的新用例名。**判据强度不变**（它现在证的是"模型页那一层不是 bg-base"） |
+| `M21-input-surface-is-bg-layer-2` | 同上；这一条专证 8.9 里"**不等于** `bg-layer-2`"不是空转（`bg-layer-2` 与 `bg-layer-1` 深色只差一档） | 同上 |
+| `M22-input-height-old` | `S.fieldHeight` 现在只剩作品库工具条的**排序下拉**这一处消费方（设置页的文本框 / 下拉已改挂 `modelsPageInputStyle` 的 32px） | `expect` 从 `sizes 1.1`（设置页）改成 **`2.1`（作品库）**；断言本身一字未动。设置页那一半现在由 `M43` 盯着 |
+| `M27-no-select-chevron` | chevron 之后紧跟的不再是 `open ? …` 三元，而是 `),` + 弹层注释（弹层改成 `const popup`） | 第二处 `find` 的收尾锚点改成那一行注释 |
+| `M28-no-select-list` | 弹层从"内联三元"改成 `open ? popup : null` | `find` 改成那一行，`replace` 改成 `null,` |
+| `M26-radius-hardcoded` | 弹层不再用 `S.radiusLg`（卡片那处仍在） | 锚点不变，只补一句说明 |
+
+### 24.7 结果
+
+`pnpm verify`（`typecheck + build + test + test:browser`）：**323 + 56**，全绿。
+`pnpm test` **323 → 323**（基准不变）；`pnpm test:browser` **49 → 56**（+7）。
+`node tools/lane-mutations.mjs` 基线 `pass=56 fail=0`；`M41` / `M42` / `M43` 全 ✔，
+既有 40 条（含 1 条信息性 `M12`）在锚点更新后同样全部 ✔。
+
+### 24.8 没做到 / 没把握（诚实记录）
+
+1. **极端窄/矮窗口下"完整可见"与"看得见内容"会冲突**：弹层高度有一个 44px 的下限
+   （约一行 + 内边距），当两侧可用空间都小于 44px 时会**略微溢出视口**而不是缩成一条缝。
+   当前用例覆盖到 420×480，更极端（例如 320×200）没有断言 —— 那时的行为是"可能溢出 20~40px"，
+   这是**已知取舍**，不是没测出来。
+2. **翻转只在"下方真不够"时发生**：判据是"可用空间"而不是"内容高度"（内容高度由浏览器
+   排版给出，量它要多一次 layout pass）。所以理论上存在"下方够 320px、内容只有 116px，
+   但用户更希望它向上"的场景 —— 这不影响正确性（都在视口内），只是位置偏好。
+3. **`.pxm-select-list` 的推断宽度**：弹层宽度严格等于触发器宽度（原生 `<select>` 的弹层
+   也是这个宽）。官方 `Menu` 有 `min-width:144px / max-width:360px` 两条，**我们没有跟** ——
+   跟了就会在窄面板里溢出或与触发器错位；`S.menuMinWidth` / `S.menuMaxWidth` 因此成为
+   无引用的常量（保留作为文档，未删）。
+4. **搜索是纯前端过滤**：不参与插件的服务端搜索，也不改变"已选"语义（选择仍然是
+   `SelectField` 的单值语义）。过滤结果为空时**保留**已经选中的值（不清空），这一点没有
+   专门用例（4.4 只断言"Enter 不写坏值"）。
+5. **没有做键盘的"高亮项自动滚入视野"断言**：实现里有 `scrollIntoView({block:'nearest'})`，
+   但用例只断言"选中项（带 ✓ 的那一项）在可视滚动区内"（4.5-③），没有断言"连续 ↓ 到底部时
+   高亮项跟着滚" —— 后者需要一个更长的夹具与逐帧断言，本次没做。
+6. **`M42` 变异里宽度与定位是"一并退回旧形态"的**：单看不能证明"宽度夹取"这一条独立有效
+   （4.6 里那条 `listRect.width == triggerRect.width` 在 `M42` 下也会红，但与位置那条混在一起）。
+   如实记录：宽度那一条目前没有**单独**的反向变异。

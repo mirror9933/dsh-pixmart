@@ -304,9 +304,48 @@ window.__ModuleLoader__.load({
       fieldPad: '0 12px',
       fieldFontSize: '13px',
       fieldLineHeight: '1.5',
-      // 自绘下拉触发器（PermissionRow.module.css .selector，client.js:438）
-      selectHeight: '36px',
-      selectPad: '0 14px',
+      /*
+       * ── 官方「模型」设置页**本页**的输入控件（2026-10-12 修正偏差 ②）──────
+       *
+       * 与上面的 `field*` 是**两个不同的类**，官方同一页里并存：
+       *   - `field*` = `primitives` 的 `settings-form/fields.module.css` 的 `.input`
+       *     （34px / `0 12px` / 13px / `bg-layer-3`）—— 跨页面共享的表单值控件；
+       *   - `modelsInput*` = `settings-models` 本页私有的 `._3nPmjq_input`
+       *     （32px / `0 10px` / 14px/22px / `bg-layer-1`）—— 官方**厂商卡片编辑器里
+       *     那三个字段**（Base URL / Gemini 原生 URL / API Key）与页内原生 `<select>`
+       *     用的就是它；官方那一页的**拉取弹层搜索框**也复用它
+       *     （`:843` 的 `className = input + candidateSearch`）。
+       *
+       * 出处 = `@deepseek-ai/dsh-client-ui-settings-models/lib/client.js:58` 那一行内联 CSS：
+       *   `._3nPmjq_input{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);
+       *    border-radius:var(--dsw-radius-md);width:100%;height:32px;font:inherit;
+       *    background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);
+       *    padding:0 10px;font-size:14px;line-height:22px}`
+       * 标记结构 = 同文件 `:1295` / `:1319` / `:1336`（`.field` 里的三枚 `<input>`）。
+       * 行高按官方那一行的显式 `line-height:22px` 照抄（不是从 32px 反推的比例）。
+       */
+      modelsInputHeight: '32px',
+      modelsInputPad: '0 10px',
+      modelsInputFontSize: '14px',
+      modelsInputLineHeight: '22px',
+      /*
+       * 自绘下拉触发器：**2026-10-12 起取「官方模型页本页」那一档**
+       * （`._3nPmjq_input` = 32px / `0 10px` / 14px-22px），与页内三枚输入字段同高同档。
+       *
+       * 为什么从 `.selector`（`PermissionRow.module.css:438`，36px / `0 14px` /
+       * `bg-module-platform`）换过来：本插件设置页的「厂商 / 模型 / 尺寸」下拉，语义上就是
+       * 官方「模型」页 `:2288` 那枚 `<select className="input selectInput">` ——
+       * **官方同语义控件就是 `._3nPmjq_input`（32px / `bg-layer-1`）**，而不是「权限」那一行的
+       * `.selector`。原先取 `.selector` 是因为"官方 client 侧没有 `<select>`"，
+       * 现在查明官方模型页**确实有** `<select>`（只是 `selectInput` 只加了箭头底图），
+       * 所以同语义对照物换成这一枚。首次引入 `select` 时记的偏差见 `docs/contract-notes.md` §21.7。
+       *
+       * 保留 `.selector` 的两项：`gap:12px`（标签与 chevron 之间）与 `border:none`
+       * （官方 `._3nPmjq_input` 有 0.5px 描边，但**我们这枚是触发器不是文本输入**，
+       * 描边那一半仍按自绘触发器的形态走，`theme.test.mjs` 8.9 钉着"无描边"）。
+       */
+      selectHeight: '32px',
+      selectPad: '0 10px',
       selectFontSize: '14px',
       selectLineHeight: '22px',
       selectGap: '12px',
@@ -346,6 +385,29 @@ window.__ModuleLoader__.load({
       menuItemLineHeight: '20px',
       menuIconSize: '14px',
       menuOffset: '4px',
+      /*
+       * 弹层自身的**高度上限**与**最小可用高度**（2026-10-12，可搜索下拉 + 不被裁）。
+       *
+       * 320 = 官方候选列表的上限（`._3nPmjq_candidateList{max-height:320px}`，
+       * `settings-models/lib/client.js:58`）—— 列表本身不小于这个约束。
+       * 44 = 大约"一行选项 + 上下内边距"：可用空间再紧也不能给出一个完全看不见内容的盒子。
+       * 注意它**可能**让弹层略微超出视口（例如极端矮窗口下两侧都只剩 10px）——
+       * 那时"完整可见"与"看得见内容"是一对冲突目标，本插件选后者（见 §24.6，不粉饰）。
+       */
+      menuMaxHeightPx: '320px',
+      menuMinHeightPx: '44px',
+      /*
+       * 带搜索框时不设 320 的内容上限：搜索框那一行（约 32 + 4 间距）是"外壳"，
+       * 真正该受 320 约束的是**列表本身**（官方 `.candidateList{max-height:320px}`）。
+       * 所以带搜索框的弹层总高上限 = 320 + 外壳，列表内部仍然按 320 收。
+       * 两者都不越出视口：可用空间更小时取可用空间（见定位逻辑里的 `cap`）。
+       */
+      menuSearchMaxHeightPx: '360px',
+      /*
+       * 弹层内搜索框的左内边距：放大镜图标落在 `searchIconLeft:12px`（16px 见方），
+       * 所以文字要从 12 + 16 + 2 = 30px 开始，图标才不压字。
+       */
+      searchPadLeft: '30px',
       // 行内动作按钮（Button.module.css .sm）
       buttonHeight: '28px',
       buttonPad: '0 10px',
@@ -431,12 +493,15 @@ window.__ModuleLoader__.load({
       modelRowGap: '8px',
       modelRowFontSize: '13px',
       /*
-       * 官方 `.candidateList{max-height:320px}`。本插件**保留 240px**：既有 jsdom 用例
-       * （`test/client-settings-dom.test.mjs`「列表必须放在 max-height: 240px 的滚动容器里」）
-       * 已经把它钉在 240px，且 240 < 320 —— 改大等于放宽"150 项不许把卡片撑爆"这条保证。
-       * 偏差记在 `docs/contract-notes.md` §23。
+       * 官方 `.candidateList{max-height:320px}`（`settings-models/lib/client.js:58`）。
+       *
+       * 2026-10-12：**改成与官方同值 320px**（此前是 240px，记在 §23.5-③ 的偏差）。
+       * 早先不改的理由是"既有 jsdom 用例把它钉在 240px，改大等于放宽" —— 方向错了：
+       * 目标是"与官方一致"，官方值就是标准，那条断言应当**按官方值更新**（更新断言 ≠ 放宽）。
+       * "150 项不许把卡片撑爆"这条保证没有被削弱：`overflowY:auto` 与上限本身都在，
+       * 只是上限从 240 挪到官方的 320 —— 断言仍然写着"必须有上限 + 内部滚动"。
        */
-      modelScrollMaxHeight: '240px',
+      modelScrollMaxHeight: '320px',
       // ._3nPmjq_modelEmpty{padding:12px;border-radius:var(--dsw-radius-lg);border:1px dashed …}
       emptyPad: '12px',
     })
@@ -466,6 +531,13 @@ window.__ModuleLoader__.load({
     const isArray = Array.isArray
     const isString = (v) => typeof v === 'string'
     const isNumber = (v) => typeof v === 'number' && Number.isFinite(v)
+    /** 把 px 字符串解析成数字；解析不出来给 0（而不是 NaN —— NaN 会让整条内联样式失效）。 */
+    const px = (v) => {
+      const n = Number.parseFloat(String(v))
+      return Number.isFinite(n) ? n : 0
+    }
+    /** 夹取到 `[lo, hi]`；`hi < lo` 时以 `lo` 为准（极端窄屏下宁可略溢出也不给空盒子）。 */
+    const clamp = (value, lo, hi) => Math.min(Math.max(value, lo), Math.max(lo, hi))
 
     // ── URL 与取数 ──────────────────────────────────────────────────────────
 
@@ -1434,6 +1506,9 @@ window.__ModuleLoader__.load({
       check: ['M2.25 8.5L5.49732 11.7473C5.90519 12.1552 6.57263 12.1344 6.95426 11.7018L13.75 4'],
       chevronDown: ['M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6'],
       chevronUp: ['M12 10L8.70711 6.70711C8.31658 6.31658 7.68342 6.31658 7.29289 6.70711L4 10'],
+      // 2026-10-12（可搜索下拉的「清空」按钮）：官方 `IconCloseOutlineRegular`
+      // （`primitives/lib/index.js`，与 `search` / `check` 同一处 artwork 集）。
+      close: ['M4 4L12 12', 'M12 4L4 12'],
     })
 
     function Icon(props) {
@@ -1501,6 +1576,38 @@ window.__ModuleLoader__.load({
       boxSizing: 'border-box',
     }
 
+    /**
+     * **官方「模型」设置页本页**那一枚输入控件的样式（2026-10-12 修正偏差 ②）。
+     *
+     * 与上面的 `inputStyle` 是**同一页里两个并存的官方类**，不是"两种口味随便挑"：
+     *   - `inputStyle` → `primitives` 的 `settings-form/fields.module.css` 的 `.input`
+     *     （34px / `0 12px` / 13px / `bg-layer-3`）：官方**跨页面共享**的表单值控件。
+     *     本插件设置页里**不属于官方「模型」页**的表单字段（「作品库导出路径」那枚
+     *     文本框、作品库工具条的排序下拉、提示词降级文本域）仍旧用它 —— 它们没有
+     *     "官方模型页本页"这一层对照物。
+     *   - `modelsPageInputStyle`（本对象）→ `settings-models` **本页私有**的 `._3nPmjq_input`
+     *     （32px / `0 10px` / 14px-22px / `bg-layer-1`）：官方那一页的**编辑块三字段**
+     *     （Base URL / Gemini 原生 URL / API Key）与页内 `<select>` 都是它。
+     *
+     * 出处见上面 `S` 里 `modelsInput*` 那一段（`settings-models/lib/client.js:58` 的规则原文）。
+     * 底色是 `bg-layer-1`（官方原文 `background:var(--dsw-alias-bg-layer-1)`）。
+     */
+    const modelsPageInputStyle = {
+      font: 'inherit',
+      boxSizing: 'border-box',
+      height: S.modelsInputHeight,
+      padding: S.modelsInputPad,
+      fontSize: S.modelsInputFontSize,
+      lineHeight: S.modelsInputLineHeight,
+      borderRadius: S.radiusMd,
+      color: T.label,
+      background: T.bgLayer1,
+      // 描边与 `inputStyle` 同一枚（官方两个类都写 `border:.5px solid var(--dsw-alias-border-l4)`）。
+      border: '0.5px solid ' + T.borderL4,
+      width: '100%',
+      minWidth: 0,
+    }
+
     function TextInput(props) {
       return h('input', {
         type: props.type ?? 'text',
@@ -1545,19 +1652,25 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 自绘下拉：**触发器 + 弹层**，替换设置页原来的原生 `<select>`。
+     * 自绘下拉：**触发器 + 可搜索弹层**。
      *
-     * 官方对照物是「权限」那一行（`@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js:438`
-     * 的 `PermissionRow` + `primitives/lib/Menu`）：
-     *   - 触发器是 `<button>`，挂 `.selector`（36px 高 / `0 14px` / `gap:12px` /
-     *     `radius-md` / `bg-module-platform` / 14px-22px 文字），标签后面跟一枚 chevron；
-     *     展开时 `aria-expanded=true`，并且 chevron 旋转 180°（官方 `PermissionSelect`
-     *     的 `.chevronOpen{transform:rotate(180deg)}`，client.js:265）。
-     *   - 弹层是 `Menu` 的卡片：`padding:4px` + `radius-lg` + 阴影，行是
+     * 官方的两处对照物各管一半（2026-10-12 复核后分工如下）：
+     *   - **触发器**取官方「模型」设置页**本页**那一枚 ——
+     *     `._3nPmjq_input{height:32px;padding:0 10px;font-size:14px;line-height:22px;
+     *     background:var(--dsw-alias-bg-layer-1)}` +
+     *     `select._3nPmjq_input{cursor:pointer}`（`settings-models/lib/client.js:58`，
+     *     标记结构见同文件 `:2288` 的 `<select className="input selectInput">`）。
+     *     也就是说：官方这一页**确实有** `<select>`，它用的就是本页私有的输入类。
+     *     `gap:12px`（标签与 chevron 之间）与"无描边"仍沿用官方自绘触发器的形态
+     *     （`PermissionRow.module.css` 的 `.selector`：`gap:12px; border:none`）。
+     *     展开时 `aria-expanded=true`，chevron 旋转 180°（官方 `.chevronOpen`）。
+     *   - **弹层**是 `Menu` 的卡片：`padding:4px` + `radius-lg` + 阴影，行是
      *     `role="menuitem"` 的按钮（34px 高 / `6px 8px` / `radius-md` / 13px-20px），
      *     hover 与键盘焦点都是 `--dsw-alias-interactive-bg-hover`，
      *     **当前项在行尾带一枚 ✓**（官方 `Menu` 的 `selected && selection === 'check'`
      *     渲染 `IconCheckOutlineRegular`，index.js:4198 + `Menu.module.css:209-212`）。
+     *     宽度跟触发器一致（原生 `<select>` 的弹层也是这个宽），高度上限取官方候选列表的
+     *     `._3nPmjq_candidateList{max-height:320px}`。
      *
      * 可用性按需求**不弱于**原生 `<select>`：
      *   - `Tab` 能进触发器（原生 `<button>`）；`Enter` / `Space` 展开（`<button>` 原生的
@@ -1566,10 +1679,30 @@ window.__ModuleLoader__.load({
      *     `Home` / `End` 到首尾；`Esc` 关闭并把焦点交回触发器；
      *   - 点外部关闭；`aria-haspopup="menu"` / `aria-expanded` / `role="menu"` /
      *     `role="menuitem"` / `aria-checked` 齐备；焦点可见用 `--dsw-*` 色的 focus 环。
+     *   - **长列表可搜索**（2026-10-12，用户反馈"16 个模型弹出列表太长"）：
+     *     选项数 > 8 时弹层顶部多一个搜索框（大小写不敏感子串过滤 + 清空按钮），
+     *     `↑↓` 只在过滤结果内移动、`Enter` 选中、无结果给可读空态；
+     *     焦点在列表容器上时直接打字符会自动转进搜索框。见 `SEARCH_MIN_OPTIONS` 的注释。
      *
-     * 弹层用 `position: absolute` 挂在触发器外面那层 `position: relative` 上（照官方
-     * `.list{position:absolute;top:calc(100% + 4px)}`），所以**不需要测量与 portal**；
-     * 代价是祖先若有 `overflow:hidden` 会被裁（见回报里的"没把握"一条）。
+     * 弹层的定位（2026-10-12 修正偏差 ③）：
+     *
+     * 早先弹层是 `position: absolute` + `top: calc(100% + 4px)`，挂在触发器外面那层
+     * `position: relative` 上。**这条路径会被祖先裁掉**：真实 shell 里设置弹窗
+     * （`SettingsRoot.module.css` 的 `.wCInkW_options{overflow-y:auto}`，本 lane 的
+     * `shell.html` 用 `#settingsDialog{overflow:auto}` 复刻同一条链）就是滚动/裁切容器，
+     * 触发器靠近它下边界时弹层被切掉一半。
+     *
+     * 现在改成 `position: fixed` + **自身翻转 / 夹取**：打开时量一次触发器，
+     * 空间够就向下、不够就翻到上方、两侧都不够就按可用空间收 `maxHeight`，
+     * 左右再夹进视口。**位置与上限都在内联样式里**（`top` / `left` / `maxHeight`），
+     * 所以浏览器 lane 能直接断言"弹层完整落在视口内"。
+     *
+     * 为什么不用 portal（`document.body` + 手工 append）：React 18 的合成事件走
+     * **根容器委托**，手工 append 到 body 的节点不在根容器里 ⇒ 选项上的 `onClick`
+     * 会失效（要靠额外监听器打补丁，反而更脆）；而 `position: fixed` 同样脱离祖先
+     * 裁切（唯一例外是祖先带 `transform`/`filter`/`contain`，那会为 fixed 建立包含块
+     * —— 本插件与官方 shell 都不这么写）。代价：弹层仍挂在字段的 DOM 子树里（对
+     * 探针与"点外部关闭"是好事，见下面 `onPointerDown`），需要自己跟一次滚动/尺寸变化。
      */
     function SelectField(props) {
       const options = isArray(props.options) ? props.options : []
@@ -1577,15 +1710,131 @@ window.__ModuleLoader__.load({
       const disabled = props.disabled === true
       const [open, setOpen] = React.useState(false)
       const [activeIndex, setActiveIndex] = React.useState(0)
+      const [keyword, setKeyword] = React.useState('')
       const triggerRef = React.useRef(null)
       const listRef = React.useRef(null)
+      const searchRef = React.useRef(null)
+      /**
+       * 弹层的位置与高度上限。初值 = "向下、跟触发器同左、不超过视口高"，打开后
+       * 由 `useLayoutEffect` 量真实触发器纠正 —— 所以**没有"先画错再跳"的闪烁**。
+       */
+      const [place, setPlace] = React.useState(() => ({
+        up: false,
+        anchor: 0,
+        left: 0,
+        width: 0,
+        // 初值只是"打开那一帧"的占位：真正的值在 useLayoutEffect 里量到触发器后写入，
+        // 所以取同一枚上限常量（`S.menuMaxHeightPx`）而不是另一处硬编码的 px。
+        maxHeight: Number.parseFloat(String(S.menuMaxHeightPx)),
+      }))
       const selectedIndex = options.findIndex((option) => String(option.value) === String(value))
       const current = selectedIndex >= 0 ? options[selectedIndex] : null
       const currentLabel = current === null ? '' : String(current.label ?? current.value ?? '')
 
+      /*
+       * 搜索框只在长列表上出现，阈值 8。依据：官方给候选列表配搜索框的那一页
+       * （`settings-models` 的拉取弹层）列表动辄几十上百项；而本插件其它两枚下拉
+       * （厂商 1~3 家、尺寸 3~8 个）在 8 项以内一屏就能看全 —— 多一个搜索框只会让弹层
+       * 更高、还多一次 Tab。所以**不是**全站统一启用能力：短列表保持"纯 ↑↓"的原形态。
+       */
+      const SEARCH_MIN_OPTIONS = 8
+      /**
+       * 能力开关：判定用**选项总数**（`options.length`），不用可见项数 ——
+       * 用可见项数的话，"打开 16 项 → 打 `flux` → 结果只剩 2 项"会把搜索框自己抽掉，
+       * 用户刚输入的内容连同输入框一起消失（实测过这个形态）。
+       * 过滤结果为空时仍然画着搜索框（用户要能改关键字）。
+       */
+      const enableSearch = props.searchable === true || options.length > SEARCH_MIN_OPTIONS
+
+      const trimmedKeyword = keyword.trim().toLowerCase()
+      /**
+       * 过滤后的选项**连同它们在原数组里的下标**：`activeIndex` 始终是原数组下标，
+       * 这样 ↑↓ / Enter / `aria-checked` / ✓ 全都不用改口径。
+       */
+      const filtered = options
+        .map((option, index) => ({ option: option, index: index }))
+        .filter((item) => {
+          if (trimmedKeyword === '') return true
+          const label = String(item.option.label ?? item.option.value ?? '').toLowerCase()
+          const raw = String(item.option.value ?? '').toLowerCase()
+          return label.indexOf(trimmedKeyword) >= 0 || raw.indexOf(trimmedKeyword) >= 0
+        })
+      const visibleOptions = filtered.map((item) => item.option)
+      const filteredIndex = filtered.findIndex((item) => item.index === activeIndex)
+      /** 兜底用的"两条边距"：与官方 `.list{top:calc(100% + 4px)}` 同一档。 */
+      const menuGap = px(S.menuOffset)
+
+      /**
+       * 量一次触发器 → 决定向下还是向上、上下留多少、左右夹到哪。
+       *
+       * 依赖 `[open, options.length, enableSearch]`：内容长度会改变弹层高度，
+       * 高度又决定"翻不翻"，所以这三者任一变化都重算一次。
+       */
+      React.useLayoutEffect(() => {
+        if (!open) return undefined
+        const measure = () => {
+          const trigger = triggerRef.current
+          if (trigger === null) return
+          const rect = trigger.getBoundingClientRect()
+          const viewportWidth = window.innerWidth
+          const viewportHeight = window.innerHeight
+          const margin = 8
+          const spaceBelow = viewportHeight - rect.bottom - menuGap - margin
+          const spaceAbove = rect.top - menuGap - margin
+          const listMax = px(S.menuMaxHeightPx)
+          const contentMax = enableSearch ? px(S.menuSearchMaxHeightPx) : listMax
+          const capUp = Math.min(spaceAbove, contentMax)
+          const capDown = Math.min(spaceBelow, contentMax)
+          // 向下优先；下方装得下的比上方多才翻上去（装得下时"多"不再是理由，
+          // 因为 cap 已被 contentMax 夹住 —— 所以翻转只发生在"下方真的不够"时）。
+          const goUp = capDown < capUp
+          const cap = clamp(goUp ? capUp : capDown, px(S.menuMinHeightPx), contentMax)
+          const left = Math.max(margin, Math.min(rect.left, viewportWidth - rect.width - margin))
+          setPlace({
+            /**
+             * 用**两条边**定位，而不是"算好高度 + top = triggerTop − 4 − maxHeight"。
+             *
+             * 后者在**内容比上限矮**时会错：`maxHeight` 只封顶、不会把盒子撑到那么高
+             * （3 项的弹层自然高 116px，而算出来的 `top = 346 − 4 − 320 = 22`，
+             * 于是一头栽到视口顶部 —— 实测就是这个形态）。
+             * 钉住"贴着触发器"的那条边（向上时钉 `bottom`），内容多高就多高：
+             * 矮内容紧贴触发器，高内容在 `maxHeight` 处封顶并内部滚动。
+             */
+            // `position: fixed` 的 bottom 是"距视口底边的距离"，所以在这里换算好，
+            // 渲染时不再读 `window.innerHeight`（那是渲染期的外部可变值）。
+            up: goUp,
+            anchor: goUp
+              ? Math.max(margin, viewportHeight - Math.max(margin, rect.top - menuGap))
+              : rect.bottom + menuGap,
+            left: left,
+            width: rect.width,
+            maxHeight: cap,
+          })
+        }
+        measure()
+        window.addEventListener('resize', measure)
+        // `capture: true` 才收得到**任意**滚动容器（面板内的滚动不冒泡到 window）。
+        window.addEventListener('scroll', measure, true)
+        /*
+         * 再量一次（下一帧）。
+         *
+         * 为什么需要：`focus()` 会让浏览器把"最近的可滚祖先"scrolled-into-view，
+         * 而这次由聚焦引起的滚动**不一定**派发 `scroll` 事件（实测这个场景里设置弹窗的
+         * `scrollTop` 从 0 变到 36，而弹层还停在按滚动前的位置 —— 差的就是那 36px）。
+         * 下一帧重算一次，位置就与触发器对齐了。用 rAF 而不是固定延时：不引入可感知的延迟。
+         */
+        const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : 0
+        return () => {
+          if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+          window.removeEventListener('resize', measure)
+          window.removeEventListener('scroll', measure, true)
+        }
+      }, [open, options.length, enableSearch])
+
       React.useEffect(() => {
         if (!open) return () => {}
         setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0)
+        setKeyword('')
         const onPointerDown = (event) => {
           const target = event.target
           if (triggerRef.current !== null && triggerRef.current.contains(target)) return
@@ -1606,15 +1855,83 @@ window.__ModuleLoader__.load({
         }
       }, [open, selectedIndex])
 
-      /** 打开后把焦点交给当前项（键盘用户下一步就是 ↑↓，不必先 Tab 一遍）。 */
+      /**
+       * 两个 ref：**只记录元素**的（给"点外部关闭"用）与**记录并聚焦**的。
+       *
+       * 为什么要拆开：React 的 ref 附着顺序是"子先于父"，所以弹层容器与它里面被克隆出
+       * `ref` 的那一项会**先后**被聚焦 —— 后一个（容器）会盖掉前一个。焦点落在哪必须由
+       * 分支决定（见下面 `popup`），不能靠"谁后附着"这种偶然顺序。
+       */
+      const attachListRef = React.useCallback((node) => {
+        listRef.current = node
+      }, [])
+
+      /**
+       * 打开后把焦点交给**当前项**（键盘用户下一步就是 ↑↓，不必先 Tab 一遍）。
+       *
+       * 2026-10-12（可搜索下拉）分两种形态，各自都有明确理由：
+       *   - **没有搜索框**（短列表）：焦点落在**当前那一项**上 —— 与改造前完全一致
+       *     （既有 `controls.test.mjs` 3.1 / 3.4 钉着"展开后焦点在当前项"）。
+       *   - **有搜索框**（长列表）：焦点落在**列表容器**上。原因是 button 会吞掉字符键，
+       *     焦点在选项上时"打一个字就开始过滤"根本收不到事件；焦点在容器上则由
+       *     下面的 `onListKeyDown` 接住再转发给搜索框（`focusSearch`）。
+       *     容器仍然是一个落点（`tabIndex` / `focus()`），方向键照旧走真焦点。
+       */
       const focusOnMount = React.useCallback((node) => {
         if (node === null) return
-        listRef.current = node
         if (typeof node.focus === 'function') node.focus()
       }, [])
 
+      /**
+       * 焦点落点（短列表形态）：让**当前高亮项**拿到真焦点。
+       *
+       * 为什么不能只依赖"挂一个稳定的 `ref`"：`↑↓` 只改 `activeIndex`，被高亮的那枚
+       * `<button>` 元素本身并没有换人（同一个 key / 同一个类型），React 因此**不会**
+       * 重跑一个**引用不变**的 ref 回调 —— 实测"按 ↓ 之后 `document.activeElement`
+       * 仍停在上一个项上"。所以回调按 `activeIndex` 重新创建（依赖数组里有它）：
+       * 高亮项一变，React 先摘旧 ref（此时 `activeIndex` 已是新值 ⇒ 旧回调判 false、
+       * 不动焦点）再挂新 ref ⇒ 新项被聚焦；`scrollIntoView` 顺带把长列表里的它带进视野。
+       *
+       * 长列表（有搜索框）**不这么做**：那里焦点先留在容器/搜索框上，否则用户打一个字
+       * 焦点就被拽回选项、第二个字就丢了（`focusOnMount` 的注释里有完整说明）。
+       */
+      const focusIfNotInside = React.useCallback(
+        (node) => {
+          if (node === null) return
+          if (node.contains(document.activeElement)) return
+          if (typeof node.focus === 'function') node.focus()
+          // 长列表里高亮项可能在滚动区之外：把它带进视野（官方 `Menu` 也做这件事）。
+          if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+        },
+        [],
+      )
+      /**
+       * 选项的 ref 回调工厂：**每一项**都拿一个回调，回调自己判断"是不是当前高亮项"。
+       *
+       * 为什么要挂在每一项上、而不是只挂当前项：React 只在 ref 的**引用**变化时才重跑它。
+       * 只给"当前高亮项"挂一个稳定引用的话，`↑↓` 改变 `activeIndex` 时新旧回调是同一个
+       * 函数对象，React 不会重跑 —— 实测焦点留在上一项。这里每次渲染都给**全部**选项造
+       * 新回调（引用天然不同，工厂本身不缓存），React 依序摘旧挂新；`upToDateRef` 里记着
+       * 本次渲染的 `activeIndex`，所以只有新高亮项那一枚会真的聚焦。
+       */
+      const upToDateRef = { current: activeIndex }
+      const optionRef = (index) => (node) => {
+        if (index !== upToDateRef.current) return
+        focusIfNotInside(node)
+      }
+
+      /** 长列表形态下弹层容器的 ref：既要记住元素（点外部关闭要 `contains`），又要聚焦。 */
+      const attachAndFocus = React.useCallback(
+        (node) => {
+          attachListRef(node)
+          focusOnMount(node)
+        },
+        [attachListRef, focusOnMount],
+      )
+
       const commit = (option) => {
         setOpen(false)
+        setKeyword('')
         if (triggerRef.current !== null) triggerRef.current.focus()
         if (String(option.value) === String(value)) return
         // 与原生 `<select>` 的 onChange 同形：调用方读 `event.target.value`，
@@ -1624,48 +1941,90 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /** 把焦点挪到搜索框（列表容器上打出的第一个字符走这条路）。 */
+      const focusSearch = () => {
+        const input = searchRef.current
+        if (input === null || typeof input.focus !== 'function') return false
+        input.focus()
+        return true
+      }
+
       const onListKeyDown = (event) => {
-        const last = options.length - 1
+        // 方向键用的是**过滤后**的下标，但落点换算回原数组下标（`filtered` 带 index）。
+        const last = filtered.length - 1
         if (event.key === 'ArrowDown') {
           event.preventDefault()
-          setActiveIndex(activeIndex >= last ? 0 : activeIndex + 1)
+          if (last < 0) return
+          setActiveIndex(filteredIndex < 0 ? filtered[0].index : filtered[(filteredIndex + 1) % filtered.length].index)
           return
         }
         if (event.key === 'ArrowUp') {
           event.preventDefault()
-          setActiveIndex(activeIndex <= 0 ? last : activeIndex - 1)
+          if (last < 0) return
+          setActiveIndex(
+            filteredIndex < 0
+              ? filtered[last].index
+              : filtered[(filteredIndex <= 0 ? last : filteredIndex - 1)].index,
+          )
           return
         }
         if (event.key === 'Home') {
           event.preventDefault()
-          setActiveIndex(0)
+          setActiveIndex(last < 0 ? 0 : filtered[0].index)
           return
         }
         if (event.key === 'End') {
           event.preventDefault()
-          setActiveIndex(last < 0 ? 0 : last)
+          setActiveIndex(last < 0 ? 0 : filtered[last].index)
           return
         }
         if (event.key === 'Enter' || event.key === ' ') {
-          const option = options[activeIndex]
+          const target = filtered.find((item) => item.index === activeIndex)
+          const option = target === undefined ? undefined : target.option
           if (option === undefined) return
           event.preventDefault()
           commit(option)
+          return
+        }
+        /*
+         * **打一个字就开始搜**：焦点在列表容器（不是搜索框）时，可打印字符与退格
+         * 转发给搜索框。不这么做的话，键盘用户必须先 Tab 一次才够得着搜索框。
+         * 只认"单个字符、无修饰键"的 key，方向键 / Enter / Esc / Tab 一概不拦。
+         */
+        if (enableSearch && event.key.length === 1 && event.ctrlKey !== true && event.metaKey !== true) {
+          if (focusSearch()) {
+            event.preventDefault()
+            setKeyword((prev) => prev + event.key)
+          }
+          return
+        }
+        if (enableSearch && event.key === 'Backspace' && keyword !== '' && focusSearch()) {
+          event.preventDefault()
+          setKeyword((prev) => prev.slice(0, -1))
         }
       }
 
-      const optionNodes = options.map((option, index) =>
-        h(
+      const optionNodes = filtered.map((item) => {
+        const option = item.option
+        const index = item.index
+        return h(
           'button',
           {
             key: 'o' + String(index),
             type: 'button',
             role: 'menuitem',
             'data-pxm-option': String(option.value),
+            // 高亮项（roving tabindex / 键盘落点）—— 探针靠它读"高亮在第几项"，
+            // 因为长列表形态下焦点在容器上、`document.activeElement` 看不出高亮位置。
+            'data-pxm-state': index === activeIndex ? 'active' : 'idle',
             // 当前项 = `aria-checked` + 行尾 ✓（官方 Menu 的 `selection='check'`）。
             'aria-checked': String(option.value) === String(value) ? 'true' : 'false',
+            // Tab 序：只有**当前高亮项**可 Tab（照官方 `Menu` 的 roving tabindex）。
+            // 高亮项被搜索过滤掉时，退回列表容器（它自己 tabIndex=0）。
             tabIndex: index === activeIndex ? 0 : -1,
-            ref: index === activeIndex ? focusOnMount : undefined,
+            // 焦点落点：短列表挂在**当前高亮项**上（见 `optionRef`）；
+            // 长列表由弹层容器接管（`attachAndFocus`）。
+            ref: enableSearch ? undefined : optionRef(index),
             className: 'pxm-select-option',
             disabled: option.disabled === true,
             onClick: () => commit(option),
@@ -1703,6 +2062,171 @@ window.__ModuleLoader__.load({
                 style: { flex: 'none' },
               })
             : null,
+        )
+      })
+
+      /**
+       * 高亮项被搜索过滤掉了吗？是的话给容器 `tabIndex=0`，键盘仍有落点
+       * （否则"打开 → 打字过滤 → 当前项被滤掉"会让焦点掉到 body 上）。
+       */
+      const activeVisible = filteredIndex >= 0
+
+      /** 弹层：搜索框（长列表才有）+ 可滚列表。位置/上限全在内联样式里（见上面的定位注释）。 */
+      const popup = h(
+        'div',
+        {
+          // 焦点落在哪由分支决定：短列表给"当前项"，长列表给容器（见 `focusOnMount`）。
+          ref: enableSearch ? attachAndFocus : attachListRef,
+          className: 'pxm-select-list',
+          'data-pxm-select-list': '1',
+          role: 'menu',
+          tabIndex: activeVisible ? -1 : 0,
+          ...(isString(props.labelledBy) ? { 'aria-labelledby': props.labelledBy } : {}),
+          onKeyDown: onListKeyDown,
+          style: {
+            position: 'fixed',
+            // 贴住触发器的**那一条边**（向上时钉 bottom、向下时钉 top），见 `place` 的注释。
+            ...(place.up
+              ? { bottom: String(place.anchor) + 'px' }
+              : { top: String(place.anchor) + 'px' }),
+            left: String(place.left) + 'px',
+            // 宽度跟触发器一致；`maxWidth` 再挡一层（面板比视口还宽时不让它溢出右边）。
+            width: String(place.width) + 'px',
+            maxWidth: String(place.width) + 'px',
+            zIndex: 100,
+            boxSizing: 'border-box',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px',
+            padding: S.menuPad,
+            // 官方卡片圆角/描边/阴影：`MenuSurface.module.css`（radius-lg）+ `Menu.module.css`
+            // 的 `.list{box-shadow:var(--dsw-elevation-prominent)}`。本插件不引入
+            // 新 token，用 token 派生的浮层底 + 一级描边（`borderL1`，官方卡片描边那一档）
+            // 与 `shadow()`（由 `label` token 派生的半透明阴影，深浅色都跟随）。
+            background: T.bgOverlay,
+            border: '0.5px solid ' + T.borderL1,
+            borderRadius: S.radiusLg,
+            boxShadow: shadow(4, 16, 18),
+            // 高度上限由定位逻辑给（可用空间/内容/视口三者取最小）。
+            maxHeight: String(place.maxHeight) + 'px',
+            overflow: 'hidden',
+          },
+        },
+        enableSearch
+          ? h(
+              'div',
+              {
+                className: 'pxm-select-search',
+                style: { position: 'relative', display: 'flex', alignItems: 'center', flex: '0 0 auto' },
+              },
+              h(Icon, {
+                name: 'search',
+                className: 'pxm-select-search-icon',
+                size: S.searchIconSize,
+                testId: 'select-search',
+                color: T.labelTertiary,
+                style: { position: 'absolute', left: S.searchIconLeft, pointerEvents: 'none' },
+              }),
+              h('input', {
+                ref: searchRef,
+                type: 'text',
+                className: 'pxm-select-search-input',
+                'data-pxm-select-search': '1',
+                'aria-label': isString(props.label) ? '搜索：' + props.label : '搜索选项',
+                placeholder: '搜索…',
+                autoComplete: 'off',
+                spellCheck: false,
+                value: keyword,
+                onChange: (event) => {
+                  setKeyword(event.target.value)
+                  setActiveIndex(0)
+                },
+                style: {
+                  ...inputStyle,
+                  height: S.modelsInputHeight,
+                  padding: '0 30px 0 ' + S.searchPadLeft,
+                  fontSize: S.fieldFontSize,
+                },
+              }),
+              keyword === ''
+                ? null
+                : h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'pxm-select-search-clear',
+                      'data-pxm-select-clear': '1',
+                      'aria-label': '清空搜索',
+                      onClick: () => {
+                        setKeyword('')
+                        setActiveIndex(0)
+                        if (searchRef.current !== null) searchRef.current.focus()
+                      },
+                      style: {
+                        position: 'absolute',
+                        right: '4px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '22px',
+                        height: '22px',
+                        padding: 0,
+                        border: 'none',
+                        borderRadius: S.radiusSm,
+                        background: 'transparent',
+                        cursor: 'pointer',
+                      },
+                    },
+                    h(Icon, {
+                      name: 'close',
+                      className: 'pxm-select-search-clear-icon',
+                      size: 12,
+                      testId: 'select-search-clear',
+                      color: T.labelTertiary,
+                    }),
+                  ),
+            )
+          : null,
+        // 内层滚动容器：滚动**只发生在这里**，所以搜索框不会被滚走；
+        // `minHeight: 0` 是它在 flex 列里真能被压缩（从而真的滚）的前提。
+        h(
+          'div',
+          {
+            className: 'pxm-select-scroll',
+            'data-pxm-select-scroll': '1',
+            style: {
+              flex: '1 1 auto',
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2px',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              // 列表本身的官方上限 320（`.candidateList`）；可用空间更小时由外层 maxHeight 夹住。
+              maxHeight: px(S.menuMaxHeightPx),
+            },
+          },
+          visibleOptions.length === 0
+            ? h(
+                'div',
+                {
+                  className: 'pxm-select-empty',
+                  'data-pxm-select-empty': '1',
+                  style: {
+                    padding: '10px 8px',
+                    textAlign: 'center',
+                    color: T.labelSecondary,
+                    fontSize: S.menuItemFontSize,
+                    lineHeight: S.menuItemLineHeight,
+                  },
+                },
+                '没有匹配的选项',
+              )
+            : /*
+               * 短列表：焦点落点挂在**当前高亮项**上（`focusIfNotInside`，见那里的注释）；
+               * 长列表（有搜索框）：焦点落在**容器**上，好让字符键被容器接住再转发给搜索框。
+               */
+              optionNodes,
         ),
       )
 
@@ -1744,11 +2268,10 @@ window.__ModuleLoader__.load({
               padding: S.selectPad,
               border: 'none',
               borderRadius: S.radiusMd,
-              // 官方触发器底槽：`background:var(--dsw-alias-bg-module-platform)`
-              // （PermissionRow.module.css .selector）。该 token 不在本插件已用的
-              // 清单里（`T` 是颜色表，加一枚就要同步静态清单），这里取同一族的输入控件层
-              // `bg-layer-3`——与本页表单字段同一层，深浅色都跟随主题。
-              background: T.bgLayer3,
+              // 官方「模型」页**本页**的输入/下拉底槽：`._3nPmjq_input` 与
+              // `select._3nPmjq_input` 都是 `background:var(--dsw-alias-bg-layer-1)`
+              // （`settings-models/lib/client.js:58`）。2026-10-12 起与页内三枚输入字段同层。
+              background: T.bgLayer1,
               color: T.label,
               fontSize: S.selectFontSize,
               lineHeight: S.selectLineHeight,
@@ -1783,44 +2306,8 @@ window.__ModuleLoader__.load({
             },
           }),
         ),
-        open
-          ? h(
-              'div',
-              {
-                ref: listRef,
-                className: 'pxm-select-list',
-                'data-pxm-select-list': '1',
-                role: 'menu',
-                ...(isString(props.labelledBy) ? { 'aria-labelledby': props.labelledBy } : {}),
-                onKeyDown: onListKeyDown,
-                style: {
-                  position: 'absolute',
-                  // 官方 `.list{top:calc(100% + 4px);left:0;z-index:100}`。
-                  top: 'calc(100% + ' + S.menuOffset + ')',
-                  left: 0,
-                  zIndex: 100,
-                  boxSizing: 'border-box',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  padding: S.menuPad,
-                  // 触发器整宽，弹层跟它对齐（原生 `<select>` 的弹层也是这个宽）。
-                  minWidth: '100%',
-                  maxWidth: S.menuMaxWidth,
-                  // 官方卡片圆角/描边/阴影：`MenuSurface.module.css`（radius-lg）+ `Menu.module.css`
-                  // 的 `.list{box-shadow:var(--dsw-elevation-prominent)}`。本插件不引入
-                  // 新 token，用 token 派生的浮层底 + 一级描边（`borderL1`，官方卡片描边那一档）
-                  // 与 `shadow()`（由 `label` token 派生的半透明阴影，深浅色都跟随）。
-                  background: T.bgOverlay,
-                  border: '0.5px solid ' + T.borderL1,
-                  borderRadius: S.radiusLg,
-                  boxShadow: shadow(4, 16, 18),
-                  maxHeight: '60vh',
-                  overflowY: 'auto',
-                },
-              },
-              optionNodes,
-            )
-          : null,
+        // 弹层（位置/上限由 `place` 给，见上面的定位注释）。
+        open ? popup : null,
       )
     }
 
@@ -2139,7 +2626,7 @@ window.__ModuleLoader__.load({
      *   - 「全选 / 全不选」：只作用于**当前筛选结果**，按钮文案带数量；
      *   - 「只选图像模型」：按上面的启发式**重设**选择（不是追加），命中的行带「图像」标记。
      *
-     * 列表内部滚动（`max-height: 240px`）：150 项不能把卡片撑爆。
+     * 列表内部滚动（`max-height: 320px`，官方 `.candidateList` 同值）：150 项不能把卡片撑爆。
      * 本组件自己**不发请求**：保存交给父级的 mutation，失败原因也在面板内显示。
      *
      * **2026-10-11 形态对齐官方**（`settings-models/lib/client.js:58` 的 CSS + 同文件
@@ -2154,7 +2641,7 @@ window.__ModuleLoader__.load({
      *
      * **与官方的一处有意偏差**：官方把候选列表放在 `Modal`（`.fetchDialog{max-width:520px}`）里，
      * 我们保留"卡片内联展开"的形态（既有 jsdom 用例钉住面板在卡片内展开 / 收起的行为与
-     * 240px 滚动容器）；列表本身的几何按官方取值。记在 `docs/contract-notes.md` §23。
+     * 320px 滚动容器）；列表本身的几何按官方取值。记在 `docs/contract-notes.md` §23 / §24。
      */
     function ModelPickerPanel(props) {
       const list = isArray(props.models) ? props.models.map(String) : []
@@ -2653,6 +3140,8 @@ window.__ModuleLoader__.load({
               id: 'pxm-provider-base-url',
               value: baseUrl,
               disabled: creds.busy,
+              // 官方「模型」页本页的输入控件那一档（32px / `bg-layer-1`，见 `modelsPageInputStyle`）。
+              style: modelsPageInputStyle,
               placeholder: 'https://api.example.com/v1',
               onChange: (event) => setBaseUrl(event.target.value),
               onBlur: () => {
@@ -2679,6 +3168,8 @@ window.__ModuleLoader__.load({
               id: 'pxm-provider-native-url',
               value: nativeUrl,
               disabled: creds.busy,
+              // 同 Base URL：官方本页私有的 `._3nPmjq_input` 那一档。
+              style: modelsPageInputStyle,
               placeholder: 'https://api.example.com/gemini/v1beta',
               onChange: (event) => setNativeUrl(event.target.value),
               onBlur: () => {
@@ -2708,6 +3199,9 @@ window.__ModuleLoader__.load({
               type: 'password',
               value: keyValue,
               disabled: creds.busy,
+              // 官方 `SettingsSecretField` 里的密钥框在同一页用的是**本页私有**那枚
+              // `._3nPmjq_input`（32px / `bg-layer-1`），与上面两个 URL 字段同一个类。
+              style: modelsPageInputStyle,
               placeholder: hasKey ? '已就位，留空不改动' : '粘贴密钥',
               autoComplete: 'new-password',
               onChange: (event) => setKeyValue(event.target.value),
@@ -2982,6 +3476,9 @@ window.__ModuleLoader__.load({
             { label: '厂商', description: '生图请求走哪一家适配器' },
             h(SelectField, {
               id: 'pxm-defaults-provider',
+              // 弹层里的搜索框用 `aria-label='搜索：厂商'` —— 名字来自这里的字段名，
+              // 而不是另抄一份文案（抄一份就会与标签漂移）。
+              label: '厂商',
               value: provider,
               disabled: save.busy,
               options: providers.map((item) => ({
@@ -2996,6 +3493,7 @@ window.__ModuleLoader__.load({
             { label: '模型', description: '留空则用该厂商的第一个模型' },
             h(SelectField, {
               id: 'pxm-defaults-model',
+              label: '模型',
               value: model,
               disabled: save.busy,
               options: [
@@ -3024,6 +3522,7 @@ window.__ModuleLoader__.load({
             { label: '尺寸', description: '默认出图比例' },
             h(SelectField, {
               id: 'pxm-defaults-size',
+              label: '尺寸',
               value: size,
               disabled: save.busy,
               options: sizes.map((name) => ({ value: name, label: name })),
@@ -5962,6 +6461,19 @@ window.__ModuleLoader__.load({
         tint(T.labelTertiary, 12) +
         ';}',
       '.pxm-select-option:focus-visible{outline:none;}',
+      /*
+       * 弹层里的搜索框（2026-10-12）：
+       *   - 焦点环与页内其它控件同一套（`labelTertiary` + 2px + offset 1）；
+       *   - 「清空」按钮只在有内容时出现（实现里按 `keyword !== ''` 条件渲染），
+       *     它的 hover 填充与 `.pxm-select-option` 同一个 token 派生层。
+       */
+      '.pxm-select-search-input:focus-visible{outline:2px solid ' +
+        T.labelTertiary +
+        ';outline-offset:1px;}',
+      '.pxm-select-search-clear:hover{background:' + tint(T.labelTertiary, 12) + ';}',
+      '.pxm-select-search-clear:focus-visible{outline:2px solid ' +
+        T.labelTertiary +
+        ';outline-offset:1px;}',
       '.pxm-select-trigger:focus-visible,.pxm-stepper button:focus-visible{outline:2px solid ' +
         T.labelTertiary +
         ';outline-offset:1px;}',

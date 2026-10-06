@@ -379,13 +379,17 @@
    *
    * 只在展开时才返回 `list`；`checks` 是"哪几个选项带 ✓"（带 `data-pxm-icon="check"`）。
    * 仍然只有事实，判断留在用例里。
+   *
+   * `labelText` 走**精确**匹配（`trim()` 后相等）：2026-10-12 起字段多了「厂商」与
+   * 「模型」两项，而前者的说明文字里就含"模型"二字 —— 子串匹配会静默选错字段
+   * （实测：按 `模型` 找拿到的是「厂商」那一行，于是长列表用例全红）。
    */
   function selectFacts(labelText) {
     var fields = Array.prototype.slice.call(document.querySelectorAll('[data-pxm-field]'))
     var field = labelText
       ? fields.filter(function (node) {
           var label = node.querySelector('[data-pxm-field-label]')
-          return label !== null && (label.textContent || '').indexOf(labelText) >= 0
+          return label !== null && (label.textContent || '').trim() === labelText.trim()
         })[0]
       : fields[0]
     if (!field) return null
@@ -402,6 +406,31 @@
           }
         })
       : []
+    /*
+     * 弹层内的搜索框（2026-10-12）。只交事实：在不在、当前值、placeholder、
+     * 有没有「清空」按钮、清空按钮的矩形。判断（过滤后剩几项 / 空态对不对）留在用例里。
+     */
+    var search = list === null ? null : list.querySelector('[data-pxm-select-search]')
+    var clear = list === null ? null : list.querySelector('[data-pxm-select-clear]')
+    var empty = list === null ? null : list.querySelector('[data-pxm-select-empty]')
+    var scroll = list === null ? null : list.querySelector('[data-pxm-select-scroll]')
+    /*
+     * 高亮项在**原始选项数组**里的下标（`data-pxm-state="active"`）。
+     *
+     * 为什么不能只看 `activeOption`：长列表（有搜索框）形态下焦点留在容器/搜索框上，
+     * 高亮是**另一条**状态（`activeIndex`），没有元素被聚焦 —— 实测 `activeOption === null`
+     * 而 `↑↓` 确实动了高亮。这个下标把两条路径统一成同一个可断言的事实。
+     */
+    var activeIndex = -1
+    if (list !== null) {
+      var all = list.querySelectorAll('[data-pxm-option]')
+      for (var i = 0; i < all.length; i += 1) {
+        if (all[i].getAttribute('data-pxm-state') === 'active') {
+          activeIndex = i
+          break
+        }
+      }
+    }
     return {
       triggerRect: rectOf(trigger),
       triggerTag: trigger.tagName,
@@ -411,11 +440,99 @@
       hasChevron: trigger.querySelector('[data-pxm-icon="chevron"]') !== null,
       listRole: list === null ? null : list.getAttribute('role'),
       listRect: list === null ? null : rectOf(list),
+      /** 弹层在**内联样式**里声明的位置（fixed 定位的证据；计算样式会被解析成同样的 px）。 */
+      listDeclared: list === null
+        ? null
+        : {
+            position: list.style.position,
+            top: list.style.top,
+            bottom: list.style.bottom,
+            left: list.style.left,
+            width: list.style.width,
+            maxWidth: list.style.maxWidth,
+            maxHeight: list.style.maxHeight,
+            overflow: list.style.overflow,
+          },
+      /** 弹层里那个可滚层：内层滚动才是"长列表不撑爆弹层"的载体。 */
+      scrollRect: scroll === null ? null : rectOf(scroll),
+      scrollOverflowY: scroll === null ? null : window.getComputedStyle(scroll).overflowY,
+      /** 搜索框：`null` = 这一枚下拉没启用搜索（短列表）。 */
+      search:
+        search === null
+          ? null
+          : {
+              value: search.value,
+              placeholder: search.getAttribute('placeholder'),
+              ariaLabel: search.getAttribute('aria-label'),
+              rect: rectOf(search),
+              focused: document.activeElement === search,
+              clearPresent: clear !== null,
+              clearRect: clear === null ? null : rectOf(clear),
+            },
+      /** 空态文案（没有匹配项时的可读提示）。 */
+      emptyText: empty === null ? null : (empty.textContent || '').trim(),
+      emptyVisible: empty !== null,
       options: options,
+      /** 高亮项在**过滤后**的 `options` 里的下标（-1 = 没有高亮项）。 */
+      activeIndex: activeIndex,
       activeTag: document.activeElement === null ? null : document.activeElement.tagName,
       activeOption: document.activeElement === null ? null : document.activeElement.getAttribute('data-pxm-option'),
+      /** 焦点是否落在弹层自己身上（2026-10-12 起"打开即聚焦容器"，见 client.js 的 focusOnMount）。 */
+      activeIsList: list !== null && document.activeElement === list,
     }
   }
+
+  /**
+   * **弹层被谁裁掉**的证据（2026-10-12，任务 B-3 的"先查明"那一步）。
+   *
+   * 从弹层往上走，把**每一个**祖先的 `overflow-x/overflow-y`、它的矩形、以及"弹层
+   * 是否越出它的 padding box"都列出来。只有真的越界的祖先才是裁它的那一环 ——
+   * 这比"我觉得是设置弹窗"这种猜测可靠：报告里贴的就是这里的原始输出。
+   *
+   * `clipper` = 最近的那个（自下而上第一个）**overflow 非 visible 且弹层越界**的祖先。
+   */
+  function clipChain(selector) {
+    var el = document.querySelector(selector || '[data-pxm-select-list]')
+    if (el === null) return null
+    var rect = el.getBoundingClientRect()
+    var out = []
+    var clipper = null
+    var node = el.parentElement
+    while (node !== null && node !== document.documentElement) {
+      var cs = window.getComputedStyle(node)
+      var box = node.getBoundingClientRect()
+      var hidesX = cs.overflowX !== 'visible'
+      var hidesY = cs.overflowY !== 'visible'
+      var overflowsX = hidesX && (rect.left < box.left - 0.5 || rect.right > box.right + 0.5)
+      var overflowsY = hidesY && (rect.top < box.top - 0.5 || rect.bottom > box.bottom + 0.5)
+      var entry = {
+        tag: node.tagName,
+        id: node.id || null,
+        className: typeof node.className === 'string' ? node.className : null,
+        overflowX: cs.overflowX,
+        overflowY: cs.overflowY,
+        rect: rectOf(node),
+        overflowsX: overflowsX,
+        overflowsY: overflowsY,
+        clips: overflowsX || overflowsY,
+      }
+      out.push(entry)
+      if ((overflowsX || overflowsY) && clipper === null) clipper = entry
+      node = node.parentElement
+    }
+    return { list: rect, ancestors: out, clipper: clipper }
+  }
+
+  /** 视口矩形（断言"弹层完整可见"时的判据来源）。 */
+  function viewportRect() {
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+    }
+  }
+
 
   /**
    * 数字步进器（`NumberStepper`）：值 / 单位 / 两枚 chevron 按钮的尺寸与禁用态。
@@ -1020,6 +1137,9 @@
     // 控件形态（2026-10-09 复刻）：行式字段 / 自绘下拉 / 数字步进器 / 搜索框 / 键盘
     fieldRow: fieldRow,
     selectFacts: selectFacts,
+    // 弹层被谁裁 / 弹层在哪（2026-10-12）：clipChain 是"查明裁切祖先"的证据探针
+    clipChain: clipChain,
+    viewportRect: viewportRect,
     stepperFacts: stepperFacts,
     searchFacts: searchFacts,
     toolbarRow: toolbarRow,

@@ -999,28 +999,31 @@ if (launched.browser === null) {
 
   /**
    * 「官方输入控件 → 我们输入控件」的对照（每一处在 app.asar 里核过原文，
-   * 逐条证据见 `docs/contract-notes.md` 19.5）：
+   * 逐条证据见 `docs/contract-notes.md` 19.5 与 §24.2）：
    *
    * | 控件 | 官方 | 我们 |
    * |---|---|---|
-   * | 设置页文本字段 | `settings-form/fields.module.css` 的 `.input` → `bg-layer-3` + `border-l4` | `inputStyle`（`TextInput`）← **本用例钉住** |
-   * | 设置页密钥字段 | `SettingsSecretField` 用的是**同一个** `css$25.input`（`type="password"`） | 同上（`TextInput` + `type:'password'`） |
-   * | 下拉 | 官方 client 侧**没有** `<select>`；它的下拉是「自绘触发器 + 弹层」（`PermissionRow.module.css` 的 `.selector`：`bg-module-platform` + **无描边**） | `SelectField` 的触发器（取同族的 `bg-layer-3`；**无描边**，与官方一致） |
-   * | 大段文本 | 官方 client 侧**没有** `<textarea>`；同上 | 提示词降级文本域 `.pxm-copy-fallback` |
-   * | 原子 `<Input>`（**不是**表单字段） | 外层 `.wrap` 是 `bg-layer-1` + `border-l4`（README：它"没有设计源"） | 不适用（我们画的是表单控件，不是这枚原子） |
+   * | 模型页文本字段（Base URL） | `settings-models/lib/client.js:58` 的 `._3nPmjq_input` → **`bg-layer-1`** + `border-l4` | `modelsPageInputStyle`（`TextInput` + 显式 style）← **本用例钉住** |
+   * | 模型页密钥字段（API Key） | 同一枚 `._3nPmjq_input`（32px / `bg-layer-1`） | 同上（`TextInput` + `type:'password'`） |
+   * | 模型页下拉（厂商 / 模型 / 尺寸） | 同一页的 `<select className="input selectInput">` → 也是 `bg-layer-1` | `SelectField` 的触发器（`bg-layer-1`；**无描边**，与官方自绘触发器一致） |
+   * | 非模型页的其它文本字段 | `settings-form/fields.module.css` 的 `.input` → `bg-layer-3` + `border-l4` | `inputStyle`（作品库导出路径文本框） |
+   * | 大段文本 | 官方 client 侧**没有** `<textarea>` | 提示词降级文本域 `.pxm-copy-fallback`（走 `bg-layer-3`，与 `inputStyle` 同层） |
    *
-   * 判据与 8.8 同构，两条：
-   *   1. **语义层（深色下判）**：背景色必须等于 `bg-layer-3` 的解析值 —— 用**最近色**判定，
-   *      失败信息才会直接说"实际是哪一层"；同时必须**不等于** `bg-base` / `bg-layer-2`
-   *      （"输入框塌进面板"正是挂 `bg-base` 的形态）。
-   *   2. **浅色下只核前提**：官方四层表面浅色都是 `#fff`，写哪一层都同色 ⇒ 浅色那次不判
-   *      "等于哪一层"，只断言"官方确实同色"（与 8.8 完全一致的纪律，不是放宽）。
+   * 判据与 8.8 同构，分两组：
+   *   1. **模型页那一组**（`input.text` / `input.password` / `select`）：深色下底色必须等于
+   *      `bg-layer-1` 的解析值，且**不等于** `bg-base` / `bg-layer-2` / `bg-layer-3`
+   *      （"模型页字段挂成别处的层"正是这次要挡的形态）。
+   *   2. **非模型页那一组**（导出路径文本框 / 提示词文本域）：仍是 `bg-layer-3`，
+   *      且不等于 `bg-base` / `bg-layer-2` / `bg-layer-1`。
+   *   浅色下官方四层表面都是 `#fff`，写哪一层都同色 ⇒ 浅色那次不判"等于哪一层"，
+   *   只断言"官方确实同色"（与 8.8 完全一致的纪律，不是放宽）。
    *
    * 描边那一半（`border-l4`）浅深都可判：浅色 `#00000029`、深色 `#fff3`，与 `border-l1`
    * （发丝分隔线）不同色，所以两套主题都断言"== border-l4 且 != border-l1"。
+   * 自绘下拉触发器**不判描边**：它没有描边（与官方 `.selector{border:none}` 一致）。
    */
-  describe('8.9 输入控件：底色 == 官方表单控件那一层（bg-layer-3）而不是应用底色，描边 == border-l4', () => {
-    it('8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值；提示词 textarea 同', async () => {
+  describe('8.9 输入控件：模型页字段 == bg-layer-1，其余表单字段 == bg-layer-3；描边 == border-l4', () => {
+    it('8.9 input / password / 自绘下拉触发器 == 官方「模型」页那层 bg-layer-1；导出路径 / 提示词文本域 == bg-layer-3', async () => {
       const { page, context, problems } = await openThemedLane({ mountSlot: 'settings.section' })
       try {
         await page.waitForSelector('.pxm-settings [data-pxm-role="select"]', { timeout: 15000 })
@@ -1034,30 +1037,46 @@ if (launched.browser === null) {
         const CONTROLS = [
           {
             key: 'input.text',
-            selector: '.pxm-settings input[type="text"]',
-            bgKey: 'inputStyle.background',
-            borderKey: 'inputStyle.border',
+            // **钉住具体那一枚**（厂商卡片的 Base URL）：`.pxm-settings input[type="text"]`
+            // 会命中页面里最后一枚文本框（导出路径那一枚，属另一类），选谁就成了实现顺序的偶然。
+            selector: '#pxm-provider-base-url',
+            bgKey: 'modelsPageInputStyle.background',
+            borderKey: 'modelsPageInputStyle.border',
+            layer: 'bg-layer-1',
           },
           {
             key: 'input.password',
-            selector: '.pxm-settings input[type="password"]',
-            bgKey: 'inputStyle.background',
-            borderKey: 'inputStyle.border',
+            selector: '#pxm-provider-api-key',
+            bgKey: 'modelsPageInputStyle.background',
+            borderKey: 'modelsPageInputStyle.border',
+            layer: 'bg-layer-1',
           },
           {
             key: 'select',
-            // 2026-10-09：设置页下拉换成**自绘触发器**（官方 client 侧本来也没有
-            // `<select>`）。底色判据不变（仍必须是 `bg-layer-3` 那一层），
-            // 但**不声明 `borderKey`**：官方触发器是 `.selector{border:none}`，
-            // 它没有描边，拿 `border-l4` 去量是比错模板。
-            selector: '.pxm-settings [data-pxm-role="select"]',
+            /**
+             * 2026-10-09：设置页下拉换成**自绘触发器**；2026-10-12 起底色改为官方「模型」页
+             * 本页那一层 `bg-layer-1`（官方同页的 `<select className="input selectInput">`
+             * 就是它）。仍然**不声明 `borderKey`**：触发器是 `.selector{border:none}`，
+             * 它没有描边，拿 `border-l4` 去量是比错模板。
+             */
+            selector: '#pxm-defaults-provider',
             bgKey: 'selectTrigger.background',
+            layer: 'bg-layer-1',
+          },
+          {
+            key: 'input.exportDir',
+            // 非「模型」页的表单字段：仍是 `settings-form` 的 `.input`（34px / bg-layer-3）。
+            selector: '#pxm-export-dir',
+            bgKey: 'inputStyle.background',
+            borderKey: 'inputStyle.border',
+            layer: 'bg-layer-3',
           },
           {
             key: 'textarea.prompt',
             selector: '.pxm-copy-fallback',
             bgKey: 'copyFallback.background',
             borderKey: 'copyFallback.border',
+            layer: 'bg-layer-3',
             state: 'detail',
           },
         ]
@@ -1065,6 +1084,7 @@ if (launched.browser === null) {
         /** 官方表面 / 描边的解析值（按属性本身解析）。 */
         const OFFICIAL = [
           { key: 'bgBase', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-base)' },
+          { key: 'bgLayer1', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-layer-1)' },
           { key: 'bgLayer2', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-layer-2)' },
           { key: 'bgLayer3', prop: 'backgroundColor', value: 'var(--dsw-alias-bg-layer-3)' },
           { key: 'borderL1', prop: 'borderTopColor', value: 'var(--dsw-alias-border-l1)' },
@@ -1124,6 +1144,7 @@ if (launched.browser === null) {
         const check = (reading, label, list, distinct) => {
           const backgroundSurfaces = {
             'bg-base': reading.official.bgBase,
+            'bg-layer-1': reading.official.bgLayer1,
             'bg-layer-2': reading.official.bgLayer2,
             'bg-layer-3': reading.official.bgLayer3,
           }
@@ -1132,9 +1153,9 @@ if (launched.browser === null) {
           if (distinct) {
             assert.equal(
               new Set(Object.values(backgroundSurfaces)).size,
-              3,
+              4,
               label +
-                '：官方 bg-base / bg-layer-2 / bg-layer-3 必须两两不同色（否则判据无效）：' +
+                '：官方 bg-base / bg-layer-1 / bg-layer-2 / bg-layer-3 必须两两不同色（否则判据无效）：' +
                 JSON.stringify(reading.official),
             )
             assert.notEqual(
@@ -1161,10 +1182,15 @@ if (launched.browser === null) {
 
             const hit = nearest(got.background, backgroundSurfaces)
             if (distinct) {
-              // 语义：现在显示的那一层必须就是官方表单控件那一层。
+              /*
+               * 语义：现在显示的那一层必须就是**这一类官方控件**用的那一层 ——
+               * 模型页的字段 / 下拉是 `bg-layer-1`（`._3nPmjq_input`），
+               * 其余表单字段是 `bg-layer-3`（`settings-form` 的 `.input`）。
+               * 期望层写在每条 CONTROLS 的 `layer` 上，不在这里按 key 猜。
+               */
               assert.equal(
                 hit.key,
-                'bg-layer-3',
+                control.layer,
                 label +
                   '：' +
                   control.key +
@@ -1174,15 +1200,21 @@ if (launched.browser === null) {
                   got.background +
                   '，源码挂在 `' +
                   control.bgKey +
-                  '`）。官方设置页的表单控件（`settings-form/fields.module.css` 的 `.input`，' +
-                  '`SettingsValueField` 与 `SettingsSecretField` 同一个类）用的是 `--dsw-alias-bg-layer-3`：' +
+                  '`）。官方同类控件用的是 `--dsw-alias-' +
+                  control.layer +
+                  '`：' +
                   JSON.stringify({ measured: got, official: reading.official }),
               )
-              // 反证：两处被修掉的缺陷形态（"输入框塌进应用底色" / "与卡片同层、看不出是控件"）。
+              // 反证：三处被修掉的缺陷形态（"输入框塌进应用底色" / "与卡片同层、看不出是控件" /
+              // "挂成相邻那一层" —— 后两条在 `bg-layer-1` 与 `bg-layer-3` 之间只差一档，
+              // 肉眼几乎看不出，所以必须逐层都不等）。
               for (const [name, wrongKey] of [
                 ['bg-base', 'bgBase'],
+                ['bg-layer-1', 'bgLayer1'],
                 ['bg-layer-2', 'bgLayer2'],
+                ['bg-layer-3', 'bgLayer3'],
               ]) {
+                if (name === control.layer) continue
                 assert.notEqual(
                   nearest(got.background, { wrong: reading.official[wrongKey] }).distance,
                   0,
@@ -1191,7 +1223,9 @@ if (launched.browser === null) {
                     control.key +
                     ' 的底色等于 ' +
                     name +
-                    ' —— 那是误差形态（官方同类控件是 bg-layer-3）：' +
+                    ' —— 那是误差形态（官方同类控件是 ' +
+                    control.layer +
+                    '）：' +
                     JSON.stringify(got),
                 )
               }

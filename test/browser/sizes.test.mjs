@@ -57,36 +57,45 @@ import {
 // ── 官方尺寸（本文件独立复述一遍；每条都带出处） ─────────────────────────────
 
 /**
- * 官方**自绘下拉触发器**：`@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js:438`
- * 的 `PermissionRow.module.css` → `.selector{border-radius:var(--dsw-radius-md);
- * background:var(--dsw-alias-bg-module-platform);height:36px;color:var(--dsw-alias-label-primary);
- * cursor:pointer;border:none;align-items:center;gap:12px;padding:0 14px;font-size:14px;
- * line-height:22px;display:inline-flex}`（官方「权限」那一行的下拉）。
+ * 官方「**模型**」设置页**本页**的输入控件 / 下拉：`@deepseek-ai/dsh-client-ui-settings-models`
+ * `lib/client.js:58` 那一行内联 CSS：
+ *   - `._3nPmjq_input{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);
+ *     border-radius:var(--dsw-radius-md);width:100%;height:32px;font:inherit;
+ *     background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);
+ *     padding:0 10px;font-size:14px;line-height:22px}`
+ *   - `select._3nPmjq_input{cursor:pointer;max-width:240px}`（同一页的 `<select>` 用**同一个类**）
  *
- * 与 `OFFICIAL_FIELD` 的区别是真实存在的：官方**表单值字段**是 34px / `0 12px` / 13px /
- * `bg-layer-3`（`SettingsValueField` 的 `<input>`），而**下拉触发器**是 36px / `0 14px` /
- * 14px / `bg-module-platform`。两者不是同一个组件，所以分成两套断言。
+ * 与 `OFFICIAL_FIELD` 的区别是真实存在的、而且**同一页里并存**：官方那一页的字段
+ * （Base URL / Gemini 原生 URL / API Key）用的是本页私有的 `._3nPmjq_input`
+ * （32px / `0 10px` / 14px-22px / `bg-layer-1`），而 `primitives` 的 `settings-form`
+ * `.input`（34px / `0 12px` / 13px / `bg-layer-3`）是**跨页面共享**的表单值控件。
+ *
+ * 2026-10-12 修正：本插件设置页里属于**官方「模型」页**的那几个控件（厂商卡片的三个
+ * 文本框 + 三枚自绘下拉触发器）从「对齐 `settings-form`」改成「对齐本页 `._3nPmjq_input`」。
+ * 依据与逐条改动见 `docs/contract-notes.md` §24.2。
  */
-const OFFICIAL_SELECT = {
-  /** `.selector{height:36px}` —— PermissionRow.module.css（client.js:438） */
-  height: '36px',
-  /** `.selector{padding:0 14px}` —— 同处 */
+const OFFICIAL_MODELS_INPUT = {
+  /** `._3nPmjq_input{height:32px}` —— settings-models/lib/client.js:58 */
+  height: '32px',
+  /** `._3nPmjq_input{padding:0 10px}` —— 同处 */
   paddingTop: '0px',
-  paddingRight: '14px',
+  paddingRight: '10px',
   paddingBottom: '0px',
-  paddingLeft: '14px',
-  /** `.selector{font-size:14px}` —— 同处 */
+  paddingLeft: '10px',
+  /** `._3nPmjq_input{font-size:14px}` —— 同处 */
   fontSize: '14px',
-  /** `.selector{line-height:22px}` —— 同处 */
+  /** `._3nPmjq_input{line-height:22px}` —— 同处（14px × 22/14 ≈ 22px，与官方逐字一致） */
   lineHeight: '22px',
-  /** `.selector{border-radius:var(--dsw-radius-md)}` —— 同处 */
+  /** `._3nPmjq_input{border-radius:var(--dsw-radius-md)}` —— 同处 */
   radiusVar: '--dsw-radius-md',
+  /** `._3nPmjq_input{border:.5px solid var(--dsw-alias-border-l4)}` —— 同处 */
+  expectBorderTopWidth: '0.5px',
   /**
-   * `.selector{border:none}` —— 同处：官方下拉触发器**没有**描边。
-   * 用布尔标记而不是"期望宽度 0px"：`style.border` 从未被写过时，
-   * `borderTopWidth` 的声明值是 UA 默认的 `medium`，拿 0px 去比是比错了对象。
+   * 自绘下拉触发器**没有**描边（`border:none`，与官方 `.selector` 那一处一致）：
+   * 官方本页那枚 `<select>` 有 0.5px 描边，但我们画的是"触发器 + 弹层"，
+   * 描边那一半仍按自绘触发器的形态走（`theme.test.mjs` 8.9 钉着"无描边"）。
    */
-  expectNoBorder: true,
+  expectNoBorderForTrigger: true,
 }
 
 /**
@@ -120,6 +129,10 @@ const OFFICIAL_SEARCH = {
 
 /**
  * 官方设置页**表单值控件**：`primitives/lib/settings-form/fields.module.css` 的 `.input`。
+ *
+ * 2026-10-12 起它只覆盖本插件里**不属于**官方「模型」页那一类的字段：
+ * 「作品库导出路径」文本框、作品库工具条的排序下拉、提示词降级文本域。
+ * 官方「模型」页本页的字段走 `OFFICIAL_MODELS_INPUT`（32px / `bg-layer-1`）。
  */
 const OFFICIAL_FIELD = {
   /** `.input{height:34px}` —— fields.module.css:108 */
@@ -309,25 +322,28 @@ if (launched.browser === null) {
   }
 
   /**
-   * 表单值控件的断言集：文本框 / 密码框用 `OFFICIAL_FIELD`，**搜索框**用
-   * `OFFICIAL_SEARCH`（官方那边是另一个组件：36px / `0 34px 0 36px` / `bg-layer-1`），
-   * 设置页的**自绘下拉触发器**用 `OFFICIAL_SELECT`（36px / `0 14px` / 14px / 无描边）。
-   *
-   * 原生 `<select>` 只剩作品库工具条的「排序」：它没有官方对照物，
-   * 仍按 `OFFICIAL_FIELD` 量，但要去掉 `lineHeight`——Chromium 对 `<select>` 不把内联
-   * `line-height` 落到计算样式上（实测同一个 `inputStyle` 下 `input` 是 `19.5px`、
-   * `select` 是 `normal`）。断言它就是永远红，如实记下这个限制。
+   * 表单值控件的断言集（2026-10-12 按"属于哪一类官方控件"分工）：
+   *   - 设置页里属于官方「模型」页那一类的控件 —— 文本框 / 密码框 / **自绘下拉触发器**
+   *     —— 用 `OFFICIAL_MODELS_INPUT`（官方本页私有的 `._3nPmjq_input`：32px /
+   *     `0 10px` / 14px-22px / `bg-layer-1`）；
+   *   - **搜索框**用 `OFFICIAL_SEARCH`（官方那边是另一个组件：36px / `0 34px 0 36px` /
+   *     `bg-layer-1`）；
+   *   - 原生 `<select>`（只剩作品库工具条的「排序」，没有官方对照物）仍按
+   *     `OFFICIAL_FIELD` 量，但去掉 `lineHeight` —— Chromium 对 `<select>` 不把内联
+   *     `line-height` 落到计算样式上（实测同一个 `inputStyle` 下 `input` 是 `19.5px`、
+   *     `select` 是 `normal`）。断言它就是永远红，如实记下这个限制。
    */
   const fieldExpectation = (role) => {
     if (role === 'searchInput') return OFFICIAL_SEARCH
-    if (role === 'select') return OFFICIAL_SELECT
-    const omit = role === 'sortSelect' ? new Set(['lineHeight']) : new Set()
-    const out = {}
-    for (const key of Object.keys(OFFICIAL_FIELD)) {
-      if (omit.has(key)) continue
-      out[key] = OFFICIAL_FIELD[key]
+    if (role === 'sortSelect') {
+      const out = {}
+      for (const key of Object.keys(OFFICIAL_FIELD)) {
+        if (key === 'lineHeight') continue
+        out[key] = OFFICIAL_FIELD[key]
+      }
+      return out
     }
-    return out
+    return OFFICIAL_MODELS_INPUT
   }
 
   /** 让浏览器把 `var(--dsw-radius-*)` 现场解析成具体像素（而不是测试自己抄 8px）。 */
@@ -343,7 +359,13 @@ if (launched.browser === null) {
    * 只比**计算样式**：`radiusVar` / `borderRadius` / `expectBorderTopWidth` 这类不由
    * 计算样式承担（或已由专门断言处理）的键要显式排除，否则会拿 `measure` 里不存在的键去比。
    */
-  const NOT_COMPUTED = new Set(['radiusVar', 'borderRadius', 'expectBorderTopWidth', 'expectNoBorder'])
+  const NOT_COMPUTED = new Set([
+    'radiusVar',
+    'borderRadius',
+    'expectBorderTopWidth',
+    'expectNoBorder',
+    'expectNoBorderForTrigger',
+  ])
 
   const isObject = (value) => value !== null && typeof value === 'object'
 
@@ -380,9 +402,11 @@ if (launched.browser === null) {
     const declared = isObject(measured.declared) ? measured.declared : {}
     const gotLonghand = declared.borderTopWidth
     const gotShorthand = declared.border
-    // 官方下拉触发器是 `.selector{border:none}`：这里断言的是"**确实没有**声明过描边"。
-    // 不能拿 0px 去比——没写过 `border` 时 UA 默认值是 `medium`，比的是错对象。
-    if (expect.expectNoBorder === true) {
+    // 自绘下拉触发器没有描边（官方的文本字段 / `<select>` 有 0.5px 描边，我们这枚是
+    // "触发器 + 弹层"，`.selector{border:none}` 那一半保持不变，见 `theme.test.mjs` 8.9）。
+    // 这里断言的是"**确实没有**声明过描边"：不能拿 0px 去比 —— 没写过 `border` 时
+    // UA 默认值是 `medium`，比的是错对象。
+    if (expect.expectNoBorderForTrigger === true && where === 'select') {
       // 只认**元素自己声明过**的描边。`declared.borderTopWidth` 不能直接用：Chromium 在
       // "从未写过任何边框"时也会回 `medium`（UA 初始值），与"显式声明成 medium"同形。
       // `declaredBorder` 是按 CSS 声明原始值取的（简写 + 长属性），见 lane.js 的注释。
@@ -392,7 +416,7 @@ if (launched.browser === null) {
       const noBorder = shorthand === '' && (topWidth === '' || topWidth === 'medium')
       if (noBorder) return []
       return [
-        where + ' 不该有描边（官方 `.selector{border:none}`），实测声明值 border=' +
+        where + ' 不该有描边（自绘触发器与官方 `.selector{border:none}` 一致），实测声明值 border=' +
           JSON.stringify(shorthand) + ' border-top-width=' + JSON.stringify(topWidth),
       ]
     }
@@ -533,7 +557,7 @@ if (launched.browser === null) {
   // ── 1. 设置页 ─────────────────────────────────────────────────────────────
 
   describe('1. 尺寸对齐 · 设置页（settings.section）', () => {
-    it('1.1 输入框 = 官方表单控件；自绘下拉触发器 = 官方 .selector（36px / 0 14px / 14px / 无描边）', async () => {
+    it('1.1 输入框 / 自绘下拉触发器 = 官方「模型」页本页的 `._3nPmjq_input`（32px / 0 10px / 14px / 触发器无描边）', async () => {
       const { page, context, problems } = await openSizeLane({ slot: 'settings.section' })
       try {
         /*
@@ -564,7 +588,11 @@ if (launched.browser === null) {
           const bad = sizeDiff(measured, expected, role)
             .concat(radiusDiff(measured, expected, radius, role))
             .concat(borderDiff(measured, expected, role))
-          assert.deepEqual(bad, [], '设置页 ' + role + ' 的尺寸与官方表单控件不一致：\n' + bad.join('\n'))
+          assert.deepEqual(
+            bad,
+            [],
+            '设置页 ' + role + ' 的尺寸与官方「模型」页本页的 `._3nPmjq_input` 不一致：\n' + bad.join('\n'),
+          )
         }
         assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
       } finally {

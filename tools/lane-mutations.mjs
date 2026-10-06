@@ -404,49 +404,53 @@ const MUTATIONS = [
   {
     id: 'M20-input-surface-is-bg-base',
     /**
-     * 输入控件侧的变异（19.5 的缺陷形态）：把 `inputStyle` 的底色从**官方表单控件那一层**
-     * `--dsw-alias-bg-layer-3` 退回 `--dsw-alias-bg-base`（**应用最底层**，深色 `#151517`）。
+     * 输入控件侧的变异（19.5 的缺陷形态）：把输入控件的底色从**官方那一层**
+     * 退回 `--dsw-alias-bg-base`（**应用最底层**，深色 `#151517`）。
      *
-     * 这正是用户肉眼确认的那处偏差：`TextInput` / `Select` 共用 `inputStyle`，嵌在设置面板
-     * （`bg-layer-2`，深色 `#2c2c2e`）里却比面板本身还暗一层，观感是"输入框塌进去了"。
-     * 官方设置页的表单控件（`primitives` 的 `settings-form/fields.module.css` 的 `.input`，
-     * `SettingsValueField` 与 `SettingsSecretField` **同一个类**）用的是 `bg-layer-3`。
+     * 这正是用户肉眼确认的那处偏差：输入框嵌在设置面板（`bg-layer-2`，深色 `#2c2c2e`）里
+     * 却比面板本身还暗一层，观感是"输入框塌进去了"。
      *
-     * 预期被 **8.9** 抓住：判据是"最近色必须命中 `bg-layer-3`"，所以变异体报的是
-     * 「底色是 bg-base —— 那是误差形态」，而不是笼统的"颜色不等"。注意 8.9 只在**深色**
-     * 那一次判"等于哪一层"（浅色下官方四层表面都是 `#fff`，写哪层都同色），与 8.8 同纪律。
+     * **2026-10-12 起锚点是 `modelsPageInputStyle`**（模型页本页那一类控件）：
+     * 设置页的文本框 / 密码框 / 自绘下拉触发器已从 `inputStyle`（`bg-layer-3`）改挂
+     * `modelsPageInputStyle`（`bg-layer-1`），而 8.9 的判据现在是"按控件分类判层" ——
+     * 只有动**这一类**的底色，才会走到"最近色必须命中 `bg-layer-1`"那条断言上。
+     * 动 `inputStyle` 只会打到 `input.exportDir` / `textarea.prompt` 那一组（浅色下
+     * 官方四层同色、判不出"等于哪一层"，深色那一轮才判），那是**另一类**控件。
      *
-     * 注：变异体只把**内联样式**退回 bg-base，`T.bgLayer3` 键仍在（仍被 textarea 引用），
-     * 所以变异产物照样能跑起来 —— 这是"被断言抓住"而不是"崩了"的前提。
+     * 预期被 **8.9** 抓住：变异体报的是「底色是 bg-base —— 那是误差形态」，
+     * 而不是笼统的"颜色不等"。
+     *
+     * 注：变异体只把**内联样式**退回 bg-base，`T.bgLayer1` / `T.bgLayer3` 键仍在
+     * （别处仍在引用），所以变异产物照样能跑起来 —— 这是"被断言抓住"而不是"崩了"的前提。
      */
-    bug: '输入控件底色从官方表单控件那一层 bg-layer-3 退回应用最底层 bg-base（深色下比设置面板还暗，"输入框塌进去"）',
-    expect: ['8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值'],
+    bug: '输入控件底色从官方那一层退回应用最底层 bg-base（深色下比设置面板还暗，"输入框塌进去"）',
+    expect: ['8.9 input / password / 自绘下拉触发器 == 官方「模型」页那层 bg-layer-1'],
     edits: [
       {
-        // 锚点：`inputStyle` 里 `background: T.bgLayer3` 与紧随其后的边框注释一起出现，
-        // 在文件里**只此一处**（textarea 那处的 bg 行紧跟 `color: T.label,`，不匹配）。
-        find: '      background: T.bgLayer3,\n      // 边框同样照抄官方表单控件那一处',
-        replace: '      background: T.bgBase,\n      // 边框同样照抄官方表单控件那一处',
+        // 锚点：`modelsPageInputStyle` 里 `background: T.bgLayer1,` 与紧随其后的边框注释
+        // 一起出现，在文件里**只此一处**（弹层 / 触发器那两处都没有这行注释）。
+        find: '      background: T.bgLayer1,\n      // 描边与 `inputStyle` 同一枚',
+        replace: '      background: T.bgBase,\n      // 描边与 `inputStyle` 同一枚',
       },
     ],
   },
   {
     id: 'M21-input-surface-is-bg-layer-2',
     /**
-     * 输入控件侧的第二形态：把 `inputStyle` 的底色退回**设置面板自己那一层**
+     * 输入控件侧的第二形态：把同一处的底色退回**设置面板自己那一层**
      * `--dsw-alias-bg-layer-2`。
      *
      * 这一条的存在意义是证明 8.9 里那句"**不等于** `bg-layer-2`"**不是空转**：
-     * `bg-layer-2` 与 `bg-layer-3` 只差一档（深色 `#2c2c2e` vs `#353638`），肉眼几乎看不出，
-     * 但"输入框与它所在的卡片同色"就意味着控件边界只剩一根描边 —— 官方不是这么画的
-     * （官方表单控件比它所在的设置面板**亮一档**）。若删掉那条 notEqual，这条变异就不会红。
+     * `bg-layer-2` 与 `bg-layer-1` 只差一档（深色 `#2c2c2e` vs `#232324`），肉眼几乎看不出，
+     * 但"输入框与它所在的卡片同色"就意味着控件边界只剩一根描边 —— 官方不是这么画的。
+     * 若删掉那条 notEqual，这条变异就不会红。
      */
     bug: '输入控件底色退回设置面板那一层 bg-layer-2（与卡片同色，控件只剩描边、看不出是输入面）',
-    expect: ['8.9 input / password / 自绘下拉触发器的底色与描边逐个等于官方解析值'],
+    expect: ['8.9 input / password / 自绘下拉触发器 == 官方「模型」页那层 bg-layer-1'],
     edits: [
       {
-        find: '      background: T.bgLayer3,\n      // 边框同样照抄官方表单控件那一处',
-        replace: '      background: T.bgLayer2,\n      // 边框同样照抄官方表单控件那一处',
+        find: '      background: T.bgLayer1,\n      // 描边与 `inputStyle` 同一枚',
+        replace: '      background: T.bgLayer2,\n      // 描边与 `inputStyle` 同一枚',
       },
     ],
   },
@@ -455,14 +459,19 @@ const MUTATIONS = [
     /**
      * 尺寸对齐（2026-10-08）的第一形态：把表单值控件的高度退回**改造前**的 28px。
      *
-     * 官方是 34px（`fields.module.css:108` 的 `.input{height:34px}`）。这一条证的是
-     * `sizes.test.mjs` 的 1.1 / 2.1 **不是空转**：高度写错时那两条必须红。
-     * 改的是 `S.fieldHeight`（唯一的取值来源），所以设置页的文本框与作品库的搜索框会
-     * **同时**错（搜索框的 36px 在 `S.searchHeight` 上，不受这条变异影响——这正好说明
-     * "搜索框 ≠ 表单值字段"这两套尺寸是分开钉住的）。
+     * 官方是 34px（`fields.module.css:108` 的 `.input{height:34px}`）。改的是
+     * `S.fieldHeight`（`inputStyle` 唯一的取值来源）。
+     *
+     * **2026-10-12 起这条变异盯的对象变了**：设置页的文本框 / 密码框 / 自绘下拉触发器
+     * 已改挂 `modelsPageInputStyle`（32px，走 `S.modelsInputHeight`）—— 那是**另一类**
+     * 官方控件，所以 `S.fieldHeight` 现在只剩两处消费方：作品库工具条的**排序下拉**
+     * （原生 `<select>`）与各处 `inputStyle` 派生。相应地 `expect` 从
+     * `sizes 1.1`（设置页）改成 **`2.1`（作品库）** —— 断言一字未改，是**被它覆盖的对象**
+     * 变了；`1.1` 现在由 `M43` 盯着。搜索框的 36px 在 `S.searchHeight` 上，本变异不影响
+     * 它（这正好说明"搜索框 ≠ 表单值字段"这两套尺寸是分开钉住的）。
      */
-    bug: '输入控件高度从官方的 34px 退回改造前的 28px（S.fieldHeight）',
-    expect: ['1.1 输入框 = 官方表单控件', '2.1 工具条按钮'],
+    bug: '表单值控件高度从官方的 34px 退回改造前的 28px（S.fieldHeight）',
+    expect: ['2.1 工具条按钮 = Button.sm；搜索框 / 排序下拉 = 官方表单控件'],
     edits: [
       {
         find: "      fieldHeight: '34px',",
@@ -527,9 +536,13 @@ const MUTATIONS = [
     expect: ['2.2 回收站列表项 = 官方设置卡片'],
     edits: [
       {
-        // 锚点带上上一行的 `background: T.bgLayer2`（设置卡片自己的填充）：
-        // 2026-10-09 起自绘下拉弹层也用 `borderRadius: S.radiusLg`，
-        // 只按圆角那一行找会命中 2 次（脚本要求恰好 1 次）。
+        /**
+         * 锚点带上上一行的 `background: T.bgLayer2`（设置卡片自己的填充）：
+         * 2026-10-09 起自绘下拉弹层也用 `borderRadius: S.radiusLg`，
+         * 只按圆角那一行找会命中 2 次（脚本要求恰好 1 次）。
+         * 2026-10-12 起弹层改成"两条边定位"，那块里已经没有 `S.radiusLg` —— 但仍然保留
+         * 这行锚点：它是"只改卡片圆角、不动别处"的语义说明。
+         */
         find: "        background: T.bgLayer2,\n        borderRadius: S.radiusLg,",
         replace: "        background: T.bgLayer2,\n        borderRadius: '10px',",
       },
@@ -555,15 +568,19 @@ const MUTATIONS = [
         replace: "          false ? h(Icon, {\n            name: 'chevronDown',\n            className: 'pxm-select-chevron',",
       },
       {
-        find: "              transform: open ? 'rotate(180deg)' : 'none',\n            },\n          }),\n        ),\n        open",
-        replace: "              transform: open ? 'rotate(180deg)' : 'none',\n            },\n          }) : null,\n        ),\n        open",
+        /**
+         * 第二处收尾：2026-10-12 起 chevron 之后紧跟的是 `),` + `// 弹层…` 注释
+         * （弹层从内联三元改成 `const popup`），所以锚点跟着改成那一行注释。
+         */
+        find: "              transform: open ? 'rotate(180deg)' : 'none',\n            },\n          }),\n        ),\n        // 弹层（位置/上限由 `place` 给，见上面的定位注释）。",
+        replace: "              transform: open ? 'rotate(180deg)' : 'none',\n            },\n          }) : null,\n        ),\n        // 弹层（位置/上限由 `place` 给，见上面的定位注释）。",
       },
     ],
   },
   {
     id: 'M28-no-select-list',
     /**
-     * 形态复刻的第二形态：点击触发器**不再渲染弹层**（`open ? … : null` 恒为 null）。
+     * 形态复刻的第二形态：点击触发器**不再渲染弹层**（`open ? popup : null` 恒为 null）。
      *
      * 这是"自绘下拉"最容易被写坏的一半：触发器长得对、点下去什么都没有。
      * 期望由 `controls.test.mjs` 的 1.1 / 3.1 / 3.2 / 3.3 一起抓住
@@ -578,8 +595,8 @@ const MUTATIONS = [
     ],
     edits: [
       {
-        find: "        open\n          ? h(\n              'div',\n              {\n                ref: listRef,",
-        replace: "        false\n          ? h(\n              'div',\n              {\n                ref: listRef,",
+        find: '        // 弹层（位置/上限由 `place` 给，见上面的定位注释）。\n        open ? popup : null,',
+        replace: '        // 弹层（位置/上限由 `place` 给，见上面的定位注释）。\n        null,',
       },
     ],
   },
@@ -894,6 +911,112 @@ const MUTATIONS = [
           "                      cursor: busy ? 'not-allowed' : 'pointer',",
           '                    },',
         ].join('\n'),
+      },
+    ],
+  },
+  // ── 可搜索下拉 + 弹层不被裁 + 模型页输入档（2026-10-12）─────────────────────
+  {
+    id: 'M41-no-select-search',
+    /**
+     * 可搜索下拉（2026-10-12）的第一形态：**去掉搜索框**。
+     *
+     * 这正是用户反馈那件事的"退回原状"：模型有 16 个，弹层只能一屏一屏翻。
+     * 改法：把搜索框那一整块的渲染条件从 `enableSearch` 改成 `false`（能力开关还在，
+     * 只是永远不画搜索框），弹层退化成"纯 ↑↓ 的长列表"。
+     *
+     * 期望由 `controls.test.mjs` 的 **4.1 / 4.2 / 4.4** 一起抓住：
+     * 4.1 直接断言"16 项的长列表必须有搜索框"；4.2 / 4.4 靠
+     * `page.fill('[data-pxm-select-search]')` 找不到元素而失败。三条各自独立。
+     */
+    bug: '长列表弹层去掉搜索框（16 个模型只能一屏一屏翻，用户反馈的那件事原样回来）',
+    expect: [
+      '4.1 长列表（16 项）的弹层里有搜索框；短列表（3 项）没有',
+      '4.2 输入即过滤（大小写不敏感子串）',
+      '4.4 直接在列表容器上打字符就开始搜',
+    ],
+    edits: [
+      {
+        // 锚点 = 搜索框那一块的渲染条件（唯一）。
+        find: "        enableSearch\n          ? h(\n              'div',\n              {\n                className: 'pxm-select-search',",
+        replace: "        false\n          ? h(\n              'div',\n              {\n                className: 'pxm-select-search',",
+      },
+    ],
+  },
+  {
+    id: 'M42-select-list-clipped',
+    /**
+     * 第二形态：**让弹层重新被裁**（退回 `position: absolute` + `left: 0`，
+     * 也就是 2026-10-12 之前那个形态）。
+     *
+     * 这条专门钉"弹层完整可见"那条断言**自身**：绝对定位的弹层是"设置弹窗"
+     * （`#settingsDialog{overflow:auto}`，真实 shell 是 `SettingsRoot` 的
+     * `.wCInkW_options{overflow-y:auto}`）的内容，触发器靠近它下边界时会被切掉。
+     * 注意**不动** `max-height`：这不是"把上限调小就算修好"那种改法 ——
+     * 变异体的高度上限仍由定位逻辑给（320），被裁是**位置**的问题。
+     */
+    bug: '弹层退回 position:absolute（重新被设置弹窗的 overflow 裁掉）—— 去掉翻转/夹取',
+    expect: [
+      '4.5 弹层必须完整落在视口内且贴着触发器',
+      '4.6 长列表 + 矮窗口',
+    ],
+    edits: [
+      {
+        // 锚点要**唯一**：`position: 'fixed'` 在文件里出现过三次（作品库面板 / 实时预览卡 /
+        // 这里），所以带上紧随其后的那行注释来定位弹层这一处。
+        find: "            position: 'fixed',\n            // 贴住触发器的**那一条边**",
+        replace: "            position: 'absolute',\n            // 贴住触发器的**那一条边**",
+      },
+      {
+        // 绝对定位下 `bottom` 是相对**包含块**（`position:relative` 的 `.pxm-select`）算的，
+        // 语义完全不同 —— 所以连它一起退回旧形态（`top: calc(100% + 4px)` + `left: 0`）。
+        find: [
+          '            ...(place.up',
+          "              ? { bottom: String(place.anchor) + 'px' }",
+          "              : { top: String(place.anchor) + 'px' }),",
+          "            left: String(place.left) + 'px',",
+        ].join('\n'),
+        replace: ["            top: 'calc(100% + ' + S.menuOffset + ')',", '            left: 0,'].join('\n'),
+      },
+      {
+        // 宽度也别再跟触发器夹取（旧形态是 `minWidth:100%` + `maxWidth: menuMaxWidth`）。
+        find: [
+          '            // 宽度跟触发器一致；`maxWidth` 再挡一层（面板比视口还宽时不让它溢出右边）。',
+          "            width: String(place.width) + 'px',",
+          "            maxWidth: String(place.width) + 'px',",
+        ].join('\n'),
+        replace: [
+          '            // 旧形态：跟触发器对齐 + 官方 Menu 的宽度上限。',
+          "            minWidth: '100%',",
+          '            maxWidth: S.menuMaxWidth,',
+        ].join('\n'),
+      },
+    ],
+  },
+  {
+    id: 'M43-models-input-old-34px',
+    /**
+     * 第三形态：**把模型页的输入控件退回 34px / `bg-layer-3`**
+     * （`settings-form` 那一档，2026-10-12 之前的形态）。
+     *
+     * 只改 `modelsPageInputStyle` 的高度与底色：两处一起改才对应"退回旧档"，
+     * 而两处分别由**两条不同的用例**钉着（尺寸那条在 `sizes.test.mjs`、
+     * 底色那条在 `theme.test.mjs`）—— 一条变异同时证明两条断言都不是空跑。
+     */
+    bug: '模型页输入控件退回 34px / bg-layer-3（settings-form 那一档，而不是本页私有的 32px / bg-layer-1）',
+    expect: [
+      '1.1 输入框 / 自绘下拉触发器 = 官方「模型」页本页的 `._3nPmjq_input`',
+      '8.9 input / password / 自绘下拉触发器 == 官方「模型」页那层 bg-layer-1',
+    ],
+    edits: [
+      {
+        find: "      modelsInputHeight: '32px',",
+        replace: "      modelsInputHeight: '34px',",
+      },
+      {
+        // `modelsPageInputStyle` 里那一处（`background: T.bgLayer1,` 紧跟 `color: T.label,`，
+        // 且下一行是那句注释）—— 锚点必须唯一。
+        find: "      color: T.label,\n      background: T.bgLayer1,\n      // 描边与 `inputStyle` 同一枚",
+        replace: "      color: T.label,\n      background: T.bgLayer3,\n      // 描边与 `inputStyle` 同一枚",
       },
     ],
   },

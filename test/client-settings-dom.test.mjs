@@ -679,11 +679,13 @@ describe('jsdom lane：模型选择面板', () => {
 
     assert.equal(checkboxes(lane).length, PULLED_MODELS.length, '每个模型一行复选框')
 
-    // 150 项不能把卡片撑爆：必须有一个 max-height 240px 的内部滚动容器
+    // 150 项不能把卡片撑爆：必须有一个 max-height 320px 的内部滚动容器
+    // （320 = 官方 `._3nPmjq_candidateList{max-height:320px}`；2026-10-12 由 240px 改到官方值，
+    // 见 docs/contract-notes.md §24.4 —— 更新断言到官方值，不是放宽：上限与内部滚动都还在）
     const scroller = [...lane.container.querySelectorAll('div')].find(
-      (node) => node.style.maxHeight === '240px',
+      (node) => node.style.maxHeight === '320px',
     )
-    assert.ok(scroller, '列表必须放在 max-height: 240px 的滚动容器里')
+    assert.ok(scroller, '列表必须放在 max-height: 320px 的滚动容器里')
     assert.equal(scroller.style.overflowY, 'auto')
 
     const search = lane.inputByPlaceholder('搜索模型…')

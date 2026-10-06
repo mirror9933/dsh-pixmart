@@ -327,23 +327,37 @@ if (launched.browser !== null) {
 
   // ── 3. 键盘与关闭 ──────────────────────────────────────────────────────────
 
-  describe('3. 键盘可达性与关闭', () => {
-    /** 打开「尺寸」那一行的下拉并等弹层出现。 */
-    async function openSize(page) {
-      const fields = await page.$$('[data-pxm-field]')
-      for (const field of fields) {
-        const text = await field.evaluate((node) => {
-          const label = node.querySelector('[data-pxm-field-label]')
-          return label === null ? '' : label.textContent
-        })
-        if (text.includes('尺寸')) {
-          await (await field.$('[data-pxm-role="select"]')).click()
-          await page.waitForSelector('[data-pxm-select-list]', { timeout: 5000 })
-          return true
-        }
+  /**
+   * 按字段标签打开自绘下拉，并等弹层出现。返回 `true`=打开了。
+   *
+   * 放在**共享作用域**（不在某个 describe 里）：第 3 组与第 4 组都要用，
+   * 而 describe 之间不能互相看见对方的局部函数。
+   *
+   * 标签走**精确**匹配：字段多了之后「厂商」的说明里含"模型"二字，子串匹配会静默选错行。
+   */
+  async function openSelectByLabel(page, labelText) {
+    const fields = await page.$$('[data-pxm-field]')
+    for (const field of fields) {
+      const text = await field.evaluate((node) => {
+        const label = node.querySelector('[data-pxm-field-label]')
+        return label === null ? '' : label.textContent.trim()
+      })
+      if (text === labelText) {
+        await (await field.$('[data-pxm-role="select"]')).click()
+        await page.waitForSelector('[data-pxm-select-list]', { timeout: 5000 })
+        return true
       }
-      return false
     }
+    return false
+  }
+
+  /** 打开「尺寸」那一行的下拉（短列表：3 项，没有搜索框）。 */
+  const openSize = (page) => openSelectByLabel(page, '尺寸')
+
+  /** 打开「模型」那一行的下拉（长列表：夹具给 16 个模型 → 有搜索框）。 */
+  const openModel = (page) => openSelectByLabel(page, '模型')
+
+  describe('3. 键盘可达性与关闭', () => {
 
     it('3.1 ↑↓ 改变选中项（并真的移动焦点），Enter 选中并把值写回触发器', async () => {
       const { page, context, problems } = await openLane()
@@ -494,6 +508,480 @@ if (launched.browser !== null) {
           'select',
           '真 Esc 后焦点必须回到触发器',
         )
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 4. 可搜索下拉 + 弹层不被裁（2026-10-12） ────────────────────────────────
+
+  /**
+   * 用户反馈两条：**模型有 16 个，弹出列表太长**、**有部分被遮挡**。这一组用例把两条都钉住。
+   *
+   * 判据全部落在**可观测事实**上，不锚类名：
+   *   - 搜索：输入 → `options` 变少且只剩匹配项；`↑↓` 只在**过滤结果**里移动；`Enter` 写回；
+   *   - 不被裁：弹层矩形必须落在**视口内**（`bottom <= innerHeight` / `right <= innerWidth`），
+   *     且必须在**触发器附近**（下方 `+4px` 或上方 `−4px`）——"被祖先裁掉"时这两条必红；
+   *   - 空态 / `Esc` / 外点关闭。
+   *
+   * 反向变异见 `tools/lane-mutations.mjs` 的 `M41`（去掉搜索框）/ `M42`（退回绝对定位、重新被裁）。
+   */
+  describe('4. 可搜索下拉（长列表）与弹层不被裁', () => {
+    /**
+     * 长列表夹具：16 个模型（用户实测的数量）。
+     *
+     * **故意混入大小写与子串关系**：`Gpt-Image-1`（大写 G）与 `gpt-image-2` 都要被
+     * 小写 `gpt` 命中；`flux` 只能命中两枚 —— 这样"过滤"与"大小写不敏感"两件事
+     * 各自都有反例可抓。
+     */
+    const LONG_MODELS = [
+      'Gpt-Image-1',
+      'gpt-image-2',
+      'openai/gpt-image-1-mini',
+      'black-forest-labs/flux-1.1-pro',
+      'black-forest-labs/flux-dev',
+      'google/gemini-3.1-flash-image',
+      'google/imagen-4',
+      'qwen/qwen-image-edit',
+      'qwen/qwen-image',
+      'stability/sd-3.5-large',
+      'midjourney/v6',
+      'ideogram/v3',
+      'recraft/v3',
+      'luma/photon',
+      'text-embedding-3-large',
+      'whisper-1',
+    ]
+
+    const longFixture = () => ({
+      providers: {
+        ...providersFixture,
+        defaults: { provider: 'ofox', model: 'gpt-image-2', size: '1:1', n: 1 },
+        providers: [{ ...providersFixture.providers[0], models: LONG_MODELS }],
+      },
+      projects: [],
+    })
+
+    /** 16 个模型时，弹层必须带搜索框。 */
+    it('4.1 长列表（16 项）的弹层里有搜索框；短列表（3 项）没有', async () => {
+      const { page, context, problems } = await openLane({ fixture: longFixture })
+      try {
+        assert.equal(await openModel(page), true, '必须能打开「模型」下拉')
+        const facts = await probe(page, 'selectFacts', '模型')
+        assert.ok(facts.search !== null, '16 项的长列表必须有搜索框：' + JSON.stringify(facts.search))
+        // 「模型」那一枚下拉比"该厂商的模型数"多一项：「（用该厂商的第一个模型）」。
+        assert.equal(
+          facts.options.length,
+          LONG_MODELS.length + 1,
+          '弹层里应当是全部 16 个模型 + 1 枚「用第一个模型」占位项',
+        )
+        assert.equal(
+          facts.search.value,
+          '',
+          '刚打开时搜索框必须是空的（否则用户看不到全量列表）',
+        )
+        assert.ok(
+          facts.search.placeholder !== null && facts.search.placeholder !== '',
+          '搜索框必须有 placeholder',
+        )
+        assert.equal(facts.search.clearPresent, false, '搜索框为空时不该有「清空」按钮')
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+
+      const short = await openLane()
+      try {
+        assert.equal(await openSize(short.page), true, '必须能打开「尺寸」下拉')
+        const facts = await probe(short.page, 'selectFacts', '尺寸')
+        assert.equal(
+          facts.search,
+          null,
+          '短列表（3 项）不该出现搜索框：多一个框只会让弹层更高、还多一次 Tab',
+        )
+        assert.deepEqual(short.problems, [])
+      } finally {
+        await short.context.close()
+      }
+    })
+
+    it('4.2 输入即过滤（大小写不敏感子串）：选项变少且只含匹配项；「清空」恢复全量', async () => {
+      const { page, context, problems } = await openLane({ fixture: longFixture })
+      try {
+        assert.equal(await openModel(page), true, '必须能打开「模型」下拉')
+        const before = await probe(page, 'selectFacts', '模型')
+        assert.equal(
+          before.options.length,
+          LONG_MODELS.length + 1,
+          '过滤前应当是全部 16 个模型 + 1 枚占位项',
+        )
+
+        // 小写输入命中大写开头的项（Gpt-Image-1）→ 证明大小写不敏感。
+        await page.fill('[data-pxm-select-search]', 'gpt')
+        const filtered = await probe(page, 'selectFacts', '模型')
+        assert.ok(
+          filtered.options.length < before.options.length,
+          '过滤后选项必须变少：' + JSON.stringify(filtered.options.map((o) => o.value)),
+        )
+        for (const option of filtered.options) {
+          assert.ok(
+            String(option.value).toLowerCase().includes('gpt'),
+            '过滤结果里不该有非匹配项：' + JSON.stringify(option),
+          )
+        }
+        assert.ok(
+          filtered.options.some((option) => option.value === 'Gpt-Image-1'),
+          '大小写不敏感：小写 gpt 必须命中 Gpt-Image-1',
+        )
+        assert.ok(
+          filtered.options.some((option) => option.value === 'openai/gpt-image-1-mini'),
+          '子串匹配：gpt 必须命中中段的 openai/gpt-image-1-mini',
+        )
+        assert.equal(filtered.search.clearPresent, true, '有内容时必须出现「清空」按钮')
+        assert.ok(
+          filtered.listRect.bottom <= filtered.listRect.top + 320.5,
+          '过滤后弹层不该超过上限 320px：' + JSON.stringify(filtered.listRect),
+        )
+
+        // 「清空」按钮：点一下恢复全量。
+        await page.click('[data-pxm-select-clear]')
+        const cleared = await probe(page, 'selectFacts', '模型')
+        assert.equal(cleared.search.value, '', '点清空后搜索框必须为空')
+        assert.equal(cleared.options.length, before.options.length, '清空后必须恢复全部 16 项 + 占位项')
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('4.3 ↑↓ 只在过滤结果内移动，Enter 选中并把值写回触发器；当前项仍带 ✓', async () => {
+      const { page, context, problems } = await openLane({ fixture: longFixture })
+      try {
+        assert.equal(await openModel(page), true, '必须能打开「模型」下拉')
+        await page.fill('[data-pxm-select-search]', 'flux')
+        const filtered = await probe(page, 'selectFacts', '模型')
+        assert.equal(
+          filtered.options.length,
+          2,
+          '夹具里 flux 恰好两枚：' + JSON.stringify(filtered.options.map((o) => o.value)),
+        )
+
+        /*
+         * 过滤后当前值（gpt-image-2）不在结果里 ⇒ 没有任何带 ✓ 的项。
+         * 此时 ↑↓ 的落点必须是**过滤结果**里的项，不能跑到被过滤掉的项上。
+         * 判据用 `activeIndex`（高亮项在过滤结果里的下标）：长列表形态下焦点留在
+         * 容器/搜索框上，`activeOption` 恒为 null —— 那是"焦点在哪"，不是"高亮在哪"。
+         */
+        assert.equal(
+          filtered.options.filter((option) => option.hasCheck).length,
+          0,
+          '当前值被过滤掉时，弹层里不该出现 ✓（它不在结果里）',
+        )
+
+        // 焦点先落到列表容器（长列表形态），走真实键盘事件。
+        await page.focus('[data-pxm-select-list]')
+        await page.keyboard.press('ArrowDown')
+        const first = await probe(page, 'selectFacts', '模型')
+        assert.ok(
+          first.activeIndex >= 0 && first.activeIndex < filtered.options.length,
+          '↓ 之后高亮必须落在**过滤结果**范围内：' +
+            JSON.stringify({
+              activeIndex: first.activeIndex,
+              options: filtered.options.map((o) => o.value),
+            }),
+        )
+        await page.keyboard.press('ArrowDown')
+        const second = await probe(page, 'selectFacts', '模型')
+        assert.notEqual(second.activeIndex, first.activeIndex, '再按一次 ↓ 必须换一项')
+        assert.ok(
+          second.activeIndex >= 0 && second.activeIndex < filtered.options.length,
+          '第二落点也必须在过滤结果范围内：' + JSON.stringify(second.activeIndex),
+        )
+
+        const target = second.options[second.activeIndex].value
+        await page.keyboard.press('Enter')
+        const after = await probe(page, 'selectFacts', '模型')
+        assert.equal(after.expanded, 'false', 'Enter 选中后弹层必须收起')
+        assert.equal(after.listRole, null, 'Enter 选中后弹层必须从 DOM 里消失')
+        assert.equal(
+          after.text.replace(/\s+/g, ''),
+          String(target).replace(/\s+/g, ''),
+          '选中的值必须写回触发器：' + JSON.stringify({ text: after.text, target: target }),
+        )
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('4.4 直接在列表容器上打字符就开始搜（焦点转到搜索框）；过滤无结果给可读空态', async () => {
+      const { page, context, problems } = await openLane({ fixture: longFixture })
+      try {
+        assert.equal(await openModel(page), true, '必须能打开「模型」下拉')
+        // 打开后焦点在列表容器上（长列表形态）；此时打一个字符应当被接住并转成过滤。
+        const opened = await probe(page, 'selectFacts', '模型')
+        assert.equal(opened.activeIsList, true, '长列表打开后焦点应落在列表容器上：' + JSON.stringify(opened))
+        await page.keyboard.type('flux')
+        const typed = await probe(page, 'selectFacts', '模型')
+        assert.equal(typed.search.value, 'flux', '在容器上打字必须写进搜索框')
+        assert.equal(typed.search.focused, true, '打字后焦点必须转到搜索框（否则接下来的字符会丢）')
+        assert.equal(typed.options.length, 2, 'flux 应命中两枚：' + JSON.stringify(typed.options))
+
+        // 无结果 → 可读空态。
+        await page.fill('[data-pxm-select-search]', 'zzz-不存在')
+        const empty = await probe(page, 'selectFacts', '模型')
+        assert.equal(empty.options.length, 0, '没有匹配项时选项数必须是 0')
+        assert.equal(empty.emptyVisible, true, '必须出现空态元素')
+        assert.ok(
+          typeof empty.emptyText === 'string' && empty.emptyText.length > 0,
+          '空态必须是可读文案，不是空白：' + JSON.stringify(empty.emptyText),
+        )
+
+        // 空态下 Enter 不该写坏值（没有可选项 → 什么都不做、弹层仍在）。
+        await press(page, '[data-pxm-select-list]', 'Enter')
+        const stillOpen = await probe(page, 'selectFacts', '模型')
+        assert.equal(stillOpen.expanded, 'true', '空态下 Enter 不该关掉弹层')
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('4.5 弹层必须完整落在视口内且贴着触发器 —— 在不滚动的"矮窗口"场景（触发器就在视口下半部）', async () => {
+      /*
+       * 复现用户截图那种场景：**窗口不高（480px）**，设置页是「厂商卡片 + 默认值卡片」的
+       * 长内容。**故意不滚动**：一滚就把触发器推到视口上半部，"放不下"的前提就没了。
+       * 用 DOM 原生 `click()` 打开（Playwright 的 `.click()` 会先把元素滚进视野，
+       * 那会改掉这个场景的几何 —— 实测触发器的视口位置从 382 变到 149）。
+       *
+       * 这个场景下弹层内容 ~296px 而下方只剩 66px ⇒ 必须翻到触发器上方。
+       * 旧形态（`position:absolute` + `left:0`）会被**设置弹窗**裁掉：
+       * `#settingsDialog{overflow:auto}`（真实 shell 是 `SettingsRoot` 的
+       * `.wCInkW_options{overflow-y:auto}`）正是那个裁切祖先，
+       * `lane.clipChain()` 能把它指出来（实测 `clipper = {id:'settingsDialog', overflowY:'auto'}`）。
+       *
+       * 判据两条互相独立，任一条都能让"退回被裁状态"变红：
+       *   ① 视口包含关系；② 弹层与触发器的相对位置。
+       */
+      const { page, context, problems } = await openLane({ height: 480, fixture: longFixture })
+      try {
+        const opened = await page.evaluate(() => {
+          const list = document.querySelectorAll('[data-pxm-field] [data-pxm-role="select"]')
+          const rect = list[2].getBoundingClientRect()
+          const dialog = document.getElementById('settingsDialog')
+          list[2].click()
+          return {
+            trigger: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+            innerHeight: window.innerHeight,
+            innerWidth: window.innerWidth,
+            spaceBelow: window.innerHeight - rect.bottom - 4,
+            spaceAbove: rect.top - 4,
+            scrollTop: dialog.scrollTop,
+          }
+        })
+        await page.waitForSelector('[data-pxm-select-list]', { timeout: 5000 })
+
+        // 前提：这个场景**真的**放不下（否则用例是空转，"翻转"从没被触发过）。
+        assert.ok(
+          opened.spaceBelow < 320,
+          '这一条的前提是"下方装不下 320px 的弹层"，实测下方只有 ' + String(opened.spaceBelow) + 'px',
+        )
+        assert.ok(
+          opened.spaceAbove > 320,
+          '这一条的前提是"上方装得下"，实测上方只有 ' + String(opened.spaceAbove) + 'px',
+        )
+
+        const facts = await probe(page, 'selectFacts', '尺寸')
+        const viewport = await probe(page, 'viewportRect')
+        assert.ok(facts.listRect !== null, '弹层必须存在')
+
+        // ① 完整落在视口内（被祖先裁掉时这里必红）。
+        assert.ok(
+          facts.listRect.bottom <= viewport.height,
+          '弹层底边不许超出视口：' +
+            JSON.stringify({ list: facts.listRect, viewport }) +
+            '（被裁的祖先见 lane 的 clipChain 探针）',
+        )
+        assert.ok(
+          facts.listRect.right <= viewport.width,
+          '弹层右边不许超出视口：' + JSON.stringify({ list: facts.listRect, viewport }),
+        )
+        assert.ok(facts.listRect.top >= 0, '弹层顶边不许超出视口：' + JSON.stringify(facts.listRect))
+        assert.ok(facts.listRect.left >= 0, '弹层左边不许超出视口：' + JSON.stringify(facts.listRect))
+
+        /*
+         * ② 贴着触发器：下方（bottom+4）或上方（top−4）各允许 8px 误差。
+         *
+         * 两个坐标都取**同一时刻**的实测值（`facts`）：打开时若浏览器顺手把触发器滚了一下
+         * （实测这个场景里设置弹窗的 scrollTop 会从 0 变到 36），拿点击前量到的矩形来比
+         * 就会差出一个滚动量 —— 那是量法的问题，不是实现的问题。
+         */
+        const below = Math.abs(facts.listRect.top - (facts.triggerRect.bottom + 4))
+        const above = Math.abs(facts.listRect.bottom - (facts.triggerRect.top - 4))
+        assert.ok(
+          above <= 8,
+          '下方只剩 ' +
+            String(opened.spaceBelow) +
+            'px ⇒ 弹层必须翻到触发器**上方**（不是把 max-height 调到很小就算修好）：' +
+            JSON.stringify({
+              list: facts.listRect,
+              trigger: facts.triggerRect,
+              below: below,
+              above: above,
+            }),
+        )
+        assert.ok(
+          Math.abs(facts.listRect.bottom - (facts.triggerRect.top - 4)) <= 8,
+          '向上打开的弹层必须紧贴触发器上沿（差 ' +
+            String(Math.abs(facts.listRect.bottom - (facts.triggerRect.top - 4))) +
+            'px）：' +
+            JSON.stringify({ list: facts.listRect, trigger: facts.triggerRect }),
+        )
+        /*
+         * 弹层必须装得下**全部选项**（不是被压成一条缝）：3 项 × 34px + 2 个 2px 间距
+         * + 8px 内边距 = 116px。这条与"高度上限 320"配对着看 —— 上限只在长列表上生效。
+         */
+        assert.ok(
+          facts.listRect.height >= 116 - 1,
+          '3 项必须能全部画出来（约 116px），不许被压成一条缝：' + JSON.stringify(facts.listRect),
+        )
+
+        // ③ 滚动不该把选中项滚出视野：选中项必须在弹层的可视滚动区内。
+        const checked = facts.options.filter((option) => option.hasCheck)[0]
+        assert.ok(checked !== undefined, '必须有一项带 ✓')
+        assert.ok(
+          checked.rect.top >= facts.scrollRect.top - 1 && checked.rect.bottom <= facts.scrollRect.bottom + 1,
+          '当前选中项必须在弹层的可视滚动区内：' +
+            JSON.stringify({ checked: checked.rect, scroll: facts.scrollRect }),
+        )
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('4.6 长列表 + 矮窗口：弹层仍完整可见；左右两个极端位置都夹进视口，高度不超 320px', async () => {
+      /*
+       * 用户截图那种场景的第二形态：**16 个模型**的长列表（弹层内容本身就超过 320px），
+       * 加上矮窗口。弹层此时由"可用空间"决定高度：`maxHeight = 最小(可用空间, 320)`。
+       * 这一条同时钉住三件事：
+       *   - 完整可见（含左右夹取：见下面把触发器挪到视口最左 / 最右的那两轮）；
+       *   - 高度不超过官方 `.candidateList` 的 320px；
+       *   - 过滤后仍完整可见。
+       */
+      const { page, context, problems } = await openLane({ height: 480, fixture: longFixture })
+      try {
+        const clickTrigger = (index) =>
+          page.evaluate((i) => {
+            document.querySelectorAll('[data-pxm-field] [data-pxm-role="select"]')[i].click()
+          }, index)
+
+        // 第一轮：模型下拉（16 项）。
+        const pre = await page.evaluate(() => {
+          const list = document.querySelectorAll('[data-pxm-field] [data-pxm-role="select"]')
+          const rect = list[1].getBoundingClientRect()
+          return { top: rect.top, bottom: rect.bottom, innerHeight: window.innerHeight }
+        })
+        await clickTrigger(1)
+        await page.waitForSelector('[data-pxm-select-list]', { timeout: 5000 })
+        const long = await probe(page, 'selectFacts', '模型')
+        const viewport = await probe(page, 'viewportRect')
+        assert.equal(long.search === null, false, '16 项必须带搜索框')
+        assert.ok(
+          long.listRect.bottom <= viewport.height && long.listRect.top >= 0,
+          '长列表弹层必须完整落在视口内（纵向）：' + JSON.stringify({ list: long.listRect, viewport }),
+        )
+        assert.ok(
+          long.listRect.right <= viewport.width && long.listRect.left >= 0,
+          '长列表弹层必须完整落在视口内（横向）：' + JSON.stringify({ list: long.listRect, viewport }),
+        )
+        // 上限 = 可用空间与官方 320px 的较小者（内容本身就超过 320px ⇒ 只能受这两个约束）。
+        const spaceBelow = viewport.height - pre.bottom - 4 - 8
+        const spaceAbove = pre.top - 4 - 8
+        const cap = Math.min(Math.max(spaceBelow, spaceAbove), 320)
+        assert.ok(
+          long.listRect.height <= cap + 0.5,
+          '弹层高度不得超过 min(可用空间 ' + String(cap) + 'px, 官方上限 320px)：' +
+            JSON.stringify(long.listRect),
+        )
+        // 宽度跟着触发器（不是固定 360px 的 Menu 上限，也不是整页宽）。
+        assert.ok(
+          Math.abs(long.listRect.width - long.triggerRect.width) <= 1,
+          '弹层宽度必须跟触发器一致：' +
+            JSON.stringify({ list: long.listRect, trigger: long.triggerRect }),
+        )
+        // 内容比上限长 ⇒ 内层必须真的可滚，且滚动区不越出弹层。
+        assert.equal(long.scrollOverflowY, 'auto', '长列表的内层必须可滚')
+        assert.ok(
+          long.scrollRect.height <= long.listRect.height + 0.5,
+          '内层滚动区不得超出弹层：' + JSON.stringify({ scroll: long.scrollRect, list: long.listRect }),
+        )
+
+        // 过滤之后仍然完整可见。
+        await page.fill('[data-pxm-select-search]', 'gpt')
+        const filtered = await probe(page, 'selectFacts', '模型')
+        assert.ok(filtered.options.length > 0 && filtered.options.length < 16, '过滤后应当剩下 gpt 的几项')
+        assert.ok(
+          filtered.listRect.bottom <= viewport.height && filtered.listRect.top >= 0,
+          '过滤后的弹层必须仍然完整可见：' + JSON.stringify(filtered.listRect),
+        )
+
+        // 第二轮：把窗口挤窄（触发器的左右空间同时变紧），弹层仍要夹在视口内。
+        await page.setViewportSize({ width: 420, height: 480 })
+        /*
+         * 等 React 把"重新夹取"落到 DOM 上：`setViewportSize` 是浏览器侧的动作，
+         * `resize` → `measure()` → `setPlace` 要跨过一帧才可见。用轮询而不是固定等待：
+         * 条件成立就立刻继续，慢机器上也不会假红。
+         */
+        await page
+          .waitForFunction(
+            () => {
+              const el = document.querySelector('[data-pxm-select-list]')
+              return el !== null && el.getBoundingClientRect().right <= window.innerWidth + 0.5
+            },
+            null,
+            { timeout: 5000 },
+          )
+          .catch(() => {})
+        const narrow = await probe(page, 'selectFacts', '模型')
+        const narrowViewport = await probe(page, 'viewportRect')
+        assert.ok(
+          narrow.listRect.right <= narrowViewport.width && narrow.listRect.left >= 0,
+          '窄屏下弹层必须夹在视口内：' +
+            JSON.stringify({ list: narrow.listRect, viewport: narrowViewport }),
+        )
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('4.7 Esc 关闭；点弹层外部关闭；两者都不改动已选的值', async () => {
+      const { page, context, problems } = await openLane({ fixture: longFixture })
+      try {
+        // Esc：焦点交回触发器。
+        assert.equal(await openModel(page), true, '必须能打开「模型」下拉')
+        const beforeText = (await probe(page, 'selectFacts', '模型')).text
+        await press(page, '[data-pxm-select-list]', 'Escape')
+        let now = await probe(page, 'selectFacts', '模型')
+        assert.equal(now.expanded, 'false', 'Esc 必须关闭弹层')
+        assert.equal(now.listRole, null, 'Esc 后弹层必须从 DOM 里消失')
+        assert.equal(now.text, beforeText, 'Esc 关闭不等于选中：值不得改动')
+        assert.equal(
+          await page.evaluate(() => document.activeElement.getAttribute('data-pxm-role')),
+          'select',
+          'Esc 后焦点必须回到触发器',
+        )
+
+        // 点外部：换一个远离弹层的点（左下角）。
+        assert.equal(await openModel(page), true, '必须能再次打开「模型」下拉')
+        const outside = await probeArgs(page, 'pointerDownAt', [4, 4])
+        assert.ok(outside !== null, '必须能在页面里派发 pointerdown')
+        now = await probe(page, 'selectFacts', '模型')
+        assert.equal(now.expanded, 'false', '点击弹层外部必须关闭')
+        assert.equal(now.text, beforeText, '点外部关闭不等于选中：值不得改动')
         assert.deepEqual(problems, [])
       } finally {
         await context.close()
