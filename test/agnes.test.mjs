@@ -135,7 +135,7 @@ describe('Agnes 厂商预设', () => {
     assert.equal(agnesProvider.dialect, 'agnes')
     assert.equal(agnesProvider.apiMode, 'images-generations')
     assert.equal(agnesProvider.group, 'official')
-    assert.equal(agnesProvider.baseUrl, 'https://apihub.agnes-ai.com/v1')
+    assert.equal(agnesProvider.baseUrl, 'https://api.agnes-ai.cn/v1')
     assert.equal(agnesProvider.geminiNativeBaseUrl, '', 'agnes 没有 Gemini 原生端点')
     assert.equal(agnesProvider.apiKey, '', '出厂不带密钥')
     assert.equal(agnesProvider.apiKeyEnv, 'AGNES_API_KEY')
@@ -166,7 +166,7 @@ describe('Agnes 厂商预设', () => {
           id: 'agnes',
           label: 'Agnes AI',
           group: 'official',
-          baseUrl: 'https://apihub.agnes-ai.com/v1',
+          baseUrl: 'https://api.agnes-ai.cn/v1',
           dialect: 'agnes',
           apiMode: 'images-generations',
           models: ['agnes-image-2.1-flash'],

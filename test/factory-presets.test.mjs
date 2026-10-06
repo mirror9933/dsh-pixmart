@@ -88,7 +88,7 @@ describe('出厂预设补齐：已有配置缺厂商', () => {
     assert.equal(agnes.apiKey, '', '补入的厂商必须是"尚未配置密钥"状态')
     assert.equal(agnes.label, 'Agnes AI')
     assert.equal(agnes.dialect, 'agnes')
-    assert.equal(agnes.baseUrl, 'https://apihub.agnes-ai.com/v1')
+    assert.equal(agnes.baseUrl, 'https://api.agnes-ai.cn/v1')
     assert.ok(agnes.models.length > 0, '出厂预设必须自带模型清单')
 
     // 2. **绝不覆盖**：文件里已有的 ofox 与种下的那份逐字节相同

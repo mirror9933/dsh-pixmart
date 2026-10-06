@@ -120,7 +120,7 @@ dsh --profile px --dump-config
 | 厂商 | `dialect` | 端点 | 密钥 | 状态 |
 |---|---|---|---|---|
 | **Ofox**（默认） | `ofox` | `https://api.ofox.io/v1` | `OFOX_API_KEY` | 已验证（真实出图 / 契约笔记 §11、§18） |
-| **Agnes AI** | `agnes` | `https://apihub.agnes-ai.com/v1` | `AGNES_API_KEY` | **契约已取证，未做真实出图验证** |
+| **Agnes AI** | `agnes` | `https://api.agnes-ai.cn/v1` | `AGNES_API_KEY` | **契约已取证，未做真实出图验证** |
 
 **Agnes 的取舍**（细节与出处见 [docs/contract-notes.md](./docs/contract-notes.md) §25）：
 
