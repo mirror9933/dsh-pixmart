@@ -7,7 +7,7 @@
 >
 > - **尚未发布到 registry**，`package.json` 里 `private: true`。所以只能用**本地路径 / git 地址**安装（见下方「安装」）。
 > - 功能阶段：**P0–P3 已完成，P4（打包与分发）未完成**——README / 打包步骤 / 上架还没收尾。
-> - 版本：`0.0.1`。测试：`pnpm test`（313 项）与 `pnpm test:browser`（11 项）全绿。
+> - 版本：`0.0.1`。测试：`pnpm test`（321 项）与 `pnpm test:browser`（18 项）全绿。
 > - 没做的功能写在「[已知限制](#已知限制)」里，别当成已有能力。
 
 ---
@@ -232,10 +232,22 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），313 项
-pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），11 项
+pnpm test             # node:test（含 jsdom lane），321 项
+pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），18 项
 pnpm verify           # 上面几条串起来
 ```
+
+**客户端配色：只走 DSH 官方主题 token，不要写死颜色。**
+`client/client.js` 的配色全部引用官方 `--dsw-*`（浅/深两套值由官方主题提供），所以深浅色主题
+自动与官方一致；半透明用 `color-mix(in srgb, var(--dsw-…) X%, transparent)`。
+源码里集中在 `T` / `tint()` / `shadow()` 三个常量上，加颜色只改那里。
+**不要**从插件里 `require('@deepseek-ai/dsh-client-ui-primitives')`：官方明文禁止
+（`dsh-agent-preset/skills/cordis-plugin-development/references/practices.md:35`），
+而且该包是未打包 ESM + 38 个相对 `.module.css`，本插件手写 JS、没有构建步骤，loader 解析不了
+—— 换组件的结果是**整个面板挂掉**，不是"只变丑"。官方认可的最低风险做法就是照抄 token
+（同文件 `:34`：`a renamed token degrades appearance but never breaks rendering`）。
+回归由三条测试锁住（静态扫描 / token 真的生效 / 深浅色跟随），详见
+[docs/contract-notes.md](./docs/contract-notes.md) §19。
 
 **文档**：
 

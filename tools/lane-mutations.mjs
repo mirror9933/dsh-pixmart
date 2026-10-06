@@ -25,7 +25,14 @@ import path from 'node:path'
 import { REPO_ROOT } from '../test/browser/lane-server.mjs'
 
 const CLIENT = path.join(REPO_ROOT, 'client', 'client.js')
-const TEST_FILE = 'test/browser/layout.test.mjs'
+/**
+ * 变异跑哪些 lane 文件。
+ *
+ * 两条 lane 各有分工：`layout.test.mjs` 管几何（滚不动 / 顶栏被盖 / 横向溢出 …），
+ * `theme.test.mjs` 管配色（计算样式是否等于官方 `--dsw-*` 的解析值、深浅色是否跟随）。
+ * 变异只让**对应用例**变红，所以两边都要跑：几何变异不该惊动配色用例，反之亦然。
+ */
+const TEST_FILES = ['test/browser/layout.test.mjs', 'test/browser/theme.test.mjs']
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex')
 
@@ -275,6 +282,28 @@ const MUTATIONS = [
       },
     ],
   },
+  {
+    id: 'M16-color-hardcoded-hex',
+    /**
+     * 配色侧的变异：把面板底色从 token 换回**硬编码 hex**。
+     *
+     * 预期被两条用例同时抓住（两条各自独立，互不代偿）：
+     *   - 「8.1 列表态：浅色下计算样式 == 对应 --dsw-* 的解析值」—— 面板底色不再等于
+     *     `bg-layer-1` 的解析值；
+     *   - 「8.2 列表态：换成官方深色 token 后同一批元素跟着变」—— 硬编码之后换 token 它一动不动。
+     * 第二条正是"能与官方深浅色主题一致"的判据：浅色下相等可能是巧合同色，跟着变才是真的。
+     * （`pnpm test` 里的静态用例 `test/client-tokens.test.mjs` 也会因这处 hex 变红，
+     * 但它不在本脚本跑的 lane 文件里，这里只记录浏览器侧的捕获。）
+     */
+    bug: "面板底色从 token 退回硬编码 hex（`background: T.bgLayer1` → `'#f4f4f5'`）—— 配色不再跟随官方主题",
+    expect: ['8.1 列表态：浅色下计算样式 == 对应 --dsw-* 的解析值', '8.2 列表态：换成官方深色 token 后同一批元素跟着变'],
+    edits: [
+      {
+        find: "        background: T.bgLayer1,\n        color: T.label,",
+        replace: "        background: '#f4f4f5',\n        color: T.label,",
+      },
+    ],
+  },
 ]
 
 function applyMutation(source, mutation) {
@@ -295,7 +324,7 @@ function applyMutation(source, mutation) {
 function runLane(clientFile) {
   const result = spawnSync(
     process.execPath,
-    ['--test', '--test-reporter=tap', TEST_FILE],
+    ['--test', '--test-reporter=tap', ...TEST_FILES],
     {
       cwd: REPO_ROOT,
       env: { ...process.env, PXM_LANE_CLIENT: clientFile },

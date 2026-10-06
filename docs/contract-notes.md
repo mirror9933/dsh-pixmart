@@ -1035,5 +1035,89 @@ s20  pwsh   → 再跑
 hint 三层关键词；`pixmart_edit` / `pixmart_batch` 工具层与渲染文本都带指令；5xx 不被误标；
 成功路径不受影响；guidance 新规则存在且正文 ≤36 行。
 
+## 19. 客户端视觉对齐：配色统一走官方主题 token（`--dsw-*`）
+
+### 19.1 契约（**不要再写死颜色**）
+
+`client/client.js` 的配色**只允许**引用 DSH 官方主题变量 `--dsw-*`，深浅色主题因此自动与官方
+一致。插件侧不得出现：十六进制色值、`rgb()` / `rgba()` / `hsl()`、CSS 系统色关键字
+（`Canvas` / `Field` / `WindowText` …），以及 CSS 的「当前颜色」关键字用来凑半透明色。
+
+需要半透明时用**基于 token** 的写法：
+
+```js
+color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)
+```
+
+源码里集中在三个常量上（`client/client.js` 顶部）：`T`（token 表）、`tint()`（半透明变体）、
+`shadow()`（浮层阴影）。加/换颜色只改这三处，不要在组件里内联新值。
+
+用到的那份官方 token 与语义对应（都经 client Theme 的 `listTokens` 确证存在，且
+`requiresLightAndDark: true`，即官方保证有浅/深两套值）：
+
+| 用途 | token |
+|---|---|
+| 页面底色 / 输入控件底色 | `--dsw-alias-bg-base` |
+| 面板、次级表面（顶层） | `--dsw-alias-bg-layer-1` |
+| 卡片、列表盒、缩略图占位（嵌套层） | `--dsw-alias-bg-layer-2` |
+| 查看器 / 预览卡 / 徽标（浮层） | `--dsw-alias-bg-overlay` |
+| 分隔线（发丝级） | `--dsw-alias-border-l1` |
+| 控件与卡片描边 | `--dsw-alias-border-l2` |
+| 品牌强调（选中描边、focus ring、进度「进行中」） | `--dsw-alias-brand-primary` |
+| 主文字 / 次文字 | `--dsw-alias-label-primary` / `--dsw-alias-label-secondary` |
+| 状态色（对齐官方 `StateDot`） | `--dsw-alias-state-success-primary`（完成）· `-state-error-primary`（失败）· `-state-warn-primary`（警告 / 数据过期）· `-state-idle-primary`（待机 / 进度条底槽） |
+
+**唯一的例外**：官方 token 里 `state-success-primary` 与 `state-warn-primary` 的浅色/深色
+取值**本来相同**（`#22c55e` / `#f59e0b`），所以它们不能用来证明"跟随主题"——这不是硬编码，
+19.3 第 3 条里的 8.5 用例把这件事钉住。除此之外，客户端配色里**没有**任何一处因为
+"没有 token 可用"而保留硬编码颜色（逐处核对过：`Canvas` 两处、`rgba(0,0,0,…)` 两处、
+`#hex` 八处、基于 `currentColor` 的半透明二十余处，全部换成了 token 或其派生色）。
+
+### 19.2 为什么不直接 require 官方组件包（`@deepseek-ai/dsh-client-ui-primitives`）
+
+两个独立的原因，缺一不可：
+
+1. **官方明文禁止**：`dsh-agent-preset/skills/cordis-plugin-development/references/practices.md:35`
+   写明不要从插件里 require 该组件包。
+2. **技术上也不通**：该包是**未打包 ESM + 38 个相对 `.module.css`**（`import './X.module.css'`），
+   而本插件的 client 半边是**手写 JS、没有构建步骤**（`window.__ModuleLoader__.load` 里手写
+   factory）。loader 解析不了那些相对导入，换组件的结果是**整个面板挂掉**，而不是"只变丑"。
+
+官方认可的最低风险做法就是本文这条：**照抄视觉 token**。依据是同文件 `practices.md:34` ——
+"a renamed token degrades appearance but never breaks rendering"：token 名字写错只会让外观退化，
+**永远不会让渲染崩掉**。这也正是"只改样式值、不动组件结构"这条纪律的来源。
+
+### 19.3 回归怎么锁住（三条）
+
+1. **静态扫描**（`test/client-tokens.test.mjs`，8 项，`pnpm test`）：先按字符串/注释状态机剥掉
+   注释（注释里会**提到**被禁的写法），再对代码断言——没有十六进制色值、没有系统色关键字、
+   没有 `rgb()`/`hsl()`、没有「当前颜色」关键字。两条**正向**断言：`--dsw-` 出现次数 ≥ 清单长度
+   （阈值 13）；以及从源码里**读出** `const T = {…}` 表，断言它与清单一一对应、且每个 token 键
+   都真的被样式引用过（只声明不引用 = 那处多半被换回硬编码了）。
+2. **token 真的生效**（`test/browser/theme.test.mjs` 8.1 / 8.3，`pnpm test:browser`）：
+   在 `test/browser/shell.html` 里**定义**官方浅色取值，然后按**计算样式**
+   （`getComputedStyle`，不是内联字符串）断言元素某个属性 == 该 token 在**当前页面**里的解析值
+   （解析由浏览器现场完成，`__pxmLane.resolveCss` 按目标属性本身解析，两边同一个序列化器）。
+   夹具里刻意放一条失败项，否则 `.pxm-item-error` 根本不渲染，"失败文字走 error token"就是空转。
+3. **深浅色跟随**（8.2 / 8.4）：在**同一个页面**里把同一批 token 换成官方深色取值
+   （`__pxmLane.setTokens`），断言每个被断言的颜色**都变了**、且等于新的解析值。
+   这是"能与官方深浅色主题一致"的唯一硬证据——只断言浅色下相等，可能是硬编码巧合同色
+   （成功色官方浅色就是 `#22c55e`，与历史硬编码一模一样）。8.5 另外把"哪几个 token 浅深同色、
+   因此不能当证据"写成断言，防止以后拿它们当证据。
+
+第 2、3 条刻意拆成**各自独立**的用例（8.1 只管浅色相等，8.2 只管跟着变）：写成一个用例时，
+"浅色不相等"会先失败、把"跟着变"那条断言挡在后面，反向变异就只能证明一半。
+
+**反向变异**：`tools/lane-mutations.mjs` 的 `M16-color-hardcoded-hex` 把面板底色从
+`T.bgLayer1` 换回 `'#f4f4f5'`。实测（`node tools/lane-mutations.mjs M16`）：
+
+- `8.1 列表态` 红：「这些元素的颜色不是它挂的那个 token 的解析值」；
+- `8.2 列表态` 红：「这些元素在深色 token 下颜色没变」；
+- 静态侧 `test/client-tokens.test.mjs` 的「没有任何十六进制颜色字面量」也红
+  （浏览器 lane 脚本另跑一份临时副本，仓库产物 sha256 前后一致）。
+
+该脚本现在同时跑 `layout.test.mjs` 与 `theme.test.mjs`：几何变异不该惊动配色用例，反之亦然。
+
+
 
 

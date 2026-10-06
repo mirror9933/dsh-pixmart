@@ -1,0 +1,626 @@
+/**
+ * 真实浏览器 lane 的**主题 token** 一侧：证明 PixMart 客户端的配色**真的**走
+ * DSH 官方主题变量（`--dsw-*`），而不是"颜色碰巧长得像"。
+ *
+ * ## 它补的是静态扫描的哪一块空白
+ *
+ * `test/client-tokens.test.mjs` 只看源码：没有硬编码 hex、没有系统色关键字、确实写了
+ * `var(--dsw-…)`。但"写了 `var(--dsw-…)`"和"浏览器把它解析成了主题色"是两件事——token
+ * 名字拼错、变量没被任何主题定义、或者某个父级把 `color` 覆盖掉，静态扫描全都看不出来
+ * （拼错的 token 只会**退化**成继承色，不会报错，这正是官方说的
+ * "a renamed token degrades appearance but never breaks rendering"）。
+ *
+ * 所以这里按**计算样式**断言（`getComputedStyle`，不是 `element.style` 的内联字符串）：
+ *   - 元素某个属性的计算值 == 该 token 在当前页面里的**解析值**。解析值由浏览器现场算
+ *     （`__pxmLane.resolveCss`，且按**目标属性本身**解析），不是测试自己把 hex 换算成 rgb：
+ *     两边用同一个解析器，比较才有意义；
+ *   - 把同一批 token 换成**官方深色值**（`shell.html` 里声明的是浅色值），同一批元素的颜色
+ *     必须**跟着变**，且仍然等于新的解析值。
+ *
+ * 第二条是"能与官方深浅色主题一致"的硬证据：只断言浅色下相等，可能是硬编码巧合同色
+ * （`--dsw-alias-state-success-primary` 的官方浅色就是 `#22c55e`，与历史硬编码一模一样）；
+ * 换一组 token 之后还相等，才排除掉"碰巧"。
+ *
+ * ## 为什么分「列表态」与「详情/查看器态」两组
+ *
+ * `.pxm-tile` 只在点开项目**之前**存在（点开后面板内容换成项目详情），
+ * `.pxm-item-error` / `.pxm-copy-btn` / `.pxm-viewer` 只在点开之后存在。所以两组各自在
+ * **同一个页面里**完成「浅色量一遍 → 换深色 token → 再量一遍」：光源是唯一变量。
+ *
+ * ## 判据里刻意避开的坑
+ *
+ * 官方 token 里 `state-success-primary` / `state-warn-primary` 的**浅色与深色取值相同**，
+ * 所以它们**不能**用来证明"跟随主题"。用来证明跟随主题的全是浅/深确实不同的 token
+ * （bg / border / label / brand / error / idle）——最后一条用例专门把这件事钉住。
+ *
+ * ## 运行
+ *
+ *   pnpm test:browser        # 用系统 Edge，其次 Chrome；不下载浏览器
+ *
+ * 前置与跳过纪律同 `layout.test.mjs`：没有可用浏览器时**不假装通过**，打印醒目 SKIP 横幅
+ * 并以非零码结束（除非显式 `PXM_LANE_ALLOW_SKIP=1`）。
+ */
+import { after, describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  artifactSha256,
+  launchLaneBrowser,
+  startLaneServer,
+} from './lane-server.mjs'
+
+// ── token 清单与两套取值 ────────────────────────────────────────────────────
+
+/** 插件用到的那份官方 token 清单（与 `client/client.js` 的 `T`、静态用例里的清单同源）。 */
+const TOKENS = [
+  '--dsw-alias-bg-base',
+  '--dsw-alias-bg-layer-1',
+  '--dsw-alias-bg-layer-2',
+  '--dsw-alias-bg-overlay',
+  '--dsw-alias-border-l1',
+  '--dsw-alias-border-l2',
+  '--dsw-alias-brand-primary',
+  '--dsw-alias-label-primary',
+  '--dsw-alias-label-secondary',
+  '--dsw-alias-state-error-primary',
+  '--dsw-alias-state-idle-primary',
+  '--dsw-alias-state-success-primary',
+  '--dsw-alias-state-warn-primary',
+]
+
+/**
+ * 官方**浅色**取值：必须与 `shell.html` 的 `:root` 逐字一致（8.0 有专门一条用例守着）。
+ * 来源 = `@deepseek-ai/dsh-client-ui-theme` 里 `body{…}` 那一段，经 `--dsw-static-*` 逐层解析。
+ */
+const LIGHT = {
+  '--dsw-alias-bg-base': '#fff',
+  '--dsw-alias-bg-layer-1': '#fff',
+  '--dsw-alias-bg-layer-2': '#fff',
+  '--dsw-alias-bg-overlay': '#e9ecf2',
+  '--dsw-alias-border-l1': '#0000000a',
+  '--dsw-alias-border-l2': '#0000001a',
+  '--dsw-alias-brand-primary': '#0f1115',
+  '--dsw-alias-label-primary': '#0f1115',
+  '--dsw-alias-label-secondary': '#61666b',
+  '--dsw-alias-state-error-primary': '#ec1313',
+  '--dsw-alias-state-idle-primary': '#d4d4d4',
+  '--dsw-alias-state-success-primary': '#22c55e',
+  '--dsw-alias-state-warn-primary': '#f59e0b',
+}
+
+/**
+ * 官方**深色**取值（同上，来源 = `body[data-ds-dark-theme]{…}`）。
+ *
+ * 注意 `state-success-primary` / `state-warn-primary` 两项与浅色**完全相同**——这不是笔误，
+ * 是官方主题本来的取值；它们因此不能作为"跟随主题"的证据。
+ */
+const DARK = {
+  '--dsw-alias-bg-base': '#151517',
+  '--dsw-alias-bg-layer-1': '#232324',
+  '--dsw-alias-bg-layer-2': '#2c2c2e',
+  '--dsw-alias-bg-overlay': '#61666b',
+  '--dsw-alias-border-l1': '#ffffff0f',
+  '--dsw-alias-border-l2': '#ffffff1f',
+  '--dsw-alias-brand-primary': '#f9fafb',
+  '--dsw-alias-label-primary': '#f9fafb',
+  '--dsw-alias-label-secondary': '#cfd3d6',
+  '--dsw-alias-state-error-primary': '#f25a5a',
+  '--dsw-alias-state-idle-primary': '#545557',
+  '--dsw-alias-state-success-primary': '#22c55e',
+  '--dsw-alias-state-warn-primary': '#f59e0b',
+}
+
+/** 官方浅/深同色的 token：不能用来证明"跟随主题"。 */
+const THEME_INVARIANT = ['--dsw-alias-state-success-primary', '--dsw-alias-state-warn-primary']
+
+/**
+ * 被断言的「元素 × 属性 × 它应该挂哪个 token 表达式」。
+ *
+ * `expect` 一律用 token 写、`prop` 是**目标属性本身**，交给浏览器现场解析——这就是
+ * "真的挂在这个 token 上"的判据。`state` 决定它在哪一态量（见文件头）。
+ */
+const TARGETS = [
+  {
+    key: 'panel.background',
+    state: 'list',
+    selector: '.pxm-workbench',
+    prop: 'backgroundColor',
+    expect: 'var(--dsw-alias-bg-layer-1)',
+  },
+  {
+    key: 'panel.color',
+    state: 'list',
+    selector: '.pxm-workbench',
+    prop: 'color',
+    expect: 'var(--dsw-alias-label-primary)',
+  },
+  {
+    key: 'tile.background',
+    state: 'list',
+    selector: '.pxm-tile',
+    prop: 'backgroundColor',
+    expect: 'var(--dsw-alias-bg-layer-2)',
+  },
+  {
+    key: 'tile.border',
+    state: 'list',
+    selector: '.pxm-tile',
+    prop: 'borderTopColor',
+    expect: 'var(--dsw-alias-border-l1)',
+  },
+  {
+    key: 'button.border',
+    state: 'detail',
+    selector: '.pxm-copy-btn',
+    prop: 'borderTopColor',
+    expect: 'var(--dsw-alias-border-l2)',
+  },
+  {
+    key: 'button.color',
+    state: 'detail',
+    selector: '.pxm-copy-btn',
+    prop: 'color',
+    expect: 'var(--dsw-alias-label-primary)',
+  },
+  {
+    key: 'button.background',
+    state: 'detail',
+    selector: '.pxm-copy-btn',
+    prop: 'backgroundColor',
+    expect: 'color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)',
+  },
+  {
+    key: 'error.color',
+    state: 'detail',
+    selector: '.pxm-item-error',
+    prop: 'color',
+    expect: 'var(--dsw-alias-state-error-primary)',
+  },
+  {
+    key: 'viewer.background',
+    state: 'detail',
+    selector: '.pxm-viewer',
+    prop: 'backgroundColor',
+    expect: 'color-mix(in srgb, var(--dsw-alias-bg-overlay) 92%, transparent)',
+  },
+]
+
+const LIST_TARGETS = TARGETS.filter((target) => target.state === 'list')
+const DETAIL_TARGETS = TARGETS.filter((target) => target.state === 'detail')
+
+/** 历史硬编码值里最典型的一个：改造前的失败文字 `#ef4444`。留着做"不是碰巧同色"的反证。 */
+const LEGACY_ERROR_COLOR = 'rgb(239, 68, 68)'
+
+// ── 夹具 ────────────────────────────────────────────────────────────────────
+
+const PROJECT_ID = '2026-10-05-主题对齐'
+const CREATED_AT = Date.UTC(2026, 9, 5, 12, 0, 0)
+const FAILED_REASON = '模型返回 400：内容策略拒绝（policy）'
+
+function itemFixture(index, over = {}) {
+  return {
+    module: 'main.white-bg',
+    label: '白底主图 ' + String(index),
+    status: 'ok',
+    size: '1:1',
+    apiMode: 'images-generations',
+    images: ['images/' + String(index) + '-a.png', 'images/' + String(index) + '-b.png'],
+    width: 1024,
+    height: 1024,
+    prompt:
+      'matte ceramic mug on a seamless white background, soft studio light, catalog quality — ' +
+      String(index),
+    model: 'gpt-image-1',
+    ms: 12345,
+    createdAt: CREATED_AT,
+    degraded: [],
+    ...over,
+  }
+}
+
+/**
+ * 夹具里**必须**有一条失败项：`.pxm-item-error` 只在 `item.error` 是非空字符串时才渲染，
+ * 没有它，"失败文字走 error token"这条断言就是空转。
+ */
+function detailFixture() {
+  return {
+    ok: true,
+    project: {
+      id: PROJECT_ID,
+      name: '主题对齐',
+      createdAt: CREATED_AT,
+      provider: 'ofox',
+      model: 'gpt-image-1',
+      items: [itemFixture(0), itemFixture(1, { status: 'failed', error: FAILED_REASON })],
+    },
+  }
+}
+
+function projectsFixture(n = 4) {
+  const out = []
+  for (let i = 1; i <= n; i += 1) {
+    const id = 'P' + String(i).padStart(2, '0')
+    out.push({
+      id,
+      name: 'Project-' + String(i).padStart(2, '0'),
+      createdAt: CREATED_AT + i * 60000,
+      provider: 'ofox',
+      model: 'gpt-image-1',
+      imageCount: 2,
+      cover: id + '/images/cover.png',
+    })
+  }
+  return out
+}
+
+const fixture = () => ({
+  projects: projectsFixture(),
+  detail: detailFixture(),
+  providers: {
+    ok: true,
+    dataDir: 'D:/pixmart',
+    exportDir: 'D:/PixMartExport',
+    defaults: { provider: 'ofox', model: 'gpt-image-1', size: '1:1', n: 1 },
+    usage: { requests: 1, ok: 1, failed: 0, images: 2 },
+    historical: { images: 0, projects: 0, note: '' },
+    providers: [
+      {
+        id: 'ofox',
+        label: 'Ofox',
+        group: 'openai',
+        apiMode: 'images-generations',
+        hasApiKey: true,
+        apiKeySource: 'config',
+        baseUrl: 'https://api.ofox.ai/v1',
+        models: ['gpt-image-1'],
+        allowedSizes: ['1:1'],
+      },
+    ],
+  },
+})
+
+// ── lane 启动 ───────────────────────────────────────────────────────────────
+
+const server = await startLaneServer()
+const launched = await launchLaneBrowser()
+const ALLOW_SKIP = process.env.PXM_LANE_ALLOW_SKIP === '1'
+
+const SKIP_BANNER = [
+  '',
+  '='.repeat(78),
+  '  ⚠  浏览器 lane 已跳过 → 客户端配色**没有**在真排版引擎里验证过',
+  '  ⚠  原因：本机没有可用的 Microsoft Edge / Google Chrome（playwright-core 不下载浏览器）',
+  '     尝试过的 channel：' + (launched.failures.length === 0 ? '（无）' : launched.failures.join(' | ')),
+  '  ⚠  修法：装 Edge/Chrome 后重跑；确实要在无浏览器机器上放行，用 PXM_LANE_ALLOW_SKIP=1',
+  '='.repeat(78),
+  '',
+].join('\n')
+
+if (launched.browser === null) {
+  console.error(SKIP_BANNER)
+  if (ALLOW_SKIP) {
+    describe('浏览器 lane 前置（主题）', () => {
+      it('SKIP：没有可用浏览器 → 配色未经验证', (t) => {
+        t.skip('没有可用的 Edge/Chrome（PXM_LANE_ALLOW_SKIP=1 已显式放行）')
+      })
+    })
+  } else {
+    describe('浏览器 lane 前置（主题）', () => {
+      it('必须有可用的系统 Edge/Chrome', () => {
+        assert.fail(SKIP_BANNER)
+      })
+    })
+  }
+  await server.close()
+} else {
+  const browser = launched.browser
+  const artifact = await artifactSha256()
+
+  after(async () => {
+    await browser.close()
+    await server.close()
+  })
+
+  /** 单参探针。 */
+  const probe = (page, name, arg = null) =>
+    page.evaluate(([fn, value]) => window.__pxmLane[fn](value), [name, arg])
+
+  /** 多参探针（lane 的探针签名是位置参数，这里按数组展开）。 */
+  const probeArgs = (page, name, args) =>
+    page.evaluate(([fn, list]) => window.__pxmLane[fn].apply(null, list), [name, args])
+
+  async function openThemedLane() {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 })
+    const page = await context.newPage()
+    const problems = []
+    page.on('pageerror', (err) => problems.push('pageerror: ' + err.message))
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') problems.push('console.error: ' + msg.text())
+    })
+    await page.goto(server.origin + '/shell.html', { waitUntil: 'load' })
+    await page.evaluate((data) => window.__pxmLane.install(data), fixture())
+    await page.evaluate((slot) => window.__pxmLane.mount(slot), 'main')
+    return { page, context, problems }
+  }
+
+  /** 量一组目标元素的**计算样式**；元素缺失记 null（由断言报出来，不静默跳过）。 */
+  async function readComputed(page, targets) {
+    const out = {}
+    for (const target of targets) {
+      const values = await probeArgs(page, 'computed', [target.selector, [target.prop]])
+      out[target.key] = values === null ? null : values[target.prop]
+    }
+    return out
+  }
+
+  /** 让浏览器把每条 `expect` 按**目标属性**、按**当前** token 现场解析一遍。 */
+  async function resolveExpectations(page, targets) {
+    return probe(
+      page,
+      'resolveCss',
+      targets.map((target) => ({ key: target.key, prop: target.prop, value: target.expect })),
+    )
+  }
+
+  /** 一次「浅 → 深」对照测量的完整结果。 */
+  async function measureBothThemes(page, targets) {
+    const lightVars = await probe(page, 'tokenVar', TOKENS)
+    const lightComputed = await readComputed(page, targets)
+    const lightResolved = await resolveExpectations(page, targets)
+
+    const darkVars = await probe(page, 'setTokens', DARK)
+    // 等一帧，确保新的自定义属性已经作用到计算样式上。
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))))
+
+    const darkComputed = await readComputed(page, targets)
+    const darkResolved = await resolveExpectations(page, targets)
+    return { lightVars, lightComputed, lightResolved, darkVars, darkComputed, darkResolved }
+  }
+
+  /** 「光源真的换了」：:root 上的声明值必须整批变成深色那一份。 */
+  function assertThemeSwitched(lightVars, darkVars) {
+    for (const token of TOKENS) {
+      assert.equal(darkVars[token], DARK[token], '换 token 失败：' + token)
+      if (THEME_INVARIANT.indexOf(token) >= 0) {
+        assert.equal(lightVars[token], darkVars[token], token + ' 官方浅深同色')
+      } else {
+        assert.notEqual(lightVars[token], darkVars[token], token + ' 的声明值没有变')
+      }
+    }
+  }
+
+  /** 浅色：每个目标的计算样式 == 它挂的 token 的解析值。 */
+  function assertLightMatches(m, targets) {
+    const bad = targets
+      .filter((target) => m.lightComputed[target.key] !== m.lightResolved[target.key])
+      .map((target) => ({
+        key: target.key,
+        selector: target.selector,
+        prop: target.prop,
+        computed: m.lightComputed[target.key],
+        tokenResolvesTo: m.lightResolved[target.key],
+        expect: target.expect,
+      }))
+    assert.deepEqual(
+      bad,
+      [],
+      '这些元素的颜色不是它挂的那个 token 的解析值（var(...) 没生效，或 token 名字写错了）',
+    )
+  }
+
+  /** 深色：颜色必须**跟着变**，且等于新的解析值。 */
+  function assertFollowedTheme(m, targets) {
+    const unchanged = targets
+      .filter((target) => m.darkComputed[target.key] === m.lightComputed[target.key])
+      .map((target) => ({ key: target.key, value: m.lightComputed[target.key], expect: target.expect }))
+    assert.deepEqual(
+      unchanged,
+      [],
+      '这些元素在深色 token 下颜色没变 —— 说明它其实没挂在 token 上（或挂了同色 token）',
+    )
+
+    const mismatched = targets
+      .filter((target) => m.darkComputed[target.key] !== m.darkResolved[target.key])
+      .map((target) => ({
+        key: target.key,
+        computed: m.darkComputed[target.key],
+        tokenResolvesTo: m.darkResolved[target.key],
+      }))
+    assert.deepEqual(mismatched, [], '深色下计算样式不等于深色 token 的解析值')
+
+    const sameResolution = targets
+      .filter((target) => m.lightResolved[target.key] === m.darkResolved[target.key])
+      .map((target) => target.key)
+    assert.deepEqual(sameResolution, [], '这些 token 表达式在深浅两套值下解析结果相同（证据无效）')
+  }
+
+  // ── 8.0 token 表自证 ─────────────────────────────────────────────────────
+
+  describe('8.0 token 表自证：shell 骨架发布的确实是官方 token 与浅色取值', () => {
+    it('13 个 --dsw-* 都能在 :root 上读到，且等于官方浅色取值', async () => {
+      const { page, context, problems } = await openThemedLane()
+      try {
+        const declared = await probe(page, 'tokenVar', TOKENS)
+        for (const token of TOKENS) {
+          assert.equal(
+            declared[token],
+            LIGHT[token],
+            'shell 骨架里的 ' + token + ' 必须等于官方浅色值（否则后面的比对全无意义）',
+          )
+        }
+        assertThemeSwitched(declared, DARK)
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.1 / 8.2 列表态 ─────────────────────────────────────────────────────
+
+  describe('8.1 列表态：浅色下计算样式 == 对应 --dsw-* 的解析值', () => {
+    it('8.1 列表态：面板底色 / 主文字 / 卡片底色 / 卡片边框逐个等于 token 解析值', async () => {
+      const { page, context, problems } = await openThemedLane()
+      try {
+        await page.waitForSelector('.pxm-tile')
+        const m = await measureBothThemes(page, LIST_TARGETS)
+
+        assertThemeSwitched(m.lightVars, m.darkVars)
+        assertLightMatches(m, LIST_TARGETS)
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  describe('8.2 列表态：换成官方深色 token 后同一批元素跟着变', () => {
+    it('8.2 列表态：换成官方深色 token → 这几个颜色逐个跟着变', async () => {
+      const { page, context, problems } = await openThemedLane()
+      try {
+        await page.waitForSelector('.pxm-tile')
+        const m = await measureBothThemes(page, LIST_TARGETS)
+
+        assertThemeSwitched(m.lightVars, m.darkVars)
+        assertFollowedTheme(m, LIST_TARGETS)
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.3 / 8.4 详情 / 查看器态 ────────────────────────────────────────────
+
+  /**
+   * 走完整条链：项目卡片 → 详情（失败项 + 复制按钮）→ 打开查看器（浮层）。
+   *
+   * `.pxm-item-error` 只在 `item.error` 是非空字符串时渲染，`.pxm-viewer` 只在查看器打开时
+   * 存在，所以这里必须真的把查看器点开——否则那两条断言是空转。
+   */
+  async function walkToViewer(page) {
+    await page.waitForSelector('.pxm-tile')
+    await page.click('.pxm-tile')
+    await page.waitForSelector('.pxm-item-error')
+    await page.waitForSelector('.pxm-copy-btn')
+
+    // 点一张**当前完全可见**的缩略图：用鼠标坐标点，避免 Playwright 自动滚动改变几何。
+    const point = await page.evaluate(() => {
+      const area = document.querySelector('.pxm-scroll')
+      if (area === null) return null
+      const outer = area.getBoundingClientRect()
+      const thumbs = Array.from(document.querySelectorAll('.pxm-thumb'))
+      const visible = thumbs.find((el) => {
+        const r = el.getBoundingClientRect()
+        return r.top >= outer.top + 4 && r.bottom <= outer.bottom - 4 && r.width > 0
+      })
+      if (visible === undefined) return null
+      const r = visible.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    })
+    assert.ok(point !== null, '详情页里必须有一张完全可见的缩略图可点')
+    await page.mouse.click(point.x, point.y)
+    await page.waitForSelector('.pxm-viewer')
+    await page.waitForTimeout(250) // 等入场动画（.16s）结束
+  }
+
+  describe('8.3 详情/查看器态：浅色下计算样式 == 对应 --dsw-* 的解析值', () => {
+    it('8.3 详情/查看器态：控件边框与填充 / 失败状态色 / 浮层底色逐个等于 token 解析值', async () => {
+      const { page, context, problems } = await openThemedLane()
+      try {
+        await walkToViewer(page)
+        const m = await measureBothThemes(page, DETAIL_TARGETS)
+
+        assertThemeSwitched(m.lightVars, m.darkVars)
+        assertLightMatches(m, DETAIL_TARGETS)
+
+        // "不是碰巧合"的反证：失败文字的浅色取值必须**不等于**历史硬编码 #ef4444。
+        assert.equal(
+          m.lightResolved['error.color'],
+          'rgb(236, 19, 19)',
+          'error token 的浅色解析值应当就是官方 #ec1313（rgb(236,19,19)）',
+        )
+        assert.notEqual(
+          m.lightComputed['error.color'],
+          LEGACY_ERROR_COLOR,
+          '失败文字若等于历史硬编码色，这条断言就退回成"碰巧同色"，证明不了走的是 token',
+        )
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  describe('8.4 详情/查看器态：换成官方深色 token 后同一批元素跟着变', () => {
+    it('8.4 详情/查看器态：换成官方深色 token → 这几个颜色逐个跟着变', async () => {
+      const { page, context, problems } = await openThemedLane()
+      try {
+        await walkToViewer(page)
+        const m = await measureBothThemes(page, DETAIL_TARGETS)
+
+        assertThemeSwitched(m.lightVars, m.darkVars)
+        assertFollowedTheme(m, DETAIL_TARGETS)
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.5 哪些 token 不能当"跟随主题"的证据 ────────────────────────────────
+
+  describe('8.5 官方 token 里浅/深同色的那几个：记录清楚，免得被当成跟随主题的证据', () => {
+    it('8.5 success / warn 浅深同色；bg / border / label / error / idle / brand 确实不同色', async () => {
+      const { page, context, problems } = await openThemedLane()
+      try {
+        const items = TOKENS.map((token) => ({ key: token, prop: 'color', value: 'var(' + token + ')' }))
+        const light = await probe(page, 'resolveCss', items)
+        await probe(page, 'setTokens', DARK)
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))))
+        const dark = await probe(page, 'resolveCss', items)
+
+        for (const token of THEME_INVARIANT) {
+          assert.equal(
+            light[token],
+            dark[token],
+            token + ' 官方浅深同色（' + light[token] + '）：它不能作为"跟随主题"的证据',
+          )
+        }
+        for (const token of [
+          '--dsw-alias-bg-layer-1',
+          '--dsw-alias-border-l2',
+          '--dsw-alias-label-secondary',
+          '--dsw-alias-state-error-primary',
+          '--dsw-alias-state-idle-primary',
+          '--dsw-alias-brand-primary',
+        ]) {
+          assert.notEqual(light[token], dark[token], token + ' 的浅深解析值应当不同')
+        }
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 8.6 自证：lane 加载的是仓库原产物 ─────────────────────────────────────
+
+  describe('8.6 lane 自证（主题侧）：加载的是仓库原产物 client.js', () => {
+    it('8.6 sha256 一致，且主题探针可用', async () => {
+      const { page, context } = await openThemedLane()
+      try {
+        assert.ok(server.served.clientRequests >= 1, '浏览器必须真的请求过 /client/client.js')
+        assert.equal(server.served.clientSha256, artifact, 'lane 服务的必须是仓库原产物，逐字节一致')
+        for (const name of ['computed', 'resolveCss', 'tokenVar', 'setTokens']) {
+          assert.equal(
+            await page.evaluate((fn) => typeof window.__pxmLane[fn], name),
+            'function',
+            '主题探针 ' + name + ' 必须存在',
+          )
+        }
+      } finally {
+        await context.close()
+      }
+    })
+  })
+}

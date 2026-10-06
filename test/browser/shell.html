@@ -4,6 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>dsh-pixmart browser lane（复刻 shell 的最小真实骨架）</title>
+    <!--
+      空 favicon：不这么做的话浏览器会去请求 `/favicon.ico`，lane 的静态服务只服务白名单
+      路径 → 404 → Chromium 会把它记成一条 `console.error`，而 lane 的用例断言
+      "页面不该有 console.error"。那会让"第一个开页面的用例"随机变红，与插件无关。
+    -->
+    <link rel="icon" href="data:," />
     <style>
       /*
        * 这不是 shell 的还原，而是**与排版类缺陷有关的**那部分骨架：
@@ -20,6 +26,30 @@
         --dsh-frame-chrome-top: 40px;
         --dsh-windows-titlebar-height: 40px;
         color-scheme: light;
+        /*
+         * DSH 官方主题 token 的**浅色**取值。
+         *
+         * 真实 shell 里这些由 `@deepseek-ai/dsh-client-ui-theme` 注入（`body{…}` = 浅色、
+         * `body[data-ds-dark-theme]{…}` = 深色）。这里照抄浅色那一份的**解析后最终色值**
+         * （token → --dsw-static-* 逐层解析的结果），这样本 lane 就能断言
+         * "插件的计算样式 == 这些 token 的解析值"，而不是"碰巧颜色相同"。
+         *
+         * 深色那一份不写在 CSS 里，由 `theme.test.mjs` 通过 `__pxmLane.setTokens()` 现换
+         * ——"换一组 token，UI 颜色跟着变"正是本 lane 要证明的那件事。
+         */
+        --dsw-alias-bg-base: #fff;
+        --dsw-alias-bg-layer-1: #fff;
+        --dsw-alias-bg-layer-2: #fff;
+        --dsw-alias-bg-overlay: #e9ecf2;
+        --dsw-alias-border-l1: #0000000a;
+        --dsw-alias-border-l2: #0000001a;
+        --dsw-alias-brand-primary: #0f1115;
+        --dsw-alias-label-primary: #0f1115;
+        --dsw-alias-label-secondary: #61666b;
+        --dsw-alias-state-error-primary: #ec1313;
+        --dsw-alias-state-idle-primary: #d4d4d4;
+        --dsw-alias-state-success-primary: #22c55e;
+        --dsw-alias-state-warn-primary: #f59e0b;
       }
       html,
       body,
@@ -30,8 +60,8 @@
       body {
         overflow: hidden;
         font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-        background: #fff;
-        color: #18181b;
+        background: var(--dsw-alias-bg-base);
+        color: var(--dsw-alias-label-primary);
       }
       /* 窗口 chrome：Electron 的原生按钮画在 web 内容之上，所以它必须有最高层叠。 */
       #dsh-titlebar {

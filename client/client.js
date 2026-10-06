@@ -92,7 +92,50 @@ window.__ModuleLoader__.load({
       failed: '失败',
       skipped: '已跳过',
     }
-    const COLORS = { ok: '#22c55e', fail: '#ef4444', run: '#3b82f6', track: 'color-mix(in srgb, currentColor 14%, transparent)' }
+    /**
+     * 视觉 token：客户端配色**只走 DSH 官方主题变量**（`--dsw-*`），因此深浅色主题自动一致，
+     * 插件侧不写死任何颜色（没有十六进制色值 / rgb 函数 / 系统色关键字）。
+     *
+     * 为什么**不** require 官方组件包（`@deepseek-ai/dsh-client-ui-primitives`）：
+     *   - 官方明文禁止 —— `dsh-agent-preset/skills/cordis-plugin-development/references/practices.md:35`；
+     *   - 该包是**未打包 ESM + 38 个相对 `.module.css`**，而本插件是手写 JS、没有构建步骤，
+     *     loader 解析不了那些相对导入：换组件会把整个面板打挂，而不是"只变丑"。
+     * 官方认可的最低风险做法就是**照抄 token**（同文件 practices.md:34：
+     * "a renamed token degrades appearance but never breaks rendering"）。
+     *
+     * 下面这些 token 都由 client Theme 的 `listTokens` 确证存在，且**都有浅/深两套值**
+     * （`requiresLightAndDark: true`）；shell 里另有更多 `--dsw-*`，这里只用能确证的。
+     */
+    const T = {
+      bgBase: 'var(--dsw-alias-bg-base)',
+      bgLayer1: 'var(--dsw-alias-bg-layer-1)',
+      bgLayer2: 'var(--dsw-alias-bg-layer-2)',
+      bgOverlay: 'var(--dsw-alias-bg-overlay)',
+      borderL1: 'var(--dsw-alias-border-l1)',
+      borderL2: 'var(--dsw-alias-border-l2)',
+      brand: 'var(--dsw-alias-brand-primary)',
+      label: 'var(--dsw-alias-label-primary)',
+      labelSecondary: 'var(--dsw-alias-label-secondary)',
+      error: 'var(--dsw-alias-state-error-primary)',
+      idle: 'var(--dsw-alias-state-idle-primary)',
+      success: 'var(--dsw-alias-state-success-primary)',
+      warn: 'var(--dsw-alias-state-warn-primary)',
+    }
+    /**
+     * token 的**半透明**变体：颜色仍然是 token 派生的
+     * （`color-mix(in srgb, var(--dsw-…) X%, transparent)`），所以深浅色一起跟着变。
+     *
+     * 特意不用 CSS 的「当前颜色」关键字凑色：那样颜色跟着最近一层的 `color` 走，语义说不清，
+     * 也拿不到"主题换了颜色就跟着换"这条可断言的事实。
+     */
+    const tint = (token, percent) =>
+      'color-mix(in srgb, ' + token + ' ' + String(percent) + '%, transparent)'
+    /** 浮层阴影：同样由 token 派生，避免写死黑色半透明阴影（深色主题下黑影是错的）。 */
+    const shadow = (y, blur, percent) =>
+      '0 ' + String(y) + 'px ' + String(blur) + 'px ' + tint(T.label, percent)
+
+    /** 状态色：状态徽标 / 进度环 / 缩略图边框共用一套语义（对齐官方 `StateDot`）。 */
+    const COLORS = { ok: T.success, fail: T.error, run: T.brand, track: T.idle }
 
     const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
     const isArray = Array.isArray
@@ -519,7 +562,16 @@ window.__ModuleLoader__.load({
 
     const skin = {
       // 设置页（`settings.section`）用：那一层的滚动由设置弹窗自己负责，这里只管排版。
-      wrap: { padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px', maxWidth: '880px' },
+      wrap: {
+        padding: '18px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '14px',
+        maxWidth: '880px',
+        // 设置页是「页面」级表面：底色用 base，次级表面（卡片）用 layer-1/2 叠上去。
+        background: T.bgBase,
+        color: T.label,
+      },
       /**
        * 作品库面板（`main` 插槽）的根。
        *
@@ -543,6 +595,9 @@ window.__ModuleLoader__.load({
         display: 'flex',
         flexDirection: 'column',
         gap: '14px',
+        // 面板 = 页面之上的一层表面（DSH 的 `bg-layer-1`），文字用主题的主文字色。
+        background: T.bgLayer1,
+        color: T.label,
       },
       /** 固定不滚的一层（表头 / 搜索 / 工具条）：滚动内容时它不动。 */
       bar: { flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: '14px' },
@@ -557,9 +612,12 @@ window.__ModuleLoader__.load({
         gap: '14px',
       },
       title: { margin: 0, fontSize: '15px', fontWeight: 600 },
-      muted: { margin: 0, fontSize: '13px', lineHeight: 1.7, opacity: 0.72 },
+      /** 次要文字：用官方次文字 token，而不是"主文字降不透明度"这种本地近似。 */
+      muted: { margin: 0, fontSize: '13px', lineHeight: 1.7, color: T.labelSecondary },
+      /** 卡片：嵌在面板里的一层，所以用 `bg-layer-2`（嵌套层）+ 一级边框。 */
       card: {
-        border: '1px solid color-mix(in srgb, currentColor 16%, transparent)',
+        border: '1px solid ' + T.borderL1,
+        background: T.bgLayer2,
         borderRadius: '10px',
         padding: '14px 16px',
         display: 'flex',
@@ -572,7 +630,7 @@ window.__ModuleLoader__.load({
         fontSize: '12px',
         wordBreak: 'break-all',
       },
-      key: { fontSize: '12px', opacity: 0.7, minWidth: '72px' },
+      key: { fontSize: '12px', color: T.labelSecondary, minWidth: '72px' },
     }
 
     function Pill(props) {
@@ -583,8 +641,8 @@ window.__ModuleLoader__.load({
             fontSize: '11px',
             padding: '1px 6px',
             borderRadius: '999px',
-            border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-            background: 'color-mix(in srgb, currentColor 8%, transparent)',
+            border: '1px solid ' + T.borderL2,
+            background: tint(T.label, 8),
             whiteSpace: 'nowrap',
           },
         },
@@ -599,8 +657,8 @@ window.__ModuleLoader__.load({
           role: props.role ?? 'status',
           style: {
             ...skin.card,
-            borderColor: 'color-mix(in srgb, currentColor 24%, transparent)',
-            background: 'color-mix(in srgb, currentColor 6%, transparent)',
+            borderColor: T.borderL2,
+            background: T.bgLayer2,
           },
         },
         h('strong', { style: { fontSize: '13px' } }, props.title),
@@ -622,8 +680,8 @@ window.__ModuleLoader__.load({
           borderRadius: '50%',
           display: 'inline-block',
           flex: '0 0 auto',
-          border: '2px solid color-mix(in srgb, currentColor 25%, transparent)',
-          borderTopColor: 'currentColor',
+          border: '2px solid ' + tint(T.labelSecondary, 40),
+          borderTopColor: T.label,
         },
       })
     }
@@ -643,9 +701,9 @@ window.__ModuleLoader__.load({
             fontSize: '12px',
             padding: '4px 10px',
             borderRadius: '6px',
-            color: 'inherit',
-            border: '1px solid color-mix(in srgb, currentColor 24%, transparent)',
-            background: 'color-mix(in srgb, currentColor 8%, transparent)',
+            color: T.label,
+            border: '1px solid ' + T.borderL2,
+            background: tint(T.label, 8),
             cursor: disabled ? 'not-allowed' : 'pointer',
             opacity: disabled ? 0.5 : 1,
             whiteSpace: 'nowrap',
@@ -677,7 +735,7 @@ window.__ModuleLoader__.load({
           style: {
             fontSize: '12px',
             lineHeight: 1.6,
-            color: failed ? '#ef4444' : '#22c55e',
+            color: failed ? T.error : T.success,
             wordBreak: 'break-word',
           },
         },
@@ -710,9 +768,10 @@ window.__ModuleLoader__.load({
       fontSize: '12px',
       padding: '3px 6px',
       borderRadius: '6px',
-      color: 'inherit',
-      background: 'transparent',
-      border: '1px solid color-mix(in srgb, currentColor 24%, transparent)',
+      color: T.label,
+      // 输入控件落在「页面底色」上（浅色下与卡片同色，深色下自然成为一层内凹表面）。
+      background: T.bgBase,
+      border: '1px solid ' + T.borderL2,
       width: '100%',
       // `width:100%` 只是"想占满"，真正让它随容器**收窄**的是 minWidth:0：
       // 否则长值（绝对路径）会把输入框顶到自己的固有宽度上。
@@ -905,8 +964,8 @@ window.__ModuleLoader__.load({
             gap: '6px',
             padding: '8px',
             borderRadius: '8px',
-            border: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-            background: 'color-mix(in srgb, currentColor 4%, transparent)',
+            border: '1px solid ' + T.borderL1,
+            background: T.bgLayer1,
           },
         },
         h(
@@ -968,7 +1027,7 @@ window.__ModuleLoader__.load({
             style: {
               maxHeight: '240px',
               overflowY: 'auto',
-              border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',
+              border: '1px solid ' + T.borderL1,
               borderRadius: '6px',
               padding: '4px 6px',
               display: 'flex',
@@ -1146,7 +1205,7 @@ window.__ModuleLoader__.load({
             borderTop:
               props.index === 0
                 ? 'none'
-                : '1px solid color-mix(in srgb, currentColor 10%, transparent)',
+                : '1px solid ' + T.borderL1,
           },
         },
         h(
@@ -1385,7 +1444,7 @@ window.__ModuleLoader__.load({
             model !== '' && models.indexOf(model) < 0
               ? h(
                   'span',
-                  { style: { fontSize: '11px', color: '#b45309', lineHeight: 1.5 } },
+                  { style: { fontSize: '11px', color: T.warn, lineHeight: 1.5 } },
                   '该模型不在当前厂商的模型列表里（拉取后窄化列表会这样），建议重新选择',
                 )
               : null,
@@ -1419,7 +1478,7 @@ window.__ModuleLoader__.load({
             { disabled: save.busy || !nValid, onClick: onSave, title: '写入 config.json 的 defaults' },
             save.busy ? '保存中…' : '保存默认值',
           ),
-          nValid ? null : h('span', { style: { fontSize: '12px', color: '#ef4444' } }, '张数应为 1–4 的整数'),
+          nValid ? null : h('span', { style: { fontSize: '12px', color: T.error } }, '张数应为 1–4 的整数'),
         ),
         h(Msg, { result: save.result }),
       )
@@ -1748,7 +1807,7 @@ window.__ModuleLoader__.load({
             fontWeight: 700,
             letterSpacing: '-0.5px',
             borderRadius: '4px',
-            background: active ? 'color-mix(in srgb, currentColor 18%, transparent)' : 'transparent',
+            background: active ? tint(T.label, 18) : 'transparent',
           },
         },
         'PM',
@@ -1854,7 +1913,7 @@ window.__ModuleLoader__.load({
               { role: 'alert', style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
               h(
                 'span',
-                { style: { fontSize: '12px', lineHeight: 1.6, color: '#ef4444', wordBreak: 'break-word' } },
+                { style: { fontSize: '12px', lineHeight: 1.6, color: T.error, wordBreak: 'break-word' } },
                 '复制失败：' + String(result.error) + '（已展开为可选中文本，请手动复制）',
               ),
               h('textarea', {
@@ -1877,9 +1936,9 @@ window.__ModuleLoader__.load({
                   lineHeight: 1.6,
                   padding: '6px 8px',
                   borderRadius: '6px',
-                  color: 'inherit',
-                  background: 'color-mix(in srgb, currentColor 6%, transparent)',
-                  border: '1px solid color-mix(in srgb, currentColor 24%, transparent)',
+                  color: T.label,
+                  background: T.bgBase,
+                  border: '1px solid ' + T.borderL2,
                 },
               }),
             )
@@ -1923,15 +1982,14 @@ window.__ModuleLoader__.load({
             onClick: () => props.onOpen(id),
             style: {
               font: 'inherit',
-              color: 'inherit',
+              color: T.label,
               textAlign: 'left',
               cursor: 'pointer',
               padding: '8px',
               borderRadius: '10px',
-              border: selected
-                ? '1px solid currentColor'
-                : '1px solid color-mix(in srgb, currentColor 16%, transparent)',
-              background: 'color-mix(in srgb, currentColor 4%, transparent)',
+              // 选中态用官方品牌色描边（而不是继承来的文字色：那是文字语义，不对）。
+              border: selected ? '1px solid ' + T.brand : '1px solid ' + T.borderL1,
+              background: selected ? tint(T.brand, 6) : T.bgLayer2,
               display: 'flex',
               flexDirection: 'column',
               gap: '8px',
@@ -1949,7 +2007,7 @@ window.__ModuleLoader__.load({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                background: T.bgBase,
                 fontSize: '12px',
                 opacity: 0.85,
               },
@@ -1987,7 +2045,7 @@ window.__ModuleLoader__.load({
               display: 'flex',
               padding: '2px',
               borderRadius: '6px',
-              background: 'color-mix(in srgb, currentColor 10%, transparent)',
+              background: tint(T.label, 10),
             },
           },
           h('input', {
@@ -2204,7 +2262,7 @@ window.__ModuleLoader__.load({
                 objectFit: 'contain',
                 display: 'block',
                 borderRadius: '8px',
-                background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                background: T.bgLayer2,
               },
             })
 
@@ -2320,7 +2378,7 @@ window.__ModuleLoader__.load({
                     wordBreak: 'break-word',
                     padding: '6px 8px',
                     borderRadius: '6px',
-                    background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                    background: tint(T.label, 6),
                   },
                 },
                 entry.prompt,
@@ -2359,8 +2417,9 @@ window.__ModuleLoader__.load({
             overflow: 'hidden',
             overscrollBehavior: 'contain',
             outline: 'none',
-            color: 'inherit',
-            background: 'color-mix(in srgb, Canvas 92%, transparent)',
+            color: T.label,
+            // 查看器是**浮层**：底色用 bg-overlay 的 92% 半透明（保留原来的毛玻璃观感）。
+            background: tint(T.bgOverlay, 92),
             backdropFilter: 'blur(2px)',
           },
         },
@@ -2631,7 +2690,7 @@ window.__ModuleLoader__.load({
                       {
                         role: 'alert',
                         className: 'pxm-item-error',
-                        style: { margin: 0, fontSize: '12px', lineHeight: 1.6, color: '#ef4444', wordBreak: 'break-word' },
+                        style: { margin: 0, fontSize: '12px', lineHeight: 1.6, color: T.error, wordBreak: 'break-word' },
                       },
                       '失败原因：' + error,
                     ),
@@ -2671,7 +2730,7 @@ window.__ModuleLoader__.load({
                               overflowWrap: 'anywhere',
                               padding: '6px 8px',
                               borderRadius: '6px',
-                              background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                              background: tint(T.label, 6),
                             },
                           },
                           prompt,
@@ -2731,7 +2790,7 @@ window.__ModuleLoader__.load({
                                   objectFit: 'cover',
                                   borderRadius: '6px',
                                   display: 'block',
-                                  background: 'color-mix(in srgb, currentColor 6%, transparent)',
+                                  background: T.bgLayer2,
                                 },
                               }),
                             )
@@ -2821,7 +2880,7 @@ window.__ModuleLoader__.load({
                 ? h(
                     'span',
                     { style: skin.row },
-                    h('span', { style: { fontSize: '12px', color: '#ef4444' } }, '清空后不可恢复，确认？'),
+                    h('span', { style: { fontSize: '12px', color: T.error } }, '清空后不可恢复，确认？'),
                     h(
                       Btn,
                       {
@@ -3732,7 +3791,7 @@ window.__ModuleLoader__.load({
               position: 'absolute',
               inset: '3px',
               borderRadius: '50%',
-              background: 'Canvas',
+              background: T.bgOverlay,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -3784,7 +3843,7 @@ window.__ModuleLoader__.load({
             lineHeight: 1.2,
             padding: '2px',
             border: '2px solid ' + borderColor,
-            background: 'color-mix(in srgb, currentColor 6%, transparent)',
+            background: tint(T.label, 6),
             opacity: status === 'queued' || status === 'skipped' ? 0.5 : 1,
           },
         },
@@ -3817,9 +3876,9 @@ window.__ModuleLoader__.load({
                       height: '18px',
                       borderRadius: '50%',
                       background:
-                        'conic-gradient(currentColor 0deg ' +
+                        'conic-gradient(' + T.brand + ' 0deg ' +
                         String(runningDeg) +
-                        'deg, color-mix(in srgb, currentColor 18%, transparent) ' +
+                        'deg, ' + tint(T.brand, 18) + ' ' +
                         String(runningDeg) +
                         'deg 360deg)',
                     },
@@ -3864,10 +3923,10 @@ window.__ModuleLoader__.load({
             padding: '6px 10px',
             borderRadius: '999px',
             cursor: 'pointer',
-            color: 'inherit',
-            background: 'Canvas',
-            border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-            boxShadow: '0 6px 20px rgba(0, 0, 0, 0.22)',
+            color: T.label,
+            background: T.bgOverlay,
+            border: '1px solid ' + T.borderL2,
+            boxShadow: shadow(6, 20, 22),
           },
         },
         active ? h(Spinner, null) : h('span', { 'aria-hidden': 'true' }, failed > 0 ? '!' : '✓'),
@@ -3918,9 +3977,9 @@ window.__ModuleLoader__.load({
             flexDirection: 'column',
             overflow: 'hidden',
             borderRadius: '12px',
-            border: '1px solid color-mix(in srgb, currentColor 20%, transparent)',
-            background: 'Canvas',
-            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.28)',
+            border: '1px solid ' + T.borderL2,
+            background: T.bgOverlay,
+            boxShadow: shadow(10, 30, 28),
             fontSize: '12px',
           },
         },
@@ -3934,7 +3993,7 @@ window.__ModuleLoader__.load({
               alignItems: 'center',
               gap: '8px',
               padding: '8px 10px',
-              borderBottom: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+              borderBottom: '1px solid ' + T.borderL1,
             },
           },
           h(ProgressRing, { completed: done, failed, total }),
@@ -3989,8 +4048,8 @@ window.__ModuleLoader__.load({
                 role: 'status',
                 style: {
                   padding: '4px 10px',
-                  background: 'color-mix(in srgb, #f59e0b 18%, transparent)',
-                  borderBottom: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+                  background: tint(T.warn, 18),
+                  borderBottom: '1px solid ' + T.borderL1,
                 },
               },
               '数据可能过期：最近一次刷新失败，显示最后一次成功快照。',
@@ -4017,10 +4076,10 @@ window.__ModuleLoader__.load({
                       fontSize: '11px',
                       padding: '1px 6px',
                       borderRadius: '999px',
-                      color: 'inherit',
+                      color: T.label,
                       cursor: 'pointer',
-                      border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-                      background: 'color-mix(in srgb, currentColor 8%, transparent)',
+                      border: '1px solid ' + T.borderL2,
+                      background: tint(T.label, 8),
                     },
                   },
                   String(other.completed ?? 0) + '/' + String(other.total ?? 0),
@@ -4057,7 +4116,7 @@ window.__ModuleLoader__.load({
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: '8px',
-              borderTop: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+              borderTop: '1px solid ' + T.borderL1,
             },
           },
           h(
@@ -4185,7 +4244,9 @@ window.__ModuleLoader__.load({
       '.pxm-scroll{scrollbar-width:thin;}',
       /* 查看器是本插件在作品库面板内的模态层（position:fixed），入场动画随 reduced-motion 关闭 */
       '.pxm-viewer{animation:pxm-in .16s ease-out;}',
-      '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid currentColor;outline-offset:2px;}',
+      '.pxm-btn:focus-visible,.pxm-tile:focus-visible,.pxm-badge:focus-visible,.pxm-thumb:focus-visible{outline:2px solid ' +
+        T.brand +
+        ';outline-offset:2px;}',
       '.pxm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}',
       /* 窄屏（<640px）：退化为底部整宽 + 另设更小高度上限 */
       '@media (max-width:640px){',

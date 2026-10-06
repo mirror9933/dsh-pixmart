@@ -336,6 +336,73 @@
     }
   }
 
+  // ── 主题 token 探针（给 theme.test.mjs 用；仍然只有事实，没有判断） ────────────
+
+  /**
+   * 一个元素的计算样式值。
+   *
+   * 注意这里量的是 `getComputedStyle`，**不是** `element.style`（内联字符串）：
+   * 内联字符串只能证明"我们写了 var(--dsw-…)"，证明不了"浏览器真的把它解析成了主题色"。
+   */
+  function computed(selector, props) {
+    var el = document.querySelector(selector)
+    if (el === null) return null
+    var cs = window.getComputedStyle(el)
+    var out = {}
+    ;(props || []).forEach(function (name) {
+      out[name] = cs[name]
+    })
+    return out
+  }
+
+  /**
+   * 把若干段 CSS 值交给浏览器解析，返回解析后的颜色。
+   *
+   * 入参是 `[{ key, prop, value }]`，**按目标属性本身**（`color` / `backgroundColor` /
+   * `borderTopColor`）解析，而不是一律塞进 `color`。原因：同一个颜色经 `color-mix` 之后，
+   * 不同属性上的序列化形式可能不同（实测 `color` 会给 `color(srgb …)`，
+   * `backgroundColor` 可能给 `rgba(…)`）；用同一个属性解析，两边才是同一个序列化器出的字符串，
+   * 比较才有意义。
+   *
+   * 这是"token 解析值"的**权威来源**：不是测试自己把 hex 换算成 rgb，而是让浏览器按当前
+   * `:root` 上的 token 现场算一遍。
+   */
+  function resolveCss(items) {
+    var out = {}
+    ;(items || []).forEach(function (item) {
+      var probe = document.createElement('span')
+      // 边框色在没有边框时也应按"计算值"返回，但给一根实线边框更贴近真实元素。
+      if (item.prop === 'borderTopColor') {
+        probe.style.borderTopStyle = 'solid'
+        probe.style.borderTopWidth = '1px'
+      }
+      probe.style[item.prop] = item.value
+      document.body.appendChild(probe)
+      out[item.key] = window.getComputedStyle(probe)[item.prop]
+      probe.remove()
+    })
+    return out
+  }
+
+  /** `:root` 上 token 的**声明值**（字符串，用于确认"输入真的换了"）。 */
+  function tokenVar(names) {
+    var cs = window.getComputedStyle(document.documentElement)
+    var out = {}
+    ;(names || []).forEach(function (name) {
+      out[name] = cs.getPropertyValue(name).trim()
+    })
+    return out
+  }
+
+  /** 换一组 token（深色用例）：写在 `:root` 的行内样式上，优先于样式表里的 `:root`。 */
+  function setTokens(values) {
+    var root = document.documentElement
+    Object.keys(values || {}).forEach(function (name) {
+      root.style.setProperty(name, values[name])
+    })
+    return tokenVar(Object.keys(values || {}))
+  }
+
   window.__pxmLane = {
     version: 1,
     install: install,
@@ -357,6 +424,11 @@
     groupedPair: groupedPair,
     panelScroll: panelScroll,
     viewer: viewer,
+    // 主题 token：计算样式 / token 解析值 / 声明值 / 换一组 token
+    computed: computed,
+    resolveCss: resolveCss,
+    tokenVar: tokenVar,
+    setTokens: setTokens,
     titlebarTop: function () {
       var el = document.getElementById('dsh-titlebar')
       return el === null ? null : rectOf(el)

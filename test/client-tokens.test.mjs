@@ -1,0 +1,244 @@
+/**
+ * 客户端配色的**静态契约**：`client/client.js` 只允许走 DSH 官方主题 token（`--dsw-*`），
+ * 源码里不得再出现任何写死的颜色。
+ *
+ * ## 为什么要有这一层（而不是只靠浏览器 lane）
+ *
+ * 浏览器 lane 能证明"某个元素的**计算样式**等于某个 token 的解析值"，但它只覆盖**被挂载的
+ * 那几个组件**。配色是"全文件性质"的约束：只要有一处漏网（一个 `#ef4444`、一个系统色关键字、
+ * 一个 `rgb()`），那个元素在深色主题下就会**一直不对**，而且不容易被注意到——因为别的断言
+ * 都盯着别的地方。所以这里做一次**全文件扫描**，把"还有没有漏网的硬编码颜色"变成一条会红的用例。
+ *
+ * ## 判据（都是字面量扫描，不做语义推断）
+ *
+ * 1. 没有十六进制颜色字面量（3/4/6/8 位）；
+ * 2. 没有 CSS 系统色关键字（`Canvas` / `Field` / `WindowText` …）——它们不跟随官方主题，
+ *    正是"看起来能跑、但和官方深浅色不一致"的典型；
+ * 3. 没有 `rgb()` / `rgba()` / `hsl()` / `hsla()` 写死的颜色；
+ * 4. **没有** CSS 的「当前颜色」关键字：半透明色必须挂在 token 上
+ *    （`color-mix(in srgb, var(--dsw-…) X%, transparent)`），否则颜色跟着最近一层的
+ *    `color` 走，语义说不清、也拿不到"主题换了颜色就跟着换"这条可断言的事实；
+ * 5. 前 4 条是**反向**的（不许有什么），这条是**正向**的：文件里必须**真的用到**官方 token，
+ *    且下面清单里的每一个都要以 `var(<token>)` 的形态出现 —— 只写在注释里不算数。
+ *
+ * 第 4、5 条合起来堵掉"退化成硬编码也能过"的空子：删掉 token 第 5 条红，
+ * 换回硬编码 hex 第 1 条红；浏览器 lane 里另有一层等价断言（`test/browser/theme.test.mjs`）。
+ *
+ * 分工：这里证明"源码里没有硬编码、且确实消费了 token"；那边证明"浏览器真的按 token 渲染、
+ * 且深浅色会跟着变"。
+ *
+ * ## 为什么先剥注释
+ *
+ * 本文件的注释里**会提到**这些被禁的写法（"不许写死 `#abc`""不要用系统色关键字"），
+ * 直接全文正则会把说明文字当成违规。所以先把字符串/注释状态机走一遍，只对**代码**做扫描；
+ * 判据 5 的 token 计数也只看代码（注释里写十个 token 名字不算"用到了"）。
+ */
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const CLIENT_PATH = join(REPO_ROOT, 'client', 'client.js')
+const source = readFileSync(CLIENT_PATH, 'utf8')
+
+/**
+ * 本插件用到的那一份官方 token 清单。
+ *
+ * 每个名字都由 client Theme 的 `listTokens` 确证存在，且**都带浅/深两套值**
+ * （`requiresLightAndDark: true`）—— 这正是"配色能自动与官方主题一致"的前提。
+ * 加/减 token 时要显式改这里，避免悄悄漂移。
+ */
+const REQUIRED_TOKENS = [
+  '--dsw-alias-bg-base',
+  '--dsw-alias-bg-layer-1',
+  '--dsw-alias-bg-layer-2',
+  '--dsw-alias-bg-overlay',
+  '--dsw-alias-border-l1',
+  '--dsw-alias-border-l2',
+  '--dsw-alias-brand-primary',
+  '--dsw-alias-label-primary',
+  '--dsw-alias-label-secondary',
+  '--dsw-alias-state-error-primary',
+  '--dsw-alias-state-idle-primary',
+  '--dsw-alias-state-success-primary',
+  '--dsw-alias-state-warn-primary',
+]
+
+/** 阈值：清单长度就是下界（每个 token 至少以 `var(...)` 出现一次）。 */
+const MIN_TOKEN_MENTIONS = REQUIRED_TOKENS.length
+
+/**
+ * 逐字符走一遍源码，把注释丢掉、把字符串**原样保留**（颜色都藏在字符串里）。
+ *
+ * 不能简单地按行删 `//`：源码里有 `'https://api.example.com/v1'` 这种带 `//` 的字面量。
+ */
+function stripComments(text) {
+  let out = ''
+  let i = 0
+  let quote = null
+  while (i < text.length) {
+    const ch = text[i]
+    const next = text[i + 1]
+    if (quote !== null) {
+      out += ch
+      if (ch === '\\') {
+        out += next ?? ''
+        i += 2
+        continue
+      }
+      if (ch === quote) quote = null
+      i += 1
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      out += ch
+      i += 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      i += 2
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
+        if (text[i] === '\n') out += '\n'
+        i += 1
+      }
+      i += 2
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
+const code = stripComments(source)
+
+/** 命中时把行号一并报出来，失败信息才能直接定位。 */
+function linesMatching(text, re) {
+  const probe = new RegExp(re.source, re.flags.replace('g', ''))
+  const out = []
+  text.split('\n').forEach((line, index) => {
+    if (probe.test(line)) out.push(String(index + 1) + ': ' + line.trim())
+  })
+  return out
+}
+
+const HEX_COLOR = /#[0-9a-fA-F]{3,8}(?![0-9a-zA-Z])/g
+/** 前面不允许是标识符字符：`color-mix(in srgb, …)` 里的 `srgb` 不算 `rgb()`。 */
+const RGB_FUNC = /(?:^|[^-\w])(?:rgba?|hsla?)\s*\(/g
+const CURRENT_COLOR = /currentColor/g
+const SYSTEM_COLOR = /\b(?:Canvas|CanvasText|ButtonFace|ButtonText|ButtonBorder|WindowText|Window|Field|FieldText|Highlight|HighlightText|GrayText|AccentColor|LinkText|VisitedText|ActiveText|Mark|MarkText|InfoBackground|Scrollbar)\b/
+
+/** 代码里所有单/双引号字面量的内容（系统色关键字只可能出现在这里）。 */
+function quotedLiterals(text) {
+  const out = []
+  const re = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g
+  let match
+  while ((match = re.exec(text)) !== null) out.push(match[0])
+  return out
+}
+
+/**
+ * 从源码里**读出** token 表（`const T = { key: 'var(--dsw-…)' }`），而不是在测试里再抄一份。
+ *
+ * 抄一份的话，两边会各自漂移；读出来才能断言"表与清单一一对应"，并在某个键只声明、
+ * 没被任何样式引用时（典型场景就是被换回硬编码）报出来。
+ */
+function tokenTable(text) {
+  const at = text.indexOf('const T = {')
+  if (at < 0) return null
+  const end = text.indexOf('\n    }', at)
+  if (end < 0) return null
+  const body = text.slice(at, end)
+  const entries = []
+  const re = /([A-Za-z][A-Za-z0-9]*): 'var\((--dsw-[a-z0-9-]+)\)'/g
+  let match
+  while ((match = re.exec(body)) !== null) entries.push({ key: match[1], token: match[2] })
+  return entries
+}
+
+describe('客户端配色：只走官方 --dsw-* token（静态契约）', () => {
+  it('源码里没有任何十六进制颜色字面量', () => {
+    const hits = linesMatching(code, HEX_COLOR)
+    assert.deepEqual(hits, [], '配色必须走 --dsw-* token，不许写死十六进制色值：\n' + hits.join('\n'))
+  })
+
+  it('源码里没有 CSS 系统色关键字（Canvas / Field / WindowText …）', () => {
+    const hits = quotedLiterals(code).filter((literal) => SYSTEM_COLOR.test(literal))
+    assert.deepEqual(hits, [], '系统色关键字不跟随官方主题（深色下必然不一致）：' + hits.join(' | '))
+  })
+
+  it('源码里没有 rgb()/rgba()/hsl()/hsla() 写死的颜色', () => {
+    const hits = linesMatching(code, RGB_FUNC)
+    assert.deepEqual(
+      hits,
+      [],
+      '不许用颜色函数写死颜色（半透明请用基于 token 的 color-mix）：\n' + hits.join('\n'),
+    )
+  })
+
+  it('源码里没有「当前颜色」关键字：半透明色必须挂在 token 上', () => {
+    const hits = linesMatching(code, CURRENT_COLOR)
+    assert.deepEqual(
+      hits,
+      [],
+      '半透明色要用 color-mix(in srgb, var(--dsw-…) X%, transparent)，不能用当前颜色凑：\n' +
+        hits.join('\n'),
+    )
+  })
+
+  it('真的用到了 --dsw-* token，次数不低于清单长度（阈值 ' + String(MIN_TOKEN_MENTIONS) + '）', () => {
+    const mentions = code.match(/--dsw-[a-z0-9-]+/g) ?? []
+    assert.ok(
+      mentions.length >= MIN_TOKEN_MENTIONS,
+      '代码里用到 --dsw-* 的次数是 ' +
+        String(mentions.length) +
+        '，低于阈值 ' +
+        String(MIN_TOKEN_MENTIONS) +
+        '：配色锚点被削弱了',
+    )
+    assert.equal(
+      new Set(mentions).size,
+      MIN_TOKEN_MENTIONS,
+      '代码里出现的 token 种类与清单不一致：' + Array.from(new Set(mentions)).sort().join(', '),
+    )
+  })
+
+  it('清单里的每个 token 都以 var(<token>) 的形态被真正消费（只写在注释里不算）', () => {
+    const missing = REQUIRED_TOKENS.filter((token) => !code.includes('var(' + token + ')'))
+    assert.deepEqual(missing, [], '这些 token 没有以 var(...) 的形态出现在样式里：' + missing.join(', '))
+  })
+
+  it('清单本身没有写错名字（命名合法、无重复）', () => {
+    const bad = REQUIRED_TOKENS.filter((token) => !/^--dsw-[a-z0-9-]+$/.test(token))
+    assert.deepEqual(bad, [], 'token 名不合法：' + bad.join(', '))
+    assert.equal(new Set(REQUIRED_TOKENS).size, REQUIRED_TOKENS.length, 'token 清单里有重复项')
+  })
+
+  it('源码里的 token 表与清单一一对应，且每个 token 键都真的被样式引用过', () => {
+    const table = tokenTable(code)
+    assert.ok(table !== null, '源码里找不到 token 表 `const T = { … }`（结构变了就同步本用例）')
+
+    assert.deepEqual(
+      table.map((entry) => entry.token).sort(),
+      REQUIRED_TOKENS.slice().sort(),
+      'token 表里的 token 与静态清单必须一一对应（加/换 token 时两边一起改）',
+    )
+
+    // 只声明、没被任何样式引用的键 = 那处样式要么漏了、要么被换回了硬编码。
+    const unused = table
+      .filter((entry) => (code.match(new RegExp('(?<![\\w$])T\\.' + entry.key + '\\b', 'g')) ?? []).length === 0)
+      .map((entry) => entry.key)
+    assert.deepEqual(
+      unused,
+      [],
+      '这些 token 键只声明没被引用（某处样式可能退回成硬编码了）：' + unused.join(', '),
+    )
+  })
+})
