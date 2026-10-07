@@ -1293,11 +1293,14 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     await lane.render()
     await openAddCard(lane)
 
-    // 默认是 catalog：hint = 官方 `addCatalogHint`（:2978）。
+    // 默认是 catalog：hint = `addCatalogHint`。
+    // ⚠️ 与官方 `:2978` 有**一处刻意偏差**（task-16）：第三个例子是「火山方舟」而不是官方的
+    // 「Kimi」—— 官方点名的 Kimi 已从真目录移除，文案不能点一个下拉里没有的厂商。
+    // 断言仍然是"逐字"，只是那一个字换成了现实里真有的那一家。
     assert.equal(addTab(lane, 'catalog').getAttribute('aria-selected'), 'true')
     assert.equal(
       addHint(lane).textContent,
-      '从内置目录中选择 OpenAI、Anthropic、Kimi 等提供商，填入其 API 密钥即可使用。',
+      '从内置目录中选择 OpenAI、Anthropic、火山方舟 等提供商，填入其 API 密钥即可使用。',
     )
     assert.equal(addPanel(lane, 'catalog').hidden, false, 'catalog tab 下 catalog 面板必须可见')
     assert.equal(addPanel(lane, 'custom').hidden, true, 'catalog tab 下 custom 面板必须隐藏')

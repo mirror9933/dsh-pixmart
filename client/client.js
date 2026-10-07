@@ -1892,12 +1892,24 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 官方文案（**逐字**，`.probe/models-client.js:2966-3005`）。改一个字都要先改官方证据。
+     * add-card 上的**用户可见文案表**。
+     *
+     * 出处 = `.probe/models-client.js:2966-3005`（官方原文，逐条对应）。
+     *
+     * **一处刻意偏差**（2026-10-12 task-16）：`catalogHint` 的**第三个例子**写的是
+     * 「火山方舟」而不是官方原文的「Kimi」—— 官方那句点名的 Kimi 已经从真目录里移除，
+     * 文案若继续点一个**下拉里根本没有的**厂商，用户会照着去找一个不存在的东西。
+     * 「火山方舟」（id `volcengine`）真在目录里，且它的图像模型 Seedream 正是做电商图的；
+     * 同时保留了原句"掺一个中文厂商"的味道。
+     * 逐字对照：官方 `:2978` = 「从内置目录中选择 OpenAI、Anthropic、Kimi 等提供商，
+     * 填入其 API 密钥即可使用。」→ 本插件 = 同句、只把 `Kimi` 换成 `火山方舟`。
+     * **除这一处外，其余文案逐字等于官方原文。**
      */
     const ADD_COPY = Object.freeze({
       catalog: '第三方模型提供商',
       custom: '自定义模型 API',
-      catalogHint: '从内置目录中选择 OpenAI、Anthropic、Kimi 等提供商，填入其 API 密钥即可使用。',
+      catalogHint:
+        '从内置目录中选择 OpenAI、Anthropic、火山方舟 等提供商，填入其 API 密钥即可使用。',
       customHint:
         '连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。',
       catalogExhausted: '目录中的提供商都已添加。',

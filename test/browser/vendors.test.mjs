@@ -1694,7 +1694,9 @@ if (launched.browser === null) {
         eq('add-modes gap', f.modes.gap, '8px')
 
         // ── hint：官方 `._advancedHint{color:label-tertiary;font-size:12px;line-height:18px}`（:35）
-        eq('hint 文案（catalog）', f.hint.text, '从内置目录中选择 OpenAI、Anthropic、Kimi 等提供商，填入其 API 密钥即可使用。')
+        //    文案 = 官方 `:2978` 的原文，**只把第三个例子从 `Kimi` 换成 `火山方舟`**（task-16）：
+        //    官方点名的 Kimi 已从真目录移除，文案不该点一个下拉里没有的厂商。
+        eq('hint 文案（catalog）', f.hint.text, '从内置目录中选择 OpenAI、Anthropic、火山方舟 等提供商，填入其 API 密钥即可使用。')
         eq('hint fontSize', f.hint.fontSize, '12px')
         eq('hint lineHeight', f.hint.lineHeight, '18px')
 
