@@ -1132,8 +1132,9 @@ async function switchAddMode(lane, value) {
 /**
  * 「提供商」下拉的选项值，按 DOM 顺序。
  *
- * 期望顺序 = 宿主 catalog 顺序里的**未添加**项（`custom` 那一组固定排最后，
- * 与我们 `sortCatalog` 的稳定规则一致）。这里**独立复述**一遍，实现漂移就红。
+ * task-8 起：下拉**列出全部目录条目**（不再只列未添加的），顺序规则不变 ——
+ * `localeCompare(..., 'zh-Hans-CN')` 升序 + `custom` 那一组固定排最后
+ * （与我们 `sortCatalog` 的稳定规则一致）。这里**独立复述**一遍，实现漂移就红。
  */
 const EXPECTED_OPTION_ORDER = [
   'anthropic',
@@ -1157,8 +1158,36 @@ const EXPECTED_OPTION_ORDER = [
   'custom-openai',
   'selfhost',
 ]
+/** 夹具里已添加的两家（`catalogFixture()` 的 google / ofox）。 */
 const ALREADY_ADDED = ['google', 'ofox']
-const EXPECTED_OPTIONS = EXPECTED_OPTION_ORDER.filter((id) => !ALREADY_ADDED.includes(id))
+/** 全部条目数（= 宿主 catalog 的条数；`EXPECTED_OPTION_ORDER` 反过来就是它）。 */
+const EXPECTED_ALL_COUNT = EXPECTED_OPTION_ORDER.length
+/** 默认选中项 = 顺序里**第一个未添加**的。 */
+const EXPECTED_FIRST_ADDABLE =
+  EXPECTED_OPTION_ORDER.find((id) => !ALREADY_ADDED.includes(id)) ?? ''
+/** 选项文案：宿主给的可读名（与 id 不同，故意有出入的名字才验得出"用的是 label"）。 */
+const EXPECTED_LABEL = {
+  anthropic: 'Anthropic',
+  azure: 'Azure OpenAI',
+  cohere: 'Cohere',
+  dashscope: 'DashScope',
+  deepseek: 'DeepSeek',
+  fal: 'Fal',
+  fireworks: 'Fireworks',
+  google: 'Google',
+  mistral: 'Mistral',
+  novita: 'Novita',
+  ofox: 'Ofox',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  replicate: 'Replicate',
+  siliconflow: 'SiliconFlow',
+  together: 'Together',
+  xai: 'xAI',
+  custom: '自定义',
+  'custom-openai': '自定义（OpenAI 兼容）',
+  selfhost: '自建端点',
+}
 
 describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步确认', () => {
   it('A1 点虚线按钮 → 页内出现 add-card、虚线按钮消失；两个 tab 的文案逐字对齐官方', async () => {
@@ -1215,7 +1244,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.equal(addPanel(lane, 'custom').hidden, true, '切回 catalog 后 custom 面板必须再隐藏')
   })
 
-  it('A3 「提供商」下拉是一个原生 select，选项 = 未添加的厂商、顺序 = 目录顺序减去已添加', async () => {
+  it('A3 「提供商」下拉是一个原生 select：20 条全列、已添加的 disabled 且标注「（已添加）」', async () => {
     const lane = await createLane()
     await lane.render()
     await openAddCard(lane)
@@ -1224,19 +1253,53 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.ok(select, 'catalog 面板必须有 [data-pxm-add-provider]')
     assert.equal(select.tagName, 'SELECT', '官方就是原生 <select class="input selectInput"]，不是自绘下拉')
 
+    /*
+     * task-8：**20 条全列**（以前只列未添加的，用户在自己已有 ofox / agnes 时只看到 18 条，
+     * 会以为"目录里少了厂商"）。已添加的那些仍然在，只是 `disabled` + 后缀「（已添加）」。
+     */
     const values = [...select.options].map((option) => option.value)
     assert.deepEqual(
       values,
-      EXPECTED_OPTIONS,
-      'select 的选项必须 = 未添加的厂商、顺序与目录一致；实测 ' + JSON.stringify(values),
+      EXPECTED_OPTION_ORDER,
+      'select 的选项必须 = 目录全部条目（20 条）、顺序不变；实测 ' + JSON.stringify(values),
     )
-    for (const id of ALREADY_ADDED) {
-      assert.equal(values.includes(id), false, '已添加的 ' + id + ' 不得出现在选项里')
+    assert.equal(values.length, EXPECTED_ALL_COUNT, '下拉必须列出全部 ' + String(EXPECTED_ALL_COUNT) + ' 家')
+
+    // 已添加的：disabled + 文案带「（已添加）」后缀；未添加的：可选、文案就是厂商名。
+    for (const option of [...select.options]) {
+      const already = ALREADY_ADDED.includes(option.value)
+      assert.equal(
+        option.disabled,
+        already,
+        'id="' + option.value + '" 的 disabled 状态必须 === ' + String(already),
+      )
+      const text = option.textContent.trim()
+      if (already) {
+        assert.ok(
+          text.includes('（已添加）'),
+          '已添加的 ' + option.value + ' 必须标注「（已添加）」，实测 ' + JSON.stringify(text),
+        )
+        assert.equal(
+          text,
+          EXPECTED_LABEL[option.value] + '（已添加）',
+          '后缀必须紧跟在厂商名之后，实测 ' + JSON.stringify(text),
+        )
+      } else {
+        assert.equal(
+          text.includes('（已添加）'),
+          false,
+          '未添加的 ' + option.value + ' 不得带「（已添加）」',
+        )
+        assert.equal(text, EXPECTED_LABEL[option.value], '未添加的选项文案 = 厂商可读名')
+      }
     }
-    assert.equal(select.value, EXPECTED_OPTIONS[0], '默认选中第一个可用的厂商')
-    // 选项文案是宿主给的可读名（不是 id）。
-    const first = [...select.options][0]
-    assert.equal(first.textContent.trim(), 'Anthropic', '选项文案必须是厂商的可读名')
+
+    // 默认选中项 = **第一个未添加**的（不是 DOM 里第一个 —— 那是 anthropic，恰好也未添加，
+    // 所以这里额外把"选中的一定不是 disabled"这条独立断出来，顺序变了也不会误过）。
+    assert.equal(select.value, EXPECTED_FIRST_ADDABLE, '默认选中第一个**未添加**的厂商')
+    const selected = [...select.options].find((option) => option.value === select.value)
+    assert.ok(selected, '选中的值必须在选项里')
+    assert.equal(selected.disabled, false, '默认选中项必须**不是**已添加（否则用户以为能选）')
   })
 
   it('A4 选厂商 + 填密钥 + 保存 → 恰好 1 次 POST api/providers，body 恰为 {catalogId, apiKey}', async () => {

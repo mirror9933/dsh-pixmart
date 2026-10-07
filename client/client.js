@@ -1894,6 +1894,13 @@ window.__ModuleLoader__.load({
       customHint:
         '连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。',
       catalogExhausted: '目录中的提供商都已添加。',
+      /*
+       * 已添加条目的**后缀**（2026-10-12 task-8）。官方没有这一枚文案（官方直接把已添加的
+       * 从 `addable` 里滤掉、选项里根本看不到它们），但我们刻意把它们**列出来并标注**：
+       * 用户反馈"下拉里没有 ofox / agnes"，而真相是它们已经加过了 —— 标注能让这件事
+       * 一眼可见，否则用户会以为目录里少了厂商。用全角括号（与页面其它中文标点一致）。
+       */
+      addedSuffix: '（已添加）',
       provider: '提供商',
       keyInput: 'API 密钥',
       keyPlaceholderNative: '输入 API 密钥，或留空使用环境认证',
@@ -1931,8 +1938,18 @@ window.__ModuleLoader__.load({
      */
     function AddProviderCard(props) {
       const catalog = isArray(props.catalog) ? props.catalog : []
-      /** 还没添加的那些：`added === false`（或没这一项）。全加完时它就是空数组。 */
-      const addable = sortCatalog(catalog).filter((entry) => entry.added !== true)
+      /**
+       * **全部**目录条目（按既有顺序规则排好：`zh-Hans-CN` 升序 + `custom` 固定最后）。
+       *
+       * 2026-10-12（task-8）：下拉里**20 条全列** —— 以前只列"还没添加的"，
+       * 用户在自己的配置里已有 ofox / agnes 时只看到 18 条，会以为"目录里少了厂商"。
+       * 官方 `addable` 确实是"未添加的"，但那条语义**对用户不透明**：现在改成
+       * 已添加的那些仍然列出来、但 `<option disabled>` 且后缀「（已添加）」，
+       * 既不会重复添加，也一眼能看出"它只是已经加过了"。
+       */
+      const ordered = sortCatalog(catalog)
+      /** 还没添加的那些：`added === false`（或没这一项）。默认选中项 / `exhausted` 都看它。 */
+      const addable = ordered.filter((entry) => entry.added !== true)
       const exhausted = addable.length === 0
       const mode = props.mode
 
@@ -1951,9 +1968,24 @@ window.__ModuleLoader__.load({
       }, [mode, exhausted, props.catalogId, props.onPick, addable])
 
       /**
+       * 下拉的**有效选中值**：草稿里那个如果还在"未添加"里就用它，否则落到第一个未添加的
+       * （全添加完时为空串 —— 那时根本不渲染下拉，见下面的 `exhausted` 分支）。
+       *
+       * 为什么不直接把 `props.catalogId` 交给 `<select value>`：草稿默认是空串，
+       * 而**已添加**的那些在选项里是 `disabled` 的 —— 空串不匹配任何 option 时浏览器会退回
+       * DOM 里第一个 option（可能就是一条 disabled 的"已添加"），用户会看到"下拉显示 Ofox
+       * （已添加）"这种自相矛盾的初始态。这里先算一遍，保证显示值与可选集合永远自洽。
+       */
+      const selectedId = addable.some((entry) => String(entry.id) === props.catalogId)
+        ? String(props.catalogId)
+        : addable.length > 0
+          ? String(addable[0].id)
+          : ''
+
+      /**
        * 选中的目录条目（`baseUrl` 覆盖的判据要用它，见下面 `submit`）。
        */
-      const picked = addable.find((entry) => String(entry.id) === props.catalogId) ?? null
+      const picked = addable.find((entry) => String(entry.id) === selectedId) ?? null
 
       /*
        * ── 客户端**先拦**（2026-10-12，宿主契约 task-6）────────────────────────
@@ -2189,7 +2221,8 @@ window.__ModuleLoader__.load({
                   className: 'pxm-add-select',
                   'data-pxm-add-provider': '1',
                   'aria-label': ADD_COPY.provider,
-                  value: String(props.catalogId ?? ''),
+                  // **有效选中值**（不是草稿原值）：保证它一定落在"可选"的那一档里。
+                  value: selectedId,
                   disabled: save.busy,
                   onChange: (event) => props.onPick(String(event.target.value)),
                   style: {
@@ -2200,13 +2233,25 @@ window.__ModuleLoader__.load({
                     cursor: 'pointer',
                   },
                 },
-                addable.map((entry) =>
-                  h(
+                /*
+                 * **全部**目录条目都进选项（task-8）：已添加的那些 `disabled` + 后缀
+                 * 「（已添加）」。顺序 = `sortCatalog` 的既有规则（`zh-Hans-CN` 升序、
+                 * `custom` 固定最后），**不因为"加过没加过"而挪位**。
+                 */
+                ordered.map((entry) => {
+                  const already = entry.added === true
+                  const label = String(entry.label ?? entry.id)
+                  return h(
                     'option',
-                    { key: String(entry.id), value: String(entry.id) },
-                    String(entry.label ?? entry.id),
-                  ),
-                ),
+                    {
+                      key: String(entry.id),
+                      value: String(entry.id),
+                      // 已添加 = 不可选：重复添加会被宿主判 409 `already_exists`。
+                      ...(already ? { disabled: true } : {}),
+                    },
+                    already ? label + ADD_COPY.addedSuffix : label,
+                  )
+                }),
               ),
         ),
         /*

@@ -151,6 +151,14 @@ const CATALOG = [
   cat('selfhost', '自建端点', 'custom', { imageCapable: false }),
 ]
 
+/**
+ * task-8：下拉**列出全部 20 家**（顺序 = `sortCatalog`：label 的 `zh-Hans-CN` 升序、
+ * `custom` 那一组固定最后），默认选中"第一个未添加"的那家。
+ * 夹具里已添加的是 google / ofox，所以第一个未添加的是 `anthropic`（label 'Anthropic' 最小）。
+ * 这是**独立复述**：实现换了排序规则或又变成"过滤掉已添加"，这里就红。
+ */
+const FIRST_ADDABLE_ID = 'anthropic'
+
 const providersFixture = {
   ok: true,
   dataDir: 'D:/pixmart',
@@ -1509,6 +1517,8 @@ if (launched.browser === null) {
             role: el.getAttribute('role'),
             ariaLabel: el.getAttribute('aria-label'),
             selected: el.getAttribute('aria-selected'),
+            /** 表单控件的当前值（`<select>` / `<input>`）；其它元素上是 `undefined`。 */
+            value: el.value,
             rect: { width: r.width, height: r.height, top: r.top, left: r.left },
             display: cs.display,
             flexDirection: cs.flexDirection,
@@ -1590,6 +1600,17 @@ if (launched.browser === null) {
           selectOptions: select === null
             ? []
             : Array.prototype.map.call(select.options, (o) => o.value),
+          /*
+           * task-8：选项的**可读文案 + disabled 状态**（"20 条全列、已添加的不可选并标注"）
+           * 只能这样逐条读出来 —— `o.value` 拿不到「（已添加）」后缀。
+           */
+          selectOptionFacts: select === null
+            ? []
+            : Array.prototype.map.call(select.options, (o) => ({
+                value: o.value,
+                text: (o.textContent || '').trim(),
+                disabled: o.disabled === true,
+              })),
           exhausted: document.querySelector('[data-pxm-add-exhausted]') !== null,
           keyInput: dump(document.querySelector('#pxm-add-key')),
           baseUrlInput: dump(document.querySelector('#pxm-add-base-url')),
@@ -1730,6 +1751,33 @@ if (launched.browser === null) {
         eq('select lineHeight（声明值）', f.select.declaredLineHeight, '22px')
         eq('select maxWidth', f.select.maxWidth, '240px')
         eq('select 声明圆角', f.selectRadiusVar, 'var(--dsw-radius-md)')
+
+        /*
+         * ── task-8：下拉**列出全部 20 家**，已添加的（夹具里 google / ofox）不可选并标注
+         *    「（已添加）」。以前只列未添加的，用户在自己已有 ofox / agnes 时只看到 18 条，
+         *    会以为"目录里少了厂商"——这条断言就是把"不再过滤"钉死。
+         */
+        eq('下拉选项数 = 目录全部条目', String(f.selectOptions.length), String(CATALOG.length))
+        for (const option of f.selectOptionFacts) {
+          const entry = CATALOG.find((item) => item.id === option.value)
+          if (entry === undefined) {
+            bad.push('下拉里出现了目录之外的 id：' + option.value)
+            continue
+          }
+          const already = entry.added === true
+          eq('选项 ' + option.value + ' 的 disabled', String(option.disabled), String(already))
+          if (already) {
+            eq(
+              '选项 ' + option.value + ' 的文案',
+              option.text,
+              entry.label + '（已添加）',
+            )
+          } else {
+            eq('选项 ' + option.value + ' 的文案', option.text, entry.label)
+          }
+        }
+        // 默认选中项必须是**第一个未添加**的那家（独立复述，见上面 FIRST_ADDABLE_ID）。
+        eq('默认选中项', f.select.value, FIRST_ADDABLE_ID)
 
         // ── 编辑器动作：官方 `._editorActions{justify-content:flex-end;gap:8px}`（:36）
         eq('动作行 justifyContent', f.actions.justifyContent, 'flex-end')
