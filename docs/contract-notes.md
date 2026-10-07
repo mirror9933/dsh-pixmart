@@ -2789,6 +2789,7 @@ Base URL / 原生 URL / 密钥都只改本地 state；「保存」才 `POST cred
 
 `pnpm verify` 全绿：宿主 `pnpm test` **395**（§30 的 364 + 31），
 浏览器 `pnpm test:browser` **64**（§30 的 62 + 2）。
-新增的 2 条变异（M46 / M47）已自证；**全量 47 条变异的结果见 `.probe/mutations-full-run.txt`**
-（后台运行，收尾时补记结论）。
+**全量变异跑过**（`.probe/mutations-full-run.txt`，exit 0）：46 条严格变异**全部被对应用例抓住**；
+1 条信息性（`M12-no-overscroll-contain`，已知盲区 §13.7 —— 它只被"原产物 sha256"自证用例顺带命中，
+**没有**被 overscroll 相关断言抓住，所以盲区仍然成立）。
 
