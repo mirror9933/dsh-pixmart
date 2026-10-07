@@ -577,6 +577,13 @@ async function handleApi(
     return
   }
 
+  // POST /pixmart/api/providers/probe —— 草稿探测（测试连接 / 拉取模型），**不写配置**
+  if (route === '/providers/probe' || route === '/providers/probe/') {
+    if (requirePost()) return
+    await handleProbeProvider(response, readBody)
+    return
+  }
+
   // POST /pixmart/api/providers/<id>/delete —— 从配置里移除一个（写配置）
   // 注意：本仓库的路由层**只接受 GET/POST**（见文件头约定 4），所以"删除"是 POST。
   const providerDeleteMatch = /^\/providers\/([^/]+)\/delete$/.exec(route)
@@ -730,6 +737,205 @@ function pickCustomProvider(raw: unknown): CustomPick {
   return { ok: true, id, label, baseUrl }
 }
 
+/** 「添加厂商」身份字段的解析结果：要么给出可直接落盘的草稿，要么给出一条拒绝（带状态码）。 */
+type DraftPick =
+  | { readonly ok: true; readonly draft: ProviderConfig }
+  | { readonly ok: false; readonly status: number; readonly code: string; readonly message: string }
+
+/**
+ * 解析「添加厂商」请求体的身份字段 —— `POST /providers`（**创建**）与
+ * `POST /providers/probe`（**草稿探测**）**共用同一套规则**，两处不再各写一份。
+ *
+ * 规则（模式二选一 + baseUrl + apiKey，逐条对应契约）：
+ *   1. `catalogId` 与 `custom` **二选一**（都有或都没有 → 400 `bad_field`）；
+ *   2. 模式 A：`catalogId` 不在目录 → 400 `unknown_catalog_id`（保持现状）；
+ *      出现 `baseUrl` 时必须是**非空** http(s) 地址（可选覆盖目录默认值）；
+ *   3. 模式 B：`custom.{id,label,baseUrl}` 三个字段都必填、都要合法（见 `pickCustomProvider`）；
+ *   4. `apiKey`：非空则写进草稿并把 `apiKeyEnv` 置 `''`（页面显式填的密钥压过环境变量）；
+ *      空串 / 缺失 = 本次不带密钥（**探测**由调用方另行要求它必填）。
+ *
+ * 字段类型不对时由 `pickStringField` 抛 `BodyError(400 bad_field)`，与其余写路由同一套。
+ */
+function pickProviderDraft(body: Record<string, unknown>): DraftPick {
+  // 模式二选一：用"键出现"判定，`catalogId: ''` 仍算模式 A（随后按 unknown_catalog_id 拒）。
+  const catalogId = pickStringField(body, 'catalogId')
+  const hasCustom = 'custom' in body
+  if (catalogId.present === hasCustom) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'bad_field',
+      message: catalogId.present
+        ? 'catalogId 与 custom 必须二选一，不能同时给'
+        : 'catalogId 与 custom 必须二选一：目录新增给 catalogId，自定义新增给 custom',
+    }
+  }
+
+  // 非字符串 → BodyError(400 bad_field)，由 guard 统一回给客户端（与其余写路由同）。
+  const apiKey = pickStringField(body, 'apiKey')
+  // 空串 = "本次不带密钥"（不清除、不写空值），与 credentials 路由的"出现即写"语义区分开。
+  const keyFields =
+    apiKey.present && apiKey.value !== '' ? { apiKey: apiKey.value, apiKeyEnv: '' } : {}
+
+  if (hasCustom) {
+    const custom = pickCustomProvider(body.custom)
+    if (!custom.ok) {
+      return { ok: false, status: 400, code: 'bad_field', message: custom.message }
+    }
+    return {
+      ok: true,
+      draft: providerFromCustom({
+        id: custom.id,
+        label: custom.label,
+        baseUrl: custom.baseUrl,
+        apiKey: apiKey.value,
+      }),
+    }
+  }
+
+  const entry = findCatalogEntry(catalogId.value)
+  if (entry === undefined) {
+    const known = PROVIDER_CATALOG.map((item) => item.id).join(', ')
+    return {
+      ok: false,
+      status: 400,
+      code: 'unknown_catalog_id',
+      message: catalogId.present
+        ? `厂商目录里没有 "${catalogId.value}"；可用：${known}`
+        : `catalogId 缺失；可用：${known}`,
+    }
+  }
+  // 模式 A 的 `baseUrl` 是**可选覆盖**：出现即必须合法（空串也不合法——地址空着的
+  // 新厂商发不出任何请求，宁可当场拒掉）。
+  const baseUrlOverride = pickStringField(body, 'baseUrl')
+  if (baseUrlOverride.present) {
+    const problem = newProviderBaseUrlProblem(baseUrlOverride.value)
+    if (problem !== undefined) {
+      return {
+        ok: false,
+        status: 400,
+        code: 'bad_field',
+        message: `baseUrl 不是可用地址：${problem}`,
+      }
+    }
+  }
+  return {
+    ok: true,
+    draft: {
+      ...providerFromCatalog(entry),
+      ...(baseUrlOverride.present ? { baseUrl: baseUrlOverride.value } : {}),
+      ...keyFields,
+    },
+  }
+}
+
+/** 「创建时可选 models」的解析结果；`undefined` = 请求体里没这个字段（等同不传）。 */
+type NewModelsPick =
+  | { readonly ok: true; readonly models: readonly string[] }
+  | { readonly ok: false; readonly message: string }
+
+/**
+ * 解析创建请求里**可选**的 `models` —— 添加时刚拉到的列表可以直接带上，
+ * 不必先保存厂商再走一次「保存选择」。
+ *
+ * 规则（与 `/providers/<id>/models` 的 `invalid_models` 有意不同，这里的错误码统一 `bad_field`）：
+ *   1. 必须是数组，且元素必须都是**字符串**（不是字符串 → 400 `bad_field`）；
+ *   2. 逐项 `trim()`，丢掉 trim 后为空的项；
+ *   3. 去重且**保持首次出现的顺序**；
+ *   4. 结果为空数组 = 等同"不传"（落盘仍是 `models: []`）。
+ */
+function pickNewModelsField(body: Record<string, unknown>): NewModelsPick | undefined {
+  if (!('models' in body)) return undefined
+  const raw = body.models
+  if (!Array.isArray(raw)) return { ok: false, message: 'models 应为字符串数组' }
+  if (raw.some((item) => typeof item !== 'string')) {
+    return { ok: false, message: 'models 的每个元素都必须是字符串' }
+  }
+  const models: string[] = []
+  for (const item of raw as string[]) {
+    const name = item.trim()
+    if (name === '') continue
+    if (!models.includes(name)) models.push(name)
+  }
+  return { ok: true, models }
+}
+
+/**
+ * `POST /pixmart/api/providers/probe` —— **草稿探测**（测试连接 / 拉取模型）。
+ *
+ * 为什么需要它：设置页 add-card 里厂商**还没保存**，而
+ * `POST /providers/<id>/test` 与 `/refresh-models` 都是**按 id 从配置里**取端点与密钥——
+ * 草稿阶段根本拿不到。本路由直接用请求体里的草稿探测，**不读配置、不写配置**。
+ *
+ * body = 创建接口那套身份字段 + `action`：
+ *   - `{ action: 'test' | 'models', catalogId, baseUrl?, apiKey }`
+ *   - `{ action: 'test' | 'models', custom: { id, label, baseUrl }, apiKey }`
+ *
+ * 解析与校验复用 `pickProviderDraft`（与创建路径同一套规则）；`apiKey` **必填且非空**——
+ * 草稿场景就是要用刚输入的那个，**不去翻配置里存的密钥、也不认 `apiKeyEnv`**。
+ *
+ * 返回形状与已保存厂商的两个接口逐字段一致：
+ *   - `models` → 成功 200 `{ ok, models, count }`；失败沿用 `toModelProbeStatus` 的状态码 + 错误码；
+ *   - `test`   → 成功 200 `{ ok, latencyMs, modelCount }`；失败仍是 200 + 结构化 error。
+ * （两者都不回 `provider` 视图：草稿还没有"保存后的样子"，回一个未落盘的视图只会误导客户端。）
+ */
+async function handleProbeProvider(
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+
+  const action = pickStringField(body, 'action')
+  if (!action.present || (action.value !== 'test' && action.value !== 'models')) {
+    fail(
+      response,
+      400,
+      'bad_field',
+      action.present
+        ? `action 只能是 "test" 或 "models"（收到 "${action.value}"）`
+        : 'action 缺失：应为 "test"（测试连接）或 "models"（拉取模型）',
+    )
+    return
+  }
+
+  const picked = pickProviderDraft(body)
+  if (!picked.ok) {
+    fail(response, picked.status, picked.code, picked.message)
+    return
+  }
+  const apiKey = picked.draft.apiKey.trim()
+  if (apiKey === '') {
+    fail(response, 400, 'bad_field', '请先填入 API 密钥，再测试连接 / 拉取模型')
+    return
+  }
+
+  const probe = await fetchProviderModels(picked.draft, { apiKey })
+
+  if (action.value === 'models') {
+    if (!probe.ok) {
+      fail(response, toModelProbeStatus(probe.error.code), probe.error.code, probe.error.message)
+      return
+    }
+    const models = [...probe.models]
+    sendJson(response, 200, { ok: true, models, count: models.length })
+    return
+  }
+
+  if (probe.ok) {
+    sendJson(response, 200, {
+      ok: true,
+      latencyMs: probe.ms,
+      modelCount: probe.models.length,
+    })
+    return
+  }
+  sendJson(response, 200, {
+    ok: false,
+    latencyMs: probe.ms,
+    error: { code: probe.error.code, message: probe.error.message },
+  })
+}
+
 /**
  * `POST /pixmart/api/providers` —— **新增**一家厂商（写配置）。
  *
@@ -763,70 +969,24 @@ async function handleAddProvider(
 ): Promise<void> {
   const body = await readBody()
 
-  // 模式二选一：用"键出现"判定，`catalogId: ''` 仍算模式 A（随后按 unknown_catalog_id 拒）。
-  const catalogId = pickStringField(body, 'catalogId')
-  const hasCustom = 'custom' in body
-  if (catalogId.present === hasCustom) {
-    fail(
-      response,
-      400,
-      'bad_field',
-      catalogId.present
-        ? 'catalogId 与 custom 必须二选一，不能同时给'
-        : 'catalogId 与 custom 必须二选一：目录新增给 catalogId，自定义新增给 custom',
-    )
+  // 身份字段的解析与校验与 `POST /providers/probe` **共用** `pickProviderDraft`
+  // （模式二选一 / id 正则 / label / baseUrl / apiKey 只有一份实现）。
+  const picked = pickProviderDraft(body)
+  if (!picked.ok) {
+    fail(response, picked.status, picked.code, picked.message)
     return
   }
 
-  // 非字符串 → BodyError(400 bad_field)，由 guard 统一回给客户端（与其余写路由同）。
-  const apiKey = pickStringField(body, 'apiKey')
-  // 空串 = "本次不带密钥"（不清除、不写空值），与 credentials 路由的"出现即写"语义区分开。
-  const keyFields =
-    apiKey.present && apiKey.value !== '' ? { apiKey: apiKey.value, apiKeyEnv: '' } : {}
-
-  let draft: ProviderConfig
-  if (hasCustom) {
-    const custom = pickCustomProvider(body.custom)
-    if (!custom.ok) {
-      fail(response, 400, 'bad_field', custom.message)
-      return
-    }
-    draft = providerFromCustom({
-      id: custom.id,
-      label: custom.label,
-      baseUrl: custom.baseUrl,
-      apiKey: apiKey.value,
-    })
-  } else {
-    const entry = findCatalogEntry(catalogId.value)
-    if (entry === undefined) {
-      const known = PROVIDER_CATALOG.map((item) => item.id).join(', ')
-      fail(
-        response,
-        400,
-        'unknown_catalog_id',
-        catalogId.present
-          ? `厂商目录里没有 "${catalogId.value}"；可用：${known}`
-          : `catalogId 缺失；可用：${known}`,
-      )
-      return
-    }
-    // 模式 A 的 `baseUrl` 是**可选覆盖**：出现即必须合法（空串也不合法——地址空着的
-    // 新厂商发不出任何请求，宁可当场拒掉）。
-    const baseUrlOverride = pickStringField(body, 'baseUrl')
-    if (baseUrlOverride.present) {
-      const problem = newProviderBaseUrlProblem(baseUrlOverride.value)
-      if (problem !== undefined) {
-        fail(response, 400, 'bad_field', `baseUrl 不是可用地址：${problem}`)
-        return
-      }
-    }
-    draft = {
-      ...providerFromCatalog(entry),
-      ...(baseUrlOverride.present ? { baseUrl: baseUrlOverride.value } : {}),
-      ...keyFields,
-    }
+  // 可选 `models`：添加时刚拉到的列表可以直接带上（省一次「保存选择」）。
+  const listed = pickNewModelsField(body)
+  if (listed !== undefined && !listed.ok) {
+    fail(response, 400, 'bad_field', listed.message)
+    return
   }
+  const draft =
+    listed !== undefined && listed.ok && listed.models.length > 0
+      ? { ...picked.draft, models: listed.models }
+      : picked.draft
 
   const id = draft.id
   // 预检：早失败、少写一次盘。真正的判重在 mutate 里再做一次（见下）。

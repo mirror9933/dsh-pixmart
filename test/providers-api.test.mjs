@@ -19,7 +19,10 @@
  *      `baseUrl` 覆盖 + 可选 `apiKey`）与 `POST /providers/<id>/delete`（移除）：
  *      落盘 / 409 / 400 / 404、默认厂商被删后的改写、
  *      **删掉 ofox 后重新 `load()` 不会把它补回来**（出厂清单为空 ⇒ `load()` 不补任何人；
- *      删除也因此不再留下墓碑）、删到一个不剩不崩、墓碑被重新添加时摘掉。
+ *      删除也因此不再留下墓碑）、删到一个不剩不崩、墓碑被重新添加时摘掉；
+ *  10. `POST /providers/probe`（**草稿探测**：添加过程中就能测试连接 / 拉取模型，
+ *      `apiKey` 必填、返回形状与已保存厂商那两个接口一致、**零写盘**）；
+ *  11. 创建时可选 `models`（去空白 / 去重 / 保序；非法类型 400 且不落盘）。
  *
  * **零真实网络**：探测用的 `fetch` 全部是本地 stub（见 `stubFetch`），
  * 且每个用例后还原 `globalThis.fetch`。假 runtime 沿用 `historical.test.mjs` 的写法，
@@ -1756,6 +1759,419 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
       const ofox = reloaded.get().providers.find((provider) => provider.id === 'ofox')
       assert.equal(ofox.baseUrl, 'https://my-relay.example/v1')
       assert.equal(ofox.group, 'custom')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── 草稿探测：添加过程中就能「测试连接 / 拉取模型」 ──────────────────────────────
+//
+// 冻结契约（add-card 里的两个按钮）：
+//   `POST /providers/probe`，body = 创建接口那套身份字段 + `action: 'test' | 'models'`，
+//   `apiKey` 必填非空；返回形状与已保存厂商的 `/test`、`/refresh-models` 一致；**零写盘**。
+
+describe('POST /pixmart/api/providers/probe（草稿探测，不落盘）', () => {
+  it('① 目录 + action:models → 返回模型列表，端点用目录默认值，且盘上字节不变', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const calls = stubFetch(() => jsonResponse({ data: [{ id: 'gpt-image-1' }, { id: 'dall-e-3' }] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const snapshot = structuredClone(store.get())
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: { action: 'models', catalogId: 'openai', apiKey: SECRET },
+      })
+
+      assert.equal(result.status, 200)
+      assert.equal(result.json.ok, true)
+      assert.deepEqual(result.json.models, ['gpt-image-1', 'dall-e-3'])
+      assert.equal(result.json.count, 2)
+      // 草稿探测没有"保存后的样子" → 不回 provider 视图
+      assert.equal('provider' in result.json, false)
+      assert.equal(result.body.includes(SECRET), false, '响应体泄露了密钥')
+
+      // 打到目录里 openai 的默认端点，并带上刚输入的密钥
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].url, 'https://api.openai.com/v1/models')
+      assert.equal(calls[0].init.headers.Authorization, `Bearer ${SECRET}`)
+
+      // **零写盘**：内存与磁盘都不动（字节级）
+      assert.deepEqual(store.get(), snapshot)
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('② action:test 与已保存厂商的 /test 同形状（成功与失败两种都逐键比）', async () => {
+    const { dir, store } = makeStore({ apiKey: SECRET })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      // 草稿用目录 + baseUrl 覆盖成夹具里 ofox 的地址 → 两个接口打到同一个 URL
+      const draftBody = {
+        action: 'test',
+        catalogId: 'openai',
+        baseUrl: 'https://api.example.test/v1/',
+        apiKey: SECRET,
+      }
+
+      stubFetch(() => jsonResponse({ data: [{ id: 'm-1' }, { id: 'm-2' }] }))
+      const savedOk = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/test')
+      const draftOk = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: draftBody,
+      })
+
+      assert.equal(savedOk.status, 200)
+      assert.equal(draftOk.status, 200)
+      assert.deepEqual(Object.keys(draftOk.json).sort(), Object.keys(savedOk.json).sort())
+      assert.deepEqual(Object.keys(draftOk.json).sort(), ['latencyMs', 'modelCount', 'ok'])
+      assert.equal(draftOk.json.ok, true)
+      assert.equal(draftOk.json.modelCount, 2)
+      assert.equal(typeof draftOk.json.latencyMs, 'number')
+
+      // 失败：两侧都是 200 + ok:false + 同样的 error 键
+      stubFetch(() => jsonResponse({}, 403))
+      const savedFail = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/test')
+      const draftFail = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: draftBody,
+      })
+
+      assert.equal(savedFail.status, 200)
+      assert.equal(draftFail.status, 200)
+      assert.deepEqual(Object.keys(draftFail.json).sort(), Object.keys(savedFail.json).sort())
+      assert.deepEqual(Object.keys(draftFail.json).sort(), ['error', 'latencyMs', 'ok'])
+      assert.equal(draftFail.json.ok, false)
+      assert.equal(draftFail.json.error.code, 'auth')
+      assert.deepEqual(Object.keys(draftFail.json.error).sort(), ['code', 'message'])
+
+      // action:models 失败 → 与 /refresh-models 一样用 toModelProbeStatus 的状态码
+      const draftModelsFail = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: { ...draftBody, action: 'models' },
+      })
+      assert.equal(draftModelsFail.status, 401)
+      assert.equal(draftModelsFail.json.ok, false)
+      assert.equal(draftModelsFail.json.error.code, 'auth')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('③ apiKey 缺失 / 空 / 全空白 → 400 bad_field，且**不发任何厂商请求**', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const calls = stubFetch(() => jsonResponse({ data: [{ id: 'x' }] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const bodies = [
+        { action: 'test', catalogId: 'openai' },
+        { action: 'models', catalogId: 'openai', apiKey: '' },
+        { action: 'test', catalogId: 'openai', apiKey: '   ' },
+        { action: 'models', custom: { id: 'my-relay', label: '我的中转', baseUrl: 'https://e.test/v1' } },
+      ]
+      for (const body of bodies) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', { body })
+        assert.equal(result.status, 400, `${JSON.stringify(body)} 应被拒`)
+        assert.equal(result.json.ok, false)
+        assert.equal(result.json.error.code, 'bad_field')
+        assert.match(result.json.error.message, /密钥/)
+      }
+
+      assert.equal(calls.length, 0, '缺密钥时不该发任何厂商请求')
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('④ 模式二选一与 custom 校验与创建路径**逐字一致**（同 body 打两个接口）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const calls = stubFetch(() => jsonResponse({ data: [] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const badBodies = [
+        // 两种模式都给
+        {
+          action: 'test',
+          catalogId: 'bailian',
+          custom: { id: 'my-relay', label: '我的中转', baseUrl: 'https://e.test/v1' },
+          apiKey: SECRET,
+        },
+        // 两种模式都不给
+        { action: 'test', apiKey: SECRET },
+        // custom id 非法（大写）
+        {
+          action: 'test',
+          custom: { id: 'My-Relay', label: '我的中转', baseUrl: 'https://e.test/v1' },
+          apiKey: SECRET,
+        },
+        // custom label 为空
+        {
+          action: 'test',
+          custom: { id: 'my-relay', label: '   ', baseUrl: 'https://e.test/v1' },
+          apiKey: SECRET,
+        },
+        // custom baseUrl 非 http(s)
+        {
+          action: 'test',
+          custom: { id: 'my-relay', label: '我的中转', baseUrl: 'ftp://e.test/v1' },
+          apiKey: SECRET,
+        },
+      ]
+
+      for (const body of badBodies) {
+        const probeResult = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+          body,
+        })
+        // 创建接口忽略多出来的 `action` 字段 → 同一份 body 可以直接对比
+        const createResult = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+          body,
+        })
+
+        assert.equal(probeResult.status, 400, `${JSON.stringify(body)} 应被拒`)
+        assert.equal(createResult.status, 400)
+        assert.equal(probeResult.json.error.code, createResult.json.error.code)
+        assert.equal(
+          probeResult.json.error.message,
+          createResult.json.error.message,
+          '探测与创建必须共用同一套校验文案',
+        )
+      }
+
+      assert.equal(calls.length, 0)
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑤ baseUrl 覆盖（模式 A）与 custom.baseUrl（模式 B）真的被用于探测', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const calls = stubFetch(() => jsonResponse({ data: [{ id: 'm' }] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const withOverride = await call(
+        webServer,
+        runtime,
+        'POST',
+        '/pixmart/api/providers/probe',
+        {
+          body: {
+            action: 'models',
+            catalogId: 'openai',
+            // 末尾斜杠要被去掉再拼 /models
+            baseUrl: 'https://my-relay.example/v1/',
+            apiKey: SECRET,
+          },
+        },
+      )
+      assert.equal(withOverride.status, 200)
+      assert.equal(calls.at(-1).url, 'https://my-relay.example/v1/models')
+      assert.notEqual(calls.at(-1).url, 'https://api.openai.com/v1/models')
+
+      const withCustom = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: {
+          action: 'models',
+          custom: { id: 'my-relay', label: '我的中转', baseUrl: 'https://custom.example/v2' },
+          apiKey: SECRET,
+        },
+      })
+      assert.equal(withCustom.status, 200)
+      assert.deepEqual(withCustom.json.models, ['m'])
+      assert.equal(withCustom.json.count, 1)
+      assert.equal(calls.at(-1).url, 'https://custom.example/v2/models')
+      assert.equal(calls.length, 2)
+
+      // 自定义厂商的 apiMode/dialect 走 standard（与创建出来的草稿同形状）
+      assert.equal(calls.at(-1).init.headers.Authorization, `Bearer ${SECRET}`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑥ 未知 action / 缺 action / 非字符串 action → 400 bad_field', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const calls = stubFetch(() => jsonResponse({ data: [] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      for (const body of [
+        { action: 'nope', catalogId: 'openai', apiKey: SECRET },
+        { action: '', catalogId: 'openai', apiKey: SECRET },
+        { catalogId: 'openai', apiKey: SECRET },
+      ]) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+          body,
+        })
+        assert.equal(result.status, 400, `${JSON.stringify(body)} 应被拒`)
+        assert.equal(result.json.error.code, 'bad_field')
+        assert.match(result.json.error.message, /action/)
+      }
+
+      // 非字符串 action 走的是与其余写路由同一套字段校验
+      const bad = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: { action: 42, catalogId: 'openai', apiKey: SECRET },
+      })
+      assert.equal(bad.status, 400)
+      assert.equal(bad.json.error.code, 'bad_field')
+
+      assert.equal(calls.length, 0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑦ 未知 catalogId / 缺 baseUrl 的自定义厂商：与创建路径同样的错误码，且零写盘', async () => {
+    const { dir, store } = makeStore()
+    try {
+      stubFetch(() => jsonResponse({ data: [] }))
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const unknown = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: { action: 'models', catalogId: 'nope', apiKey: SECRET },
+      })
+      assert.equal(unknown.status, 400)
+      assert.equal(unknown.json.error.code, 'unknown_catalog_id')
+
+      const noUrl = await call(webServer, runtime, 'POST', '/pixmart/api/providers/probe', {
+        body: { action: 'models', custom: { id: 'my-relay', label: '标签' }, apiKey: SECRET },
+      })
+      assert.equal(noUrl.status, 400)
+      assert.equal(noUrl.json.error.code, 'bad_field')
+
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── 创建时可选 models：把"添加时拉到的列表"一次带上 ───────────────────────────
+
+describe('POST /pixmart/api/providers（创建时可选 models）', () => {
+  it('⑧ 目录模式：去空白 + 去重 + 保序，落盘就是 b,a 两个', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian', apiKey: SECRET, models: ['b', 'a', 'b', ' a '] },
+      })
+
+      assert.equal(added.status, 200)
+      assert.deepEqual(added.json.provider.models, ['b', 'a'])
+      const onDisk = readDiskConfig(dir).providers.find((provider) => provider.id === 'bailian')
+      assert.deepEqual(onDisk.models, ['b', 'a'])
+      // 密钥语义不受影响
+      assert.equal(onDisk.apiKey, SECRET)
+      assert.equal(onDisk.apiKeyEnv, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑨ 自定义模式同样收 models；过滤后为空 = 等同不传（仍是 []）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const custom = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'my-relay', label: '我的中转', baseUrl: 'https://my-relay.example/v1' },
+          models: [' x ', 'y', 'x'],
+        },
+      })
+      assert.equal(custom.status, 200)
+      assert.deepEqual(custom.json.provider.models, ['x', 'y'])
+      assert.deepEqual(readDiskConfig(dir).providers.at(-1).models, ['x', 'y'])
+
+      // 全是空白 / 空数组 → 当作没传：落盘仍是空数组，不报错
+      const blank = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'kimi', models: ['', '   '] },
+      })
+      assert.equal(blank.status, 200)
+      assert.deepEqual(blank.json.provider.models, [])
+      assert.deepEqual(readDiskConfig(dir).providers.at(-1).models, [])
+
+      const empty = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'tencent', models: [] },
+      })
+      assert.equal(empty.status, 200)
+      assert.deepEqual(empty.json.provider.models, [])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑩ models 非法（字符串 / 含数字 / 含 null / 含对象）→ 400 bad_field 且不落盘', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const badModels = ['gpt-image-1', ['ok', 42], [null], [{ id: 'x' }], ['ok', true]]
+      for (const models of badModels) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+          body: { catalogId: 'bailian', apiKey: SECRET, models },
+        })
+        assert.equal(result.status, 400, `models=${JSON.stringify(models)} 应被拒`)
+        assert.equal(result.json.error.code, 'bad_field')
+      }
+
+      // 自定义模式也一样
+      const customBad = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'my-relay', label: '我的中转', baseUrl: 'https://e.test/v1' },
+          models: 'nope',
+        },
+      })
+      assert.equal(customBad.status, 400)
+      assert.equal(customBad.json.error.code, 'bad_field')
+
+      assert.deepEqual(
+        store.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑪ 创建带 models 时仍不回显密钥，且 models 与视图一致', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian', apiKey: SECRET, models: ['m-2', 'm-1', 'm-2'] },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.body.includes(SECRET), false, '响应体泄露了密钥')
+      assert.equal(/"apiKey"\s*:/.test(added.body), false)
+
+      const listed = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      const view = listed.json.providers.find((provider) => provider.id === 'bailian')
+      assert.deepEqual(view.models, ['m-2', 'm-1'])
+      assert.equal(view.hasApiKey, true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
