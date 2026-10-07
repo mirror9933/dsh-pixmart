@@ -3041,3 +3041,77 @@ B3 的失败消息正是用户症状「切到 B 那一刻 A 的密钥必须已�
 
 **一处能力边界（如实记）**：忙碌文案**只能由 jsdom 断**；浏览器 lane 的 `lane.js` 没有"挂起到 release"的口子，
 所以 3.7c 仍只管几何/配色与启用逻辑。
+
+---
+
+## 35. 目录收敛到 14 条 + 非 agnes 默认尺寸统一为 10 个比例（2026-10-12）
+
+用户两条要求：① 供应商列表**只保留 13 家具名厂商**（阿里云百炼 / 火山方舟 / 商汤 / 腾讯云 /
+Agnes AI / AIHubMix / Anthropic / Google AI / Ofox / OpenAI / OpenRouter / ShareLLM 国际 / SiliconFlow）；
+② **除 agnes 外**，所有厂商的**默认出图尺寸统一为 10 个比例**（`1:1、2:3、3:2、3:4、4:3、4:5、5:4、9:16、16:9、21:9`），
+"**等待后期补充官方文档再修改**"。
+
+两个歧义点问过用户并拿到明确答复：
+- 他列的 13 家里**没有「自定义」** → **保留**（那 13 家是"具名供应商"；「自定义模型 API」tab 也不白做）；
+- 统一尺寸**是否覆盖内置表** → **不覆盖**：gpt-image / DALL·E 3 的**像素尺寸表保留**，只统一"默认"。
+
+### 35.1 目录：20 → 14（13 具名 + custom）
+
+删 `mimo` / `kimi` / `minimax` / `zhipu` / `deepseek` / `sharellm`（**只删国内站 `sharellm`，保留 `sharellm-intl`**）。
+分组变为 official 8 / aggregator 5 / custom 1；`imageCapable` 9 家（`minimax` 随删除消失）。
+**被删的 6 家如果用户配置里已经有，一个字节都不动**（目录变小 ≠ 删配置）；删除处在原位置留了
+`model.ts:<行号>` 与恢复办法的就地注释。
+**目录顺序仍按参考项目的声明顺序**（不是用户消息里的列举顺序）——客户端下拉自己按
+`localeCompare(label,'zh-Hans-CN')` + `custom` 最后排序，所以**界面上的顺序不受影响**。
+
+### 35.2 尺寸：非 agnes 的"默认"统一为那 10 个（临时）
+
+- `DEFAULT_IMAGE_RATIOS`（10 个，顺序照用户给的）；`GEMINI_IMAGE_RATIOS` 改成它的**别名**（不留两份会漂移的清单）。
+- `capabilityFor` 的兜底分支**不再看 `provider.allowedSizes`**，直接用这 10 个 —— 因为用户现有配置里的
+  ofox 只有 5 个：**只改新建/预设的话他明天看到的还是 5 个，等于没做**。代码注释写明这是**临时统一**
+  与恢复办法（按官方文档填准各家 `allowedSizes` 后再改回读配置）。
+- **内置命中仍然优先**：`gpt-image*` / `dall-e-3` → 各自像素表（未被破坏，断言钉住）；Gemini 图像系 → 同一份 10 个。
+- `defaultOfoxProvider` 与两个新建草稿（目录 / 自定义）的 `allowedSizes` 都填这 10 个（不再留 `[]`）。
+- **客户端不用改**：设置页「默认尺寸」走宿主的 `sizeOptions`（`sizeOptionsFor`），能力变了它自动跟着变。
+
+### 35.3 顺手关掉的一个"静默给错"窗口（**这次最值得记的一条**）
+
+子智能体发现：从目录**新加 agnes**、在**还没拉取模型**之前（`models: []` → 模型名不命中内置 `/agnes/i`），
+它的尺寸候选会落到"统一 10 个"上 → 出现 agnes 官方**并不支持**的 `4:5`/`5:4`。
+这**不只是候选多两个**：`checkSize` 会**放行**，适配器再把它就近映射成别的比例 —— 正是我们一路在消灭的
+**静默给错**。
+
+解法不是"把官方表抄进配置"（那违反 §31 的纪律），而是：**agnes 的内置能力改成按 `dialect === 'agnes'` 命中**
+（新增 `dialectSuffices` + `matchesBuiltin()`）。理由：`dialect === 'agnes'` 意味着走的就是 agnes 适配器，
+其尺寸语义（档位 + 官方 8 比例 / 32 精确尺寸）**与模型名无关**。效果：新建的 agnes **立刻**就是官方 40 项候选、
+`4:5` 被拒、`2048x2048` 仍 → `2K + 1:1`（有回归断言）。
+
+### 35.4 老断言改动（逐条，无删除、无放宽）
+
+`test/catalog.test.mjs`：`EXPECTED_IDS` 20→14、条数 20→14（并新增"13 具名 + 1 custom"拆分断言）、
+分组计数 `{13,6,1}`→`{8,5,1}`、`IMAGE_CAPABLE_IDS` 去掉 `minimax`（10→9）、`catalogView` 长度、
+两处 `providerFromCatalog`/`providerFromCustom` 的 `allowedSizes: []` → `DEFAULT_IMAGE_RATIOS`；
+**新增**：被删 6 家 `findCatalogEntry === undefined`、`sharellm-intl` 必须在、剩余 13 家一家不少。
+`test/vendor.test.mjs`：**无老断言被改**，新增 4 条（10 个字面量+顺序、`sizeOptionsFor` 恰好 10 且
+label==value〔夹具 `allowedSizes:['1:1']` 证明"配置说了不算"〕、`4:5/5:4/2:3/21:9` 放行而 `3:1/7:3` 拒绝、
+`gpt-image-1` 仍 `1:1→1024x1024`）。
+`test/agnes.test.mjs`：**现有断言一行未改**；新增一条按方言命中的回归断言（`{dialect:'agnes', models:[], allowedSizes:[]}`
+× 三种模型名 → 候选 40、不含 `4:5`/`5:4`、`4:5` 拒绝）。
+`test/providers-api.test.mjs`（**Lead 批准的写域扩展**）：6 条红逐条改成新规格 ——
+`sizeOptions` 由 2 项→10 项（**这正是 B 的正效果**：夹具故意只有 2 个，正好证明"配置说了不算"）、
+两处 `catalog.length` 20→14、两处新建 `allowedSizes: []`→10 个（视图 + 盘上）、
+**两处夹具 `catalogId:'kimi'` → 存活 id**（`siliconflow` / `openrouter`，并就地注明"原 kimi 已被移除"）、
+3 处注释的"20 条"。
+
+### 35.5 已知缺口（明说）
+
+1. **客户端测试夹具仍是"20 条含已删 6 家"那一版**（`test/client-settings-dom.test.mjs` 与
+   `test/browser/vendors.test.mjs` 自带 mock 目录）。它们**不会因此变红**（渲染的是注入的 props），
+   但**已经和真宿主目录不一致**（夹具里还有「小米 MiMo」卡片）。**本次未收敛**，留作下一步。
+2. 新建 agnes 的 `allowedSizes` 仍是那 10 个（§B4 明文），但因为有方言命中，**它对判定与候选已无影响**
+   —— 现在只是配置里的一段记录。若要它干脆写官方 8 比例或留空，是另一条决策。
+3. `dialectSuffices` 的语义是"**方言即真相**"：任何 `dialect:'agnes'` 的厂商都无条件吃官方表（哪怕配置里写了别的）。
+
+### 35.6 结果
+
+`pnpm verify` 全绿：宿主 `pnpm test` **465**（§34 的 459 + 6）、浏览器 `pnpm test:browser` **66**（未变）。

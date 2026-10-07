@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { generateImages, resolvePlan, sniffImageMediaType } from '../lib/vendor/openai-compat.js'
-import { checkSize } from '../lib/sizes.js'
+import { DEFAULT_IMAGE_RATIOS, GEMINI_IMAGE_RATIOS, checkSize, sizeOptionsFor } from '../lib/sizes.js'
 import { parseConfig, defaultOfoxProvider, resolveApiKey } from '../lib/config.js'
 import { buildPrompt, substituteVars } from '../lib/prompts/build.js'
 import { getModule, MODULES } from '../lib/prompts/modules.js'
@@ -255,6 +255,101 @@ describe('尺寸能力', () => {
     assert.equal(result.supported, false)
     assert.ok(result.nearest.length > 0)
     assert.ok(result.nearest.length <= 3)
+  })
+
+  // ── 临时统一的「默认出图尺寸」（10 个比例） ────────────────────────────────
+  //
+  // 用户要求：**非 agnes** 的厂商默认能出这 10 个比例；官方文档到位前先统一。
+  // 判定**不看** `config.json` 里的 `allowedSizes`（他现有 ofox 配置里只有 5 个，
+  // 只改新建/预设的话等于没做）——下面第一条夹具就故意只写 `['1:1']`。
+
+  /** 一份"没有内置命中"的厂商：模型名不含 gpt-image / dall-e-3 / gemini…image / agnes。 */
+  function plainProvider(overrides = {}) {
+    return { ...defaultOfoxProvider(), allowedSizes: ['1:1'], ...overrides }
+  }
+
+  it('统一词表就是那 10 个比例，顺序与字面量都钉住（Gemini 表与它是同一份）', () => {
+    assert.deepEqual([...DEFAULT_IMAGE_RATIOS], [
+      '1:1',
+      '2:3',
+      '3:2',
+      '3:4',
+      '4:3',
+      '4:5',
+      '5:4',
+      '9:16',
+      '16:9',
+      '21:9',
+    ])
+    // 不留两份会漂移的清单：Gemini 图像系的比例表就是这一份
+    assert.deepEqual([...GEMINI_IMAGE_RATIOS], [...DEFAULT_IMAGE_RATIOS])
+  })
+
+  it('非 agnes + 无内置命中 → sizeOptionsFor 恰好这 10 个（配置里的 allowedSizes 说了不算）', () => {
+    for (const provider of [
+      plainProvider(), // 方言 ofox（OpenAI 兼容通道）
+      plainProvider({ dialect: 'standard', label: '某中转' }),
+    ]) {
+      const options = sizeOptionsFor({
+        model: 'test-image-model',
+        apiMode: 'images-generations',
+        provider,
+      })
+      assert.deepEqual(
+        options,
+        DEFAULT_IMAGE_RATIOS.map((value) => ({ value, label: value })),
+        `${provider.label} 的候选应是统一的 10 个比例`,
+      )
+      // label 与 value 相同（比例没有档位信息）
+      for (const entry of options) assert.equal(entry.label, entry.value)
+    }
+  })
+
+  it('非 agnes + 无内置命中 → 4:5 / 5:4 / 21:9 放行，3:1 之类仍拒绝', () => {
+    const provider = plainProvider({ dialect: 'standard' })
+
+    for (const size of ['4:5', '5:4', '2:3', '21:9']) {
+      const result = checkSize({
+        model: 'test-image-model',
+        size,
+        apiMode: 'images-generations',
+        provider,
+      })
+      assert.equal(result.supported, true, `${size} 应放行（统一词表里）`)
+      assert.equal(result.capability, `${provider.label} 配置`, '走的应是厂商配置那条能力')
+    }
+
+    for (const size of ['3:1', '7:3']) {
+      const result = checkSize({
+        model: 'test-image-model',
+        size,
+        apiMode: 'images-generations',
+        provider,
+      })
+      assert.equal(result.supported, false, `${size} 不在统一词表里，必须拒绝而不是静默吸附`)
+      assert.ok(result.nearest.length > 0, '拒绝时要给最近邻')
+    }
+  })
+
+  it('统一没有波及内置能力表：gpt-image-1 仍然是像素表（1:1 → 1024x1024）', () => {
+    const result = checkSize({
+      model: 'gpt-image-1',
+      size: '1:1',
+      apiMode: 'images-generations',
+      provider: plainProvider(),
+    })
+    assert.equal(result.supported, true)
+    assert.equal(result.normalized, '1024x1024')
+    assert.equal(result.capability, 'gpt-image 系列')
+
+    // 像素表命中时，那 10 个比例**不**参与：4:5 不是 gpt-image 的合法像素
+    const notInPixelTable = checkSize({
+      model: 'gpt-image-1',
+      size: '4:5',
+      apiMode: 'images-generations',
+      provider: plainProvider(),
+    })
+    assert.equal(notInPixelTable.supported, false)
   })
 })
 

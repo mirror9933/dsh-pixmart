@@ -3,16 +3,22 @@
  *
  * ## 出处（**只读转录，绝不修改参考项目**）
  *
- * 全部 20 条逐条转录自参考项目
+ * 各条 `baseUrl` / `label` / `group` 逐字符转录自参考项目
  * `E:\Programs\trae\project\pixmart-ai\src\renderer\src\types\model.ts`
- * 的 `VENDOR_INFO`（第 40–197 行）。每条 `baseUrl` / `label` / `group` 都**逐字符**
- * 与那里一致，并在注释里标了 `model.ts:<行号>` 作为可复核的出处。
+ * 的 `VENDOR_INFO`（第 40–197 行），每条注释里标了 `model.ts:<行号>` 作为可复核的出处。
  *
- * 与参考项目的**两处有意差异**（都不是发明，是任务规格明确要求的）：
- *   1. `custom` 的 group 在参考项目里是 `aggregator`（model.ts:174-178），
- *      在本目录里是 `custom`（= 设置页的「自定义接入」分组）；
- *   2. 参考项目里 3 个 `threed-*`（模型 3D，model.ts:179-196）**不进目录**——
- *      PixMart 只做 2D 生图。因此 23 - 3 = **20 条**。
+ * ## 当前条数：**14 条**（13 家具名厂商 + `custom`）
+ *
+ * 用户决定只保留 13 家具名供应商，本文件据此**删掉 6 条**：`mimo`、`kimi`、`minimax`、
+ * `zhipu`、`deepseek`、`sharellm`（注意 **`sharellm-intl` 保留**）。删除处有就地注释。
+ * 参考项目那 3 个 `threed-*`（3D，model.ts:179-196）同样**不进目录**——PixMart 只做 2D 生图。
+ * 所以参考项目的 23 条 = 13（保留）+ 6（本次删）+ 3（3D）+ 1（`custom` 保留）= 23。
+ *
+ * **目录变小 ≠ 删配置**：用户配置里若已经有被删掉的厂商，本文件/路由都不会去动它，
+ * 只是它不再出现在「添加模型提供商」的候选清单里（`catalogView` 只反映目录）。
+ *
+ * 与参考项目的**一处有意差异**：`custom` 的 group 在参考项目里是 `aggregator`
+ * （model.ts:174-178），在本目录里是 `custom`（= 设置页的「自定义接入」分组）。
  *
  * ## 纪律
  *
@@ -25,9 +31,12 @@
  *     `openai` / `google` 属于 (b) 的前半句（内置能力表有、直连未实测），
  *     `ofox` / `agnes` 才是真被测过（contract-notes §7.4.1 / §25 / §29）。
  *     其余一律 `false` + `note` 写明「生图能力未取证」——**保守标注，不是断言它不能**；
- *   - 本文件是纯数据 + 纯函数：不读盘、不写盘、不发网络、不 import 任何运行时模块
- *     （只有 `import type`），因此 `test/catalog.test.mjs` 可以零副作用地钉住它。
+ *   - 本文件是纯数据 + 纯函数：不读盘、不写盘、不发网络。
+ *     唯一的运行时 import 是 `sizes.ts` 的 `DEFAULT_IMAGE_RATIOS`（统一的默认尺寸词表，
+ *     一份清单，绝不在这里复制第二份），`sizes.ts` 对 `config.ts` 只有 `import type`，
+ *     所以没有环、也没有副作用；`test/catalog.test.mjs` 仍可零副作用地钉住它。
  */
+import { DEFAULT_IMAGE_RATIOS } from './sizes.js'
 import type { Dialect, ProviderConfig } from './config.js'
 
 /** 目录分组：official→「官方 API 接入」/ aggregator→「聚合接入」/ custom→「自定义接入」。 */
@@ -50,10 +59,11 @@ export interface CatalogEntry {
 }
 
 /**
- * 20 家可直接添加的厂商。顺序 = 参考项目 `VENDOR_INFO` 的声明顺序（3D 已剔除）。
+ * 14 家可直接添加的厂商（13 具名 + `custom`）。顺序 = 参考项目 `VENDOR_INFO` 的声明顺序
+ * （3D 与本次删掉的 6 条已剔除），所以"同名的两家谁的注释来自哪一行"一眼可查。
  *
- * 新增厂商进这份清单时**同步**加 `applyFactoryPresets` 的出厂预设（`src/config.ts`）
- * 是本仓库的另一条路径；两者互不影响：目录是"用户主动添加"，出厂预设是"默认就有"。
+ * 出厂预设（`defaultConfig().providers`）当前是**空数组**，与这份目录是两条独立路径：
+ * 目录 = "用户主动添加"，出厂预设 = "默认就有"。往这里加条目不等于出厂就带那家。
  */
 export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
   // ── 官方厂商：直接使用各家官方 API 接入 ─────────────────────────────────────
@@ -130,46 +140,13 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     imageCapable: false,
     note: '腾讯云 TokenHub（OpenAI 兼容）；生图能力未取证',
   },
-  {
-    id: 'mimo', // model.ts:105-109
-    label: '小米 MiMo',
-    baseUrl: 'https://api.xiaomimimo.com/v1',
-    group: 'official',
-    imageCapable: false,
-    note: '小米 MiMo（OpenAI + Anthropic 双协议；mimo-v2.5 支持图像理解）；生图能力未取证',
-  },
-  {
-    id: 'kimi', // model.ts:113-117
-    label: 'Kimi',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    group: 'official',
-    imageCapable: false,
-    note: 'Kimi（kimi-k3/k2.6/k2.7-code 支持视觉理解）；生图能力未取证',
-  },
-  {
-    id: 'minimax', // model.ts:121-125
-    label: 'MiniMax',
-    baseUrl: 'https://api.minimaxi.com/v1',
-    group: 'official',
-    imageCapable: true,
-    note: '参考项目注释（model.ts:118-120）：图片生成 image-01 走 /v1/image_generation（aspect_ratio）；本插件未实测',
-  },
-  {
-    id: 'zhipu', // model.ts:129-133
-    label: '智谱 AI',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    group: 'official',
-    imageCapable: false,
-    note: '智谱 AI / BigModel（GLM 系列走 chat，支持图像理解）；生图能力未取证',
-  },
-  {
-    id: 'deepseek', // model.ts:137-141
-    label: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com',
-    group: 'official',
-    imageCapable: false,
-    note: 'DeepSeek（文本 + 实验性图像理解）；生图能力未取证',
-  },
+  // ── 以下 6 家按用户要求**不再进目录**（2026-10 变更，逐条对应参考项目
+  //    model.ts:105-109 / 113-117 / 121-125 / 129-133 / 137-141 / 154-158）：
+  //      mimo（小米 MiMo）、kimi（Kimi）、minimax（MiniMax）、zhipu（智谱 AI）、
+  //      deepseek（DeepSeek）、sharellm（ShareLLM，**国内站**；国际站 sharellm-intl 保留）。
+  //    它们仍在参考项目的 VENDOR_INFO 里，只是 PixMart 的「添加模型提供商」不再列出。
+  //    **用户配置里若已有它们，一个字节都不动**（目录变小 ≠ 删配置）。
+  //    将来要恢复某家：把那条按 `model.ts:<行号>` 重新转录回这里即可。
   {
     id: 'agnes', // model.ts:142-146
     label: 'Agnes AI',
@@ -189,15 +166,7 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     note: 'PixMart 出厂预设之一，已实测出图；Gemini 图像模型有 gemini-native 原生路径',
   },
   {
-    id: 'sharellm', // model.ts:154-158
-    label: 'ShareLLM',
-    baseUrl: 'https://sharellm.cn/v1',
-    group: 'aggregator',
-    imageCapable: false,
-    note: 'ShareLLM 共享模型（OpenAI 兼容端点，需创建密钥并充值）；生图能力未取证',
-  },
-  {
-    id: 'sharellm-intl', // model.ts:161-165
+    id: 'sharellm-intl', // model.ts:161-165（保留：同平台的国际站端点）
     label: 'ShareLLM 国际',
     baseUrl: 'https://sharellm.net/v1',
     group: 'aggregator',
@@ -263,8 +232,10 @@ export function catalogView(presentIds: readonly string[]): readonly CatalogEntr
  * 用目录条目造一个**可直接落盘**的 `ProviderConfig`（`POST /providers` 的 payload）。
  *
  * 三条刻意的取值：
- *   1. `models` / `allowedSizes` **留空**——不把任何厂商的模型名或尺寸表抄进目录，
- *      用户走设置页既有的「拉取模型」流程；尺寸由 `sizes.ts` 的内置能力表兜底；
+ *   1. `models` **留空**——不把任何厂商的模型名抄进目录，用户走设置页既有的
+ *      「拉取模型」流程；`allowedSizes` 填**统一的默认词表**
+ *      （`sizes.ts` 的 `DEFAULT_IMAGE_RATIOS`，10 个比例；临时统一，见那里的注释），
+ *      不再留 `[]`——否则读配置的人会以为"这家没配尺寸"；
  *   2. `apiMode: 'images-generations'` + `dialect: entry.dialect ?? 'standard'`：
  *      本插件只做生图，这一组是最通用的起点（用户仍可在设置页改）；
  *   3. `apiKey` / `apiKeyEnv` 都是空串 = "尚未配置"，绝不预填任何密钥或环境变量名。
@@ -281,7 +252,7 @@ export function providerFromCatalog(entry: CatalogEntry): ProviderConfig {
     apiKeyEnv: '',
     apiKey: '',
     models: [],
-    allowedSizes: [],
+    allowedSizes: DEFAULT_IMAGE_RATIOS,
     sizeMode: 'whitelist',
     extraHeaders: {},
     timeoutMs: 180_000,
@@ -307,7 +278,8 @@ export interface CustomProviderInput {
  * 用「自定义厂商」的三个字段造一个**可直接落盘**的 `ProviderConfig`。
  *
  * 与 `providerFromCatalog` 的差别**只有身份字段的来源**（用户填 vs 目录转录）：
- * 分组固定 `custom`、方言固定 `standard`、`models` / `allowedSizes` 留空、
+ * 分组固定 `custom`、方言固定 `standard`、`models` 留空、`allowedSizes` 填统一的默认
+ * 词表（`sizes.ts` 的 `DEFAULT_IMAGE_RATIOS`，与目录新增同一个值）、
  * `geminiNativeBaseUrl` 空串、`timeoutMs` 默认值——这样"自定义接入"和
  * "目录里 custom 那条"落盘后是同一个形状，后续路由/工具不需要区分来源。
  *
@@ -326,7 +298,7 @@ export function providerFromCustom(input: CustomProviderInput): ProviderConfig {
     apiKeyEnv: '',
     apiKey: input.apiKey ?? '',
     models: [],
-    allowedSizes: [],
+    allowedSizes: DEFAULT_IMAGE_RATIOS,
     sizeMode: 'whitelist',
     extraHeaders: {},
     timeoutMs: 180_000,

@@ -13,7 +13,7 @@ import { isAbsolute } from 'node:path'
 
 // `sizes.js` 对 `config.js` 只有 `import type`（编译后不留依赖），所以这条运行时
 // 依赖是单向的，不会形成环。
-import { sizeOptionsFor, type SizeOption } from './sizes.js'
+import { DEFAULT_IMAGE_RATIOS, sizeOptionsFor, type SizeOption } from './sizes.js'
 
 /** 四种调用形态。`gemini-native` 是 Ofox 的 Gemini 图像模型唯一可用路径。 */
 export type ApiMode = 'images-generations' | 'images-edits' | 'chat-image' | 'gemini-native'
@@ -140,7 +140,11 @@ export function defaultOfoxProvider(): ProviderConfig {
       'google/gemini-3.1-pro-preview',
       'openai/gpt-5.5',
     ],
-    allowedSizes: ['1:1', '3:4', '4:3', '9:16', '16:9'],
+    // 临时统一的默认出图尺寸（10 个比例，见 `sizes.ts` 的 `DEFAULT_IMAGE_RATIOS`）。
+    // 注意：**判定用的能力表不是这一份** —— 非 agnes 且无内置命中的厂商一律按那 10 个
+    // 比例校验（`capabilityFor` 有意覆盖配置里的 allowedSizes）。这里同步写全，是为了
+    // 让读配置的人/客户端看到"它默认能出这 10 个"，而不是以为"没配尺寸"。
+    allowedSizes: DEFAULT_IMAGE_RATIOS,
     sizeMode: 'whitelist',
     extraHeaders: {},
     timeoutMs: 180_000,

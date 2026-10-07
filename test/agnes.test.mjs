@@ -25,7 +25,7 @@ import { createServer } from 'node:http'
 
 import { generateImages, resolvePlan } from '../lib/vendor/openai-compat.js'
 import { fetchProviderModels } from '../lib/vendor/models.js'
-import { checkSize, sizeOptionsFor } from '../lib/sizes.js'
+import { agnesSizeSpec, checkSize, sizeOptionsFor } from '../lib/sizes.js'
 import {
   defaultAgnesProvider,
   defaultConfig,
@@ -292,6 +292,52 @@ describe('Agnes 厂商预设', () => {
     })
     assert.equal(result.supported, false)
     assert.ok(result.nearest.length > 0)
+  })
+
+  it('agnes 的能力由**方言**命中，不由模型名：models 为空（还没拉取）也立刻是官方 40 项', () => {
+    // 这次统一改的是**非 agnes** 厂商的默认尺寸词表（`sizes.ts` 的 DEFAULT_IMAGE_RATIOS）。
+    // 边界情形：从「添加模型提供商」新加的 agnes 在**拉取模型之前** `models` 是空的，
+    // 于是 `toProviderView` 传进 `sizeOptionsFor` 的 model 是空串；如果内置 agnes 条目只靠
+    // `/agnes/i` 匹配模型名，就会掉到"统一 10 个比例"的兜底上——候选里冒出 agnes 官方
+    // **不支持**的 `4:5`，而且 `checkSize` 会**放行**它（适配器再就近映射成别的比例）。
+    // 那正是要消灭的"静默给错"。这条钉住：方言一命中就直接用官方表，窗口不存在。
+    const provider = { ...defaultAgnesProvider(), models: [], allowedSizes: [] }
+
+    for (const model of ['', 'whatever-model', 'agnes-image-2.1-flash']) {
+      const options = sizeOptionsFor({ model, apiMode: 'images-generations', provider })
+      assert.equal(options.length, 40, `model="${model}" 时应是 32 精确尺寸 + 8 比例`)
+      assert.equal(
+        options.some((entry) => entry.value === '4:5'),
+        false,
+        'agnes 官方不支持 4:5，候选里绝不能出现',
+      )
+      assert.equal(options.some((entry) => entry.value === '5:4'), false, '5:4 同理')
+      assert.ok(
+        options.some((entry) => entry.value === '2048x2048' && entry.label === '2K · 1:1'),
+        '2K 的像素候选仍在，且带档位标签',
+      )
+
+      // 不支持的比例：**拒绝**，不是静默吸附（方言命中后走的是官方 8 比例）
+      const rejected = checkSize({
+        model,
+        size: '4:5',
+        apiMode: 'images-generations',
+        provider,
+      })
+      assert.equal(rejected.supported, false, `model="${model}" 时 4:5 必须被拒`)
+      assert.equal(rejected.capability, 'Agnes 官方尺寸表')
+
+      // 精确像素仍然保真（档位不能被丢），并解析成 2K + 1:1
+      const pixel = checkSize({
+        model,
+        size: '2048x2048',
+        apiMode: 'images-generations',
+        provider,
+      })
+      assert.equal(pixel.supported, true)
+      assert.equal(pixel.normalized, '2048x2048')
+      assert.deepEqual(agnesSizeSpec(pixel.normalized), { tier: '2K', ratio: '1:1' })
+    }
   })
 })
 

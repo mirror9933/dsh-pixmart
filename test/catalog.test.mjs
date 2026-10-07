@@ -5,16 +5,23 @@
  * `E:\Programs\trae\project\pixmart-ai\src\renderer\src\types\model.ts` 的
  * `VENDOR_INFO`（第 40–197 行，`model.ts:<行号>` 见 `src/catalog.ts` 的注释）。
  *
- * 因此这里的断言分三类：
- *   1. **转录保真**：条数、id 集合、`baseUrl` 逐字符（抽 3 条硬断言 + "除 custom 外全非空 https"）；
+ * **当前是 14 条**（13 家具名厂商 + `custom`）：用户决定只保留 13 家具名供应商，
+ * 因此 20 条那版里的 `mimo` / `kimi` / `minimax` / `zhipu` / `deepseek` / `sharellm`
+ * 六条被删掉（**`sharellm-intl` 保留**）。本文件同时钉住"被删的 6 个 id 不在目录里"
+ * ——目录变小与"用户配置里已有那 6 家"是两件事，后者不归这个文件管。
+ *
+ * 因此这里的断言分四类：
+ *   1. **转录保真**：条数、id 集合与顺序、`baseUrl` 逐字符（抽 3 条硬断言 + "除 custom 外全非空 https"）；
  *   2. **纪律**：`imageCapable` 只能是有据可依的 9 家，其余 `note` 必须写明"生图能力未取证"；
- *      3 个 `threed-*` 不进目录（PixMart 只做 2D）；
- *   3. **视图与草稿**：`catalogView` 的 7 个字段 + `added`；`providerFromCatalog` 的
- *      "空 models / 空 allowedSizes / 不预填密钥"三条；`providerFromCustom`（设置页
- *      「自定义厂商」tab 的草稿）与目录草稿**同形状**，差别只在身份字段。
+ *      3 个 `threed-*` 不进目录（PixMart 只做 2D）；被删的 6 个 id 也必须不在；
+ *   3. **视图**：`catalogView` 的 7 个字段 + `added`；
+ *   4. **草稿**：`providerFromCatalog` / `providerFromCustom` 的
+ *      "空 models / **统一默认尺寸** / 不预填密钥"三条。
  *
  * 注意：测试**不读**参考项目那个路径——把机器相关的绝对路径塞进断言会让用例不可移植；
  * "与参考项目一致"这句话由 `src/catalog.ts` 里的 `model.ts:<行号>` 注释 + 这里的硬断言共同保证。
+ * 统一默认尺寸那 10 个比例的**字面量与顺序**钉在 `test/vendor.test.mjs`（尺寸契约的归属地），
+ * 这里只断言"草稿填的就是 `sizes.ts` 的那份清单"，避免两处字面量各自漂移。
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -26,8 +33,9 @@ import {
   providerFromCatalog,
   providerFromCustom,
 } from '../lib/catalog.js'
+import { DEFAULT_IMAGE_RATIOS } from '../lib/sizes.js'
 
-/** 期望的 20 个 id（顺序 = 目录顺序 = 参考项目声明顺序，3D 已剔除）。 */
+/** 期望的 14 个 id（顺序 = 目录顺序 = 参考项目声明顺序，3D 与本次删掉的 6 条已剔除）。 */
 const EXPECTED_IDS = [
   'openai',
   'anthropic',
@@ -38,20 +46,17 @@ const EXPECTED_IDS = [
   'volcengine',
   'bailian',
   'tencent',
-  'mimo',
-  'kimi',
-  'minimax',
-  'zhipu',
-  'deepseek',
   'agnes',
   'ofox',
-  'sharellm',
   'sharellm-intl',
   'sensenova',
   'custom',
 ]
 
-/** 已取证能出图的 10 家（其余是"保守标注"，见 src/catalog.ts 文件头纪律）。
+/** 用户要求**不再进目录**的 6 家（顺序照参考项目声明顺序）。 */
+const REMOVED_IDS = ['mimo', 'kimi', 'minimax', 'zhipu', 'deepseek', 'sharellm']
+
+/** 已取证能出图的 9 家（其余是"保守标注"，见 src/catalog.ts 文件头纪律）。
  *  顺序 = **目录顺序**（下面那条 `assert.deepEqual` 是按顺序比对的）。 */
 const IMAGE_CAPABLE_IDS = [
   'openai',
@@ -60,15 +65,19 @@ const IMAGE_CAPABLE_IDS = [
   'siliconflow',
   'volcengine',
   'bailian',
-  'minimax',
   'agnes',
   'ofox',
   'sensenova',
 ]
 
 describe('厂商目录：转录保真', () => {
-  it('20 条、id 集合与顺序与参考项目 VENDOR_INFO 一致（3D 已剔除）', () => {
-    assert.equal(PROVIDER_CATALOG.length, 20)
+  it('14 条（13 具名 + custom）、id 集合与顺序与保留清单一致', () => {
+    assert.equal(PROVIDER_CATALOG.length, 14)
+    assert.equal(
+      PROVIDER_CATALOG.filter((entry) => entry.group !== 'custom').length,
+      13,
+      '13 家具名厂商',
+    )
     assert.deepEqual(
       PROVIDER_CATALOG.map((entry) => entry.id),
       EXPECTED_IDS,
@@ -80,6 +89,17 @@ describe('厂商目录：转录保真', () => {
     )
     // custom（自定义接入）必须**在**目录里
     assert.ok(findCatalogEntry('custom'))
+  })
+
+  it('被删的 6 家不在目录里，而 sharellm-intl 必须留下（只删 sharellm，不删国际站）', () => {
+    for (const id of REMOVED_IDS) {
+      assert.equal(findCatalogEntry(id), undefined, `${id} 不该再出现在目录里`)
+    }
+    // 反向断言：不能把"删 6 家"做成"删掉 sharellm 那一对"
+    assert.ok(findCatalogEntry('sharellm-intl'), 'sharellm-intl 必须保留')
+    assert.equal(findCatalogEntry('sharellm-intl').baseUrl, 'https://sharellm.net/v1')
+    // 剩下的也不该被误删
+    for (const id of EXPECTED_IDS) assert.ok(findCatalogEntry(id), `${id} 不该被删`)
   })
 
   it('id 不重复，label / note 都是非空字符串', () => {
@@ -121,7 +141,7 @@ describe('厂商目录：转录保真', () => {
     }
   })
 
-  it('分组：official 13 / aggregator 6 / custom 1，且 custom 那条就是「自定义接入」', () => {
+  it('分组：official 8 / aggregator 5 / custom 1，且 custom 那条就是「自定义接入」', () => {
     const counts = { official: 0, aggregator: 0, custom: 0 }
     for (const entry of PROVIDER_CATALOG) {
       assert.ok(
@@ -130,7 +150,7 @@ describe('厂商目录：转录保真', () => {
       )
       counts[entry.group] += 1
     }
-    assert.deepEqual(counts, { official: 13, aggregator: 6, custom: 1 })
+    assert.deepEqual(counts, { official: 8, aggregator: 5, custom: 1 })
     assert.equal(findCatalogEntry('custom').group, 'custom')
   })
 
@@ -145,11 +165,15 @@ describe('厂商目录：转录保真', () => {
 })
 
 describe('厂商目录：imageCapable 的纪律', () => {
-  it('只有已取证的 10 家是 true，其余全是 false', () => {
+  it('只有已取证的 9 家是 true，其余全是 false（被删的 minimax 不再是任何清单的一员）', () => {
     const capable = PROVIDER_CATALOG.filter((entry) => entry.imageCapable).map(
       (entry) => entry.id,
     )
     assert.deepEqual(capable, IMAGE_CAPABLE_IDS)
+    // 反面：被删的 6 家一个都不在 capable 清单里（minimax 原本是 true）
+    for (const id of REMOVED_IDS) {
+      assert.equal(IMAGE_CAPABLE_IDS.includes(id), false, `${id} 已删，不该还留在 imageCapable 清单里`)
+    }
 
     const notCapable = PROVIDER_CATALOG.filter((entry) => !entry.imageCapable).map(
       (entry) => entry.id,
@@ -172,9 +196,9 @@ describe('厂商目录：imageCapable 的纪律', () => {
 })
 
 describe('catalogView / findCatalogEntry', () => {
-  it('catalogView：20 条、字段正好 7 个、added 按传入的 id 集合算', () => {
+  it('catalogView：14 条、字段正好 7 个、added 按传入的 id 集合算', () => {
     const view = catalogView(['ofox', 'agnes'])
-    assert.equal(view.length, 20)
+    assert.equal(view.length, 14)
     for (const entry of view) {
       assert.deepEqual(Object.keys(entry).sort(), [
         'added',
@@ -212,7 +236,7 @@ describe('catalogView / findCatalogEntry', () => {
 })
 
 describe('providerFromCatalog：新增厂商的草稿', () => {
-  it('转录目录的身份字段，models / allowedSizes 留空，不预填任何密钥', () => {
+  it('转录目录的身份字段，models 留空、allowedSizes 是统一默认词表，不预填任何密钥', () => {
     const entry = findCatalogEntry('bailian')
     const draft = providerFromCatalog(entry)
 
@@ -227,7 +251,7 @@ describe('providerFromCatalog：新增厂商的草稿', () => {
       apiKeyEnv: '',
       apiKey: '',
       models: [],
-      allowedSizes: [],
+      allowedSizes: DEFAULT_IMAGE_RATIOS,
       sizeMode: 'whitelist',
       extraHeaders: {},
       timeoutMs: 180_000,
@@ -243,11 +267,18 @@ describe('providerFromCatalog：新增厂商的草稿', () => {
     assert.equal(custom.dialect, 'standard')
   })
 
-  it('目录里没有模型名 / 不抄任何厂商尺寸表：每个草稿的 models 与 allowedSizes 都是空数组', () => {
+  it('目录里没有模型名；尺寸一律是那 10 个统一比例（不再留空 allowedSizes）', () => {
     for (const entry of PROVIDER_CATALOG) {
       const draft = providerFromCatalog(entry)
       assert.deepEqual(draft.models, [], `${entry.id} 不该带默认模型`)
-      assert.deepEqual(draft.allowedSizes, [], `${entry.id} 不该带默认尺寸表`)
+      // 与 `sizes.ts` 的同一份清单（字面量与顺序钉在 test/vendor.test.mjs）
+      assert.deepEqual(
+        draft.allowedSizes,
+        DEFAULT_IMAGE_RATIOS,
+        `${entry.id} 的 allowedSizes 应是统一默认词表`,
+      )
+      assert.equal(draft.allowedSizes.includes('4:5'), true, '统一词表含 4:5')
+      assert.equal(draft.allowedSizes.includes('5:4'), true, '统一词表含 5:4')
       assert.equal(draft.apiKey, '', `${entry.id} 不该预填密钥`)
       assert.equal(draft.apiKeyEnv, '', `${entry.id} 不该预填环境变量名`)
     }
@@ -255,7 +286,7 @@ describe('providerFromCatalog：新增厂商的草稿', () => {
 })
 
 describe('providerFromCustom：自定义厂商的草稿', () => {
-  it('身份字段来自用户输入，其余与目录草稿同形状（group=custom / standard / 空 models）', () => {
+  it('身份字段来自用户输入，其余与目录草稿同形状（group=custom / standard / 空 models / 统一尺寸）', () => {
     assert.deepEqual(
       providerFromCustom({
         id: 'my-relay',
@@ -273,7 +304,7 @@ describe('providerFromCustom：自定义厂商的草稿', () => {
         apiKeyEnv: '',
         apiKey: '',
         models: [],
-        allowedSizes: [],
+        allowedSizes: DEFAULT_IMAGE_RATIOS,
         sizeMode: 'whitelist',
         extraHeaders: {},
         timeoutMs: 180_000,

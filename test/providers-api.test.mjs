@@ -14,7 +14,7 @@
  *      非环回来源 → 403；
  *   7. **写后重取**：`GET api/providers` 必须立刻反映刚写入的值（用真实 runtime，
  *      钉住"config() 吃首次读盘快照"这个实测缺陷）。
- *   8. `GET /providers` 的只读 `catalog`（20 条目录 + 真实 `added`）；
+ *   8. `GET /providers` 的只读 `catalog`（14 条目录 = 13 具名 + `custom`，+ 真实 `added`）；
  *   9. `POST /providers`（新增：目录 `catalogId` / 自定义 `custom` 二选一 + 可选
  *      `baseUrl` 覆盖 + 可选 `apiKey`）与 `POST /providers/<id>/delete`（移除）：
  *      落盘 / 409 / 400 / 404、默认厂商被删后的改写、
@@ -37,6 +37,7 @@ import { join } from 'node:path'
 
 import { ConfigStore } from '../lib/store/config-store.js'
 import { defaultAgnesProvider } from '../lib/config.js'
+import { DEFAULT_IMAGE_RATIOS } from '../lib/sizes.js'
 import { createRuntime } from '../lib/tools/runtime.js'
 import { registerRoutes } from '../lib/routes.js'
 
@@ -886,7 +887,9 @@ describe('POST /pixmart/api/providers/<id>/test', () => {
 // ── defaults ─────────────────────────────────────────────────────────────────
 
 describe('GET /pixmart/api/providers：尺寸选项由宿主出词表（UI 不自己拼）', () => {
-  it('厂商配置的尺寸 → {value,label}（非官方表内取值，标签即原值）', async () => {
+  it('非 agnes 厂商：候选 = 统一的 10 个比例（配置里的 allowedSizes 说了不算）', async () => {
+    // 夹具刻意只声明 2 个比例（用户现有 ofox 配置里只有 5 个）。临时统一的默认尺寸
+    // **不看** `allowedSizes`——否则"统一"对老配置等于没做，他明天看到的还是旧的那几个。
     const { dir, store } = makeStore({ allowedSizes: ['1:1', '3:4'], models: [] })
     try {
       const webServer = makeFakeWebServer()
@@ -896,8 +899,22 @@ describe('GET /pixmart/api/providers：尺寸选项由宿主出词表（UI 不�
       assert.equal(result.status, 200)
       assert.deepEqual(result.json.providers[0].sizeOptions, [
         { value: '1:1', label: '1:1' },
+        { value: '2:3', label: '2:3' },
+        { value: '3:2', label: '3:2' },
         { value: '3:4', label: '3:4' },
+        { value: '4:3', label: '4:3' },
+        { value: '4:5', label: '4:5' },
+        { value: '5:4', label: '5:4' },
+        { value: '9:16', label: '9:16' },
+        { value: '16:9', label: '16:9' },
+        { value: '21:9', label: '21:9' },
       ])
+      // 比例项的 label 就是 value（没有档位信息）
+      for (const option of result.json.providers[0].sizeOptions) {
+        assert.equal(option.label, option.value)
+      }
+      // 只是**判定**被统一：配置里的 allowedSizes 原样回传，不被写回/改写
+      assert.deepEqual(result.json.providers[0].allowedSizes, ['1:1', '3:4'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -1118,7 +1135,7 @@ describe('写路由的方法与请求体约束', () => {
 // 出厂清单现在是空的，`load()` 一个厂商都不会补），所以每个用例开始时是 `['ofox', 'agnes']`。
 
 describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
-  it('catalog 20 条，added 按当前配置算（ofox / agnes 已添加）', async () => {
+  it('catalog 14 条（13 具名 + custom），added 按当前配置算（ofox / agnes 已添加）', async () => {
     const { dir, store } = makeStore()
     try {
       const webServer = makeFakeWebServer()
@@ -1127,7 +1144,7 @@ describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
       const result = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
 
       assert.equal(result.status, 200)
-      assert.equal(result.json.catalog.length, 20)
+      assert.equal(result.json.catalog.length, 14)
       const byId = new Map(result.json.catalog.map((entry) => [entry.id, entry]))
 
       // 目录里 custom 的 baseUrl 是空串（由用户自填）；bailian 的地址逐字符正确
@@ -1137,7 +1154,7 @@ describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
       assert.equal(byId.get('bailian').imageCapable, true)
       assert.equal(typeof byId.get('bailian').note, 'string')
 
-      // added 是**真实**的：夹具里有 ofox，load 又补了 agnes
+      // added 是**真实**的：夹具里种了 ofox + agnes 两家
       assert.deepEqual(
         result.json.providers.map((provider) => provider.id),
         ['ofox', 'agnes'],
@@ -1146,6 +1163,11 @@ describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
       assert.equal(byId.get('agnes').added, true)
       assert.equal(byId.get('bailian').added, false)
       assert.equal(byId.get('threed-tripo'), undefined, '3D 厂商不该出现在目录里')
+      // 用户要求不再列出的 6 家：目录里一个都不能有（配置里有它们才另说）
+      for (const removed of ['mimo', 'kimi', 'minimax', 'zhipu', 'deepseek', 'sharellm']) {
+        assert.equal(byId.get(removed), undefined, `${removed} 不该再出现在目录里`)
+      }
+      assert.ok(byId.get('sharellm-intl'), 'sharellm-intl 必须保留（只删了国内站）')
 
       // 目录是只读的纯数据：响应体里既没有密钥本体，也没有 apiKey 字段
       assert.equal(/"apiKey"\s*:/.test(result.body), false)
@@ -1177,9 +1199,10 @@ describe('POST /pixmart/api/providers（从目录新增）', () => {
       assert.equal(added.json.provider.dialect, 'standard')
       assert.equal(added.json.provider.apiMode, 'images-generations')
       assert.equal(added.json.provider.hasApiKey, false)
-      // 新增厂商是**空壳**：不带默认模型、不带尺寸表（用户接着去拉取）
+      // 新增厂商**不带默认模型**（用户接着去拉取）；尺寸是**统一的默认词表**
+      // （10 个比例），不再留 `[]`——否则读配置的人会以为"这家没配尺寸"。
       assert.deepEqual(added.json.provider.models, [])
-      assert.deepEqual(added.json.provider.allowedSizes, [])
+      assert.deepEqual(added.json.provider.allowedSizes, DEFAULT_IMAGE_RATIOS)
       // 新增厂商**不改**默认值
       assert.deepEqual(added.json.defaults, defaultsBefore)
       assert.deepEqual(store.get().defaults, defaultsBefore)
@@ -1457,7 +1480,7 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
       assert.equal(view.dialect, 'standard')
       assert.equal(view.apiMode, 'images-generations')
       assert.deepEqual(view.models, [])
-      assert.deepEqual(view.allowedSizes, [])
+      assert.deepEqual(view.allowedSizes, DEFAULT_IMAGE_RATIOS)
       assert.equal(view.geminiNativeBaseUrl, '')
       assert.equal(view.hasApiKey, false)
       assert.equal(view.timeoutMs, 180_000)
@@ -1475,7 +1498,7 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
         apiKeyEnv: '',
         apiKey: '',
         models: [],
-        allowedSizes: [],
+        allowedSizes: DEFAULT_IMAGE_RATIOS,
         sizeMode: 'whitelist',
         extraHeaders: {},
         timeoutMs: 180_000,
@@ -1486,8 +1509,8 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
         listed.json.providers.map((provider) => provider.id),
         ['ofox', 'agnes', 'my-relay'],
       )
-      // 自定义 id 不在目录里 → catalog 仍是 20 条，不硬塞进去
-      assert.equal(listed.json.catalog.length, 20)
+      // 自定义 id 不在目录里 → catalog 仍是 14 条，不硬塞进去
+      assert.equal(listed.json.catalog.length, 14)
       assert.equal(
         listed.json.catalog.some((entry) => entry.id === 'my-relay'),
         false,
@@ -1705,7 +1728,7 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
       })
 
       assert.equal(added.status, 200)
-      assert.equal(added.json.catalog.length, 20)
+      assert.equal(added.json.catalog.length, 14)
       assert.equal(added.json.catalog.find((entry) => entry.id === 'sensenova').added, true)
       assert.deepEqual(
         added.json.catalog
@@ -1716,10 +1739,11 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
       )
 
       // 连着加第二家：catalog 的 added 跟着更新
+      // （夹具用 `siliconflow`：它仍在目录里；原先这里的 `kimi` 已被用户从目录移除）
       const second = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
-        body: { catalogId: 'kimi' },
+        body: { catalogId: 'siliconflow' },
       })
-      assert.equal(second.json.catalog.find((entry) => entry.id === 'kimi').added, true)
+      assert.equal(second.json.catalog.find((entry) => entry.id === 'siliconflow').added, true)
       assert.equal(second.json.catalog.find((entry) => entry.id === 'sensenova').added, true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -2101,8 +2125,10 @@ describe('POST /pixmart/api/providers（创建时可选 models）', () => {
       assert.deepEqual(readDiskConfig(dir).providers.at(-1).models, ['x', 'y'])
 
       // 全是空白 / 空数组 → 当作没传：落盘仍是空数组，不报错
+      // （夹具用 `openrouter`：它仍在目录里；原先这里的 `kimi` 已被用户从目录移除，
+      //   且不能与下面那句 `tencent` 重名——那家随后还要新建一次）
       const blank = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
-        body: { catalogId: 'kimi', models: ['', '   '] },
+        body: { catalogId: 'openrouter', models: ['', '   '] },
       })
       assert.equal(blank.status, 200)
       assert.deepEqual(blank.json.provider.models, [])
@@ -2328,7 +2354,7 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
       assert.deepEqual(second.json.providers, [])
       assert.equal(second.json.defaults.provider, '')
       assert.equal(second.json.defaults.model, '')
-      // 目录全部回到 added:false（20 条一家不剩）
+      // 目录全部回到 added:false（14 条一家不剩）
       assert.equal(second.json.catalog.filter((entry) => entry.added).length, 0)
 
       const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))

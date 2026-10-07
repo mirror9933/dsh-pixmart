@@ -23,6 +23,16 @@ export interface SizeCapability {
   readonly match: RegExp
   /** 只对该方言生效；省略表示不限方言。 */
   readonly dialect?: Dialect
+  /**
+   * **方言命中即生效**（不再要求 `match` 命中模型名）。仅对同时设了 `dialect` 的条目有意义。
+   *
+   * 为什么需要它：agnes 的尺寸语义（档位 + 官方 8 比例 / 32 精确尺寸）由**方言**决定，
+   * 与模型叫什么无关。而从「添加模型提供商」新建的 agnes 在**拉取模型之前** `models` 是空的
+   * ——`toProviderView` 传进来的 `model` 就是空串，只靠 `/agnes/i` 正则必然漏掉它，
+   * 于是掉到"统一 10 个比例"的兜底上：候选里冒出一个 agnes 官方并不支持的 `4:5`，
+   * 而且 `checkSize` 会**放行**它、适配器再就近映射成别的比例——这正是要消灭的"静默给错"。
+   */
+  readonly dialectSuffices?: boolean
   readonly label: string
   readonly mode: SizeMode
   /** 声明的允许取值（比例与像素可以混排，各按各的格式比对）。 */
@@ -36,8 +46,23 @@ export interface SizeCapability {
   readonly forms: readonly SizeForm[]
 }
 
-/** Gemini 图像系官方支持的 10 种比例（P0 从参考项目只读取证，方案 §7.4.1）。 */
-export const GEMINI_IMAGE_RATIOS: readonly string[] = [
+/**
+ * **全插件统一的「默认出图比例」10 个**（顺序即设置页下拉框的顺序）。
+ *
+ * ⚠️ 这是**临时统一**（用户决策，原话「等待后期补充官方文档再修改」）：
+ * 除 agnes 与内置像素表命中的厂商外，**所有厂商的出图尺寸就是这 10 个比例**，
+ * 与它 `config.json` 里的 `allowedSizes` 无关（见 `capabilityFor`）。
+ *
+ * 为什么连"用户老配置里的 `allowedSizes`"也一起覆盖：用户现有 ofox 配置里只声明了
+ * 5 个比例（老出厂预设写的）。若只在新建厂商/出厂预设里改，他明天打开设置页看到的
+ * 还是那 5 个——等于没做。所以能力表由代码说了算。
+ *
+ * **恢复办法（拿到官方文档后）**：把各家的 `allowedSizes` 按官方文档填准，然后删掉
+ * `capabilityFor` 里那段"临时统一"分支（改回 `sizes: provider.allowedSizes`），
+ * 能力就回到以配置为准。届时若 Gemini 官方比例与这份清单不同，把
+ * `GEMINI_IMAGE_RATIOS` 从别名换成独立字面量即可。
+ */
+export const DEFAULT_IMAGE_RATIOS: readonly string[] = [
   '1:1',
   '2:3',
   '3:2',
@@ -49,6 +74,15 @@ export const GEMINI_IMAGE_RATIOS: readonly string[] = [
   '16:9',
   '21:9',
 ]
+
+/**
+ * Gemini 图像系官方支持的 10 种比例（P0 从参考项目只读取证，方案 §7.4.1）。
+ *
+ * 与 `DEFAULT_IMAGE_RATIOS` **逐项相同**——临时统一期间两份需求恰好重合，
+ * 因此这里直接引用同一份清单，**绝不留两份会各自漂移的字面量**。
+ * 将来官方文档若给出不同取值，在这里换成独立字面量（出处注释保留在这）。
+ */
+export const GEMINI_IMAGE_RATIOS: readonly string[] = DEFAULT_IMAGE_RATIOS
 
 /** gpt-image 系列的 3 种像素 + auto。 */
 const GPT_IMAGE_SIZES: readonly string[] = ['1024x1024', '1536x1024', '1024x1536']
@@ -132,8 +166,15 @@ export const SIZE_CAPABILITIES: readonly SizeCapability[] = [
     // agnes 的尺寸能力**不依赖 config.json 里的 allowedSizes**：出厂预设后来才加上
     // 像素表时，老配置不会自动更新（`applyFactoryPresets` 只补厂商、不改字段），
     // 结果就是"代码改了、用户那边不生效"。官方表放内置能力里，谁的配置都算数。
+    //
+    // 也**不依赖模型名**（`dialectSuffices`，2026-10 修）：从目录新加 agnes 时
+    // `models: []`、模型名是空串，只认正则会漏掉它并掉到"统一 10 个比例"的兜底上，
+    // 于是 `4:5` 这种 agnes 官方不支持的尺寸会被放行。`dialect === 'agnes'` 就意味着
+    // 走 agnes 适配器、走「档位 + 比例」那套语义，与模型叫什么无关。
+    // 官方表仍然**只存在于本文件**，不抄进配置（task-3 §3 的纪律）。
     match: /agnes/i,
     dialect: 'agnes',
+    dialectSuffices: true,
     label: 'Agnes 官方尺寸表',
     mode: 'whitelist',
     sizes: AGNES_ALLOWED_SIZES,
@@ -314,21 +355,48 @@ function normalizeTo(size: string, form: SizeForm): string | undefined {
   return undefined
 }
 
+/**
+ * 内置能力条目是否命中这个「模型名 + 方言」。
+ *
+ * 规则（顺序即优先级）：
+ *   1. 条目带 `dialect` 时，**方言必须相同**，否则不适用；
+ *   2. `dialectSuffices: true` 的条目（agnes）方言相同即命中，**不看模型名**
+ *      —— 尺寸语义由方言决定，模型名可以是空串（还没拉取模型）；
+ *   3. 其余条目按 `match` 正则匹配模型名。
+ */
+function matchesBuiltin(entry: SizeCapability, model: string, dialect: Dialect): boolean {
+  if (entry.dialect !== undefined && entry.dialect !== dialect) return false
+  if (entry.dialectSuffices === true) return true
+  return entry.match.test(model)
+}
+
 /** 选出适用于该模型/厂商的能力条目（内置优先，其次厂商配置）。 */
 function capabilityFor(input: SizeCapabilityQuery): SizeCapability {
-  const builtin = SIZE_CAPABILITIES.find(
-    (entry) =>
-      entry.match.test(input.model) &&
-      (entry.dialect === undefined || entry.dialect === input.provider.dialect),
+  const builtin = SIZE_CAPABILITIES.find((entry) =>
+    matchesBuiltin(entry, input.model, input.provider.dialect),
   )
   if (builtin !== undefined) return builtin
 
   const { provider } = input
+  /**
+   * ⚠️ **临时统一的默认出图尺寸**（见 `DEFAULT_IMAGE_RATIOS` 的注释）。
+   *
+   * 走到这里说明：既不是内置能力表命中的模型（gpt-image / DALL·E 3 / Gemini 图像系），
+   * 也**不是 agnes**（agnes 由上面的条目按方言命中，与模型名无关）。此时尺寸能力
+   * **固定为那 10 个比例**，`provider.allowedSizes` 只作参考、**不参与判定**——理由见
+   * 常量注释（用户老配置里只有 5 个，只改新建/预设等于没做）。
+   *
+   * `mode` 仍取 `provider.sizeMode`：`free` / `exact` 是用户显式选择的行为，
+   * 这次统一的只是"默认尺寸词表"，不是校验模式。
+   *
+   * 恢复办法：拿到官方文档后给各家填准 `allowedSizes`，把这里改回
+   * `sizes: provider.allowedSizes` 即可（同时删掉 `DEFAULT_IMAGE_RATIOS` 的用法）。
+   */
   return {
     match: /.*/,
     label: `${provider.label} 配置`,
     mode: provider.sizeMode,
-    sizes: provider.allowedSizes,
+    sizes: DEFAULT_IMAGE_RATIOS,
     forms: acceptedForms(input.apiMode, provider.dialect),
   }
 }
