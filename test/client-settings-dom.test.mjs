@@ -2948,7 +2948,7 @@ describe('jsdom lane：模型选择面板', () => {
 // ── 作品库导出路径 ───────────────────────────────────────────────────────────
 
 describe('jsdom lane：作品库导出路径卡片', () => {
-  it('渲染当前值与"生成时不再自动复制"的说明；未设置时提示"未设置"', async () => {
+  it('渲染当前值与精简后的说明（三件事实各一次）；未设置时提示"未设置"', async () => {
     const lane = await createLane({
       respond: () => jsonResponse(providersPayload({ exportDir: 'D:/PixMartExport' })),
     })
@@ -2957,10 +2957,21 @@ describe('jsdom lane：作品库导出路径卡片', () => {
     const input = exportDirInput(lane)
     assert.ok(input, '卡片里应有输入框')
     assert.equal(input.value, 'D:/PixMartExport', '输入框应显示当前 exportDir')
-    // 语义变更的核心说明必须写清：生成不再自动复制，只有点「导出」才会复制
-    assert.ok(lane.text().includes('生成时不再自动复制任何文件'), '必须写明生成时不再自动复制')
-    assert.ok(lane.text().includes('只有你在作品库点「导出」时'), '必须写明只有导出时才复制')
-    assert.ok(lane.text().includes('作品库'), '说明里应指出查看入口')
+    /*
+     * task-20：段落精简成**一句**（「每个事实只说一次」）。三件关键事实一件都不许丢：
+     *   - 不是自动复制 → 「图片只写在插件数据目录」「点「导出」时才复制」；
+     *   - 复制到哪 → `<该路径>/<项目 id>/`；
+     *   - 原件安全 → 「原件始终保留」。
+     */
+    const card = exportDirCard(lane)
+    const text = card.textContent ?? ''
+    assert.ok(
+      text.includes('图片只写在插件数据目录'),
+      '必须写明图片只写在插件数据目录（"不是自动复制"这条事实）',
+    )
+    assert.ok(text.includes('点「导出」时才复制到'), '必须写明只有点「导出」时才复制')
+    assert.ok(text.includes('<该路径>/<项目 id>/'), '必须写明复制到哪')
+    assert.ok(text.includes('（原件始终保留）'), '必须写明原件始终保留')
     assert.equal(lane.text().includes('未设置'), false, '已设置时不该显示"未设置"')
 
     // 未设置（宿主回空串）时：输入框为空，标记为未设置
@@ -2970,7 +2981,60 @@ describe('jsdom lane：作品库导出路径卡片', () => {
     await empty.render()
     assert.equal(exportDirInput(empty).value, '')
     assert.ok(empty.text().includes('未设置'))
-    assert.ok(empty.text().includes('导出按钮会提示你先来这里填'), '未配置时要说明导出按钮的行为')
+    // 「留空 = 未配置 / 导出按钮会提示你先来这里填」这两句按 task-20 删掉了 —— 未配置这件事
+    // 由上面的 pill `未设置` 表达（那是这条断言的语义替代物，不是放宽）。
+    assert.equal(
+      (exportDirCard(empty).textContent ?? '').includes('留空'),
+      false,
+      '「留空 = 未配置」已经删掉（pill 已在表达）',
+    )
+  })
+
+  it('每个事实只说一次：段落里不再出现「留空 / 未配置」，「<该路径>/<项目 id>/」全卡只出现一次', async () => {
+    /*
+     * 用户这次抱怨的机器化判据（task-20）：同一件事在一张卡里说了四遍。
+     * 这条断言**可证伪**：把重复文案加回去（段落里再写一次「留空 = 未配置」、
+     * 或给字段重新加上那句说明）立刻变红。
+     */
+    const lane = await createLane({
+      respond: () => jsonResponse(providersPayload({ exportDir: '' })),
+    })
+    await lane.render()
+
+    const text = exportDirCard(lane).textContent ?? ''
+    // ① 段落里的重复项：不出现「留空」也不出现「未配置」（"未设置"由 pill 表达，不算）。
+    assert.equal(text.includes('留空'), false, '卡片里不该再出现「留空」：' + JSON.stringify(text))
+    assert.equal(
+      text.includes('未配置'),
+      false,
+      '卡片里不该再出现「未配置」（pill「未设置」已在表达）：' + JSON.stringify(text),
+    )
+    // ② 「复制到哪」这件事整卡只说一次。
+    const occurrences = text.split('<该路径>/<项目 id>/').length - 1
+    assert.equal(
+      occurrences,
+      1,
+      '`<该路径>/<项目 id>/` 在整张卡里必须**只出现一次**（实测 ' + String(occurrences) + ' 次）：' +
+        JSON.stringify(text),
+    )
+    // ③ 段落只剩一句：卡里的段落节点只有一个，且文本就是那一句（逐字）。
+    const paragraphs = [...exportDirCard(lane).querySelectorAll('p')]
+    assert.equal(paragraphs.length, 1, '卡片里只该有一个说明段落')
+    assert.equal(
+      (paragraphs[0].textContent ?? '').trim(),
+      '图片只写在插件数据目录；点「导出」时才复制到 <该路径>/<项目 id>/（原件始终保留）。',
+      '段落必须逐字等于定稿的这一句',
+    )
+    // ④ 字段上不再挂说明（description 已删）——它的内容与段落重复。
+    assert.equal(
+      exportDirCard(lane).querySelector('[data-pxm-editor-field-desc]'),
+      null,
+      '字段说明必须已删除（与段落重复）',
+    )
+    // ⑤ 精简不等于丢信息：三件事实仍然都在（与上一条用例同一组判据）。
+    for (const fact of ['图片只写在插件数据目录', '点「导出」时才复制到', '<该路径>/<项目 id>/', '（原件始终保留）']) {
+      assert.ok(text.includes(fact), '精简后仍必须保留事实：' + fact)
+    }
   })
 
   it('点「保存」→ POST settings/export-dir 带 exportDir，成功后重取 api/providers', async () => {
@@ -3158,7 +3222,7 @@ describe('jsdom lane：作品库导出路径卡片', () => {
     await lane.render()
 
     const input = exportDirInput(lane)
-    // ① 堆叠形态：输入框住在一个 flex-column 的堆叠字段里，标签与说明在它**之上**。
+    // ① 堆叠形态：输入框住在一个 flex-column 的堆叠字段里，标签在它**之上**。
     const field = input.closest('[data-pxm-editor-field]')
     assert.ok(field, '导出路径必须用官方**堆叠式**字段（[data-pxm-editor-field]）')
     assert.equal(
@@ -3168,17 +3232,19 @@ describe('jsdom lane：作品库导出路径卡片', () => {
     )
     const label = field.querySelector('[data-pxm-field-label]')
     assert.ok(label, '堆叠字段必须有标签')
-    assert.ok(
-      (label.textContent ?? '').includes('作品库导出路径（须为绝对路径）'),
-      '标签文案必须原样保留，实测 ' + JSON.stringify(label.textContent),
+    assert.equal(
+      (label.textContent ?? '').trim(),
+      '导出路径（绝对路径）',
+      '标签文案必须是 task-20 定稿的那一串，实测 ' + JSON.stringify(label.textContent),
     )
-    const desc = field.querySelector('[data-pxm-editor-field-desc]')
-    assert.ok(desc, '说明文字必须保留在堆叠字段里')
-    assert.ok(
-      (desc.textContent ?? '').includes('留空 = 未配置'),
-      '说明文案必须原样保留，实测 ' + JSON.stringify(desc.textContent),
+    // task-20：字段说明**已删除**（与段落说的是同一件事）——这里断言它真的不在，
+    // 而不是"没检查"。
+    assert.equal(
+      field.querySelector('[data-pxm-editor-field-desc]'),
+      null,
+      '字段说明必须已删除（task-20：与段落重复）',
     )
-    // 顺序：标签 → 说明 → 控件（文档顺序就是堆叠顺序，列方向里它等价于"由上到下"）。
+    // 顺序：标签 → 控件（文档顺序就是堆叠顺序，列方向里它等价于"由上到下"）。
     const order = [...field.children].map((node) => node.getAttribute('data-pxm-field-label') === '1'
       ? 'label'
       : node.getAttribute('data-pxm-editor-field-desc') === '1'
@@ -3186,7 +3252,11 @@ describe('jsdom lane：作品库导出路径卡片', () => {
         : node.getAttribute('data-pxm-editor-field-control') === '1'
           ? 'control'
           : 'other')
-    assert.deepEqual(order.slice(0, 3), ['label', 'desc', 'control'], '必须是「标签 / 说明 / 控件」自上而下')
+    assert.deepEqual(
+      order.slice(0, 2),
+      ['label', 'control'],
+      '必须是「标签 → 控件」自上而下（说明已删）',
+    )
     // 输入框自己必须是整宽（`inputStyle` 的 width:100%），不再是窄列里的收缩盒。
     assert.equal(input.style.width, '100%', '输入框必须是 width:100%（占满堆叠字段）')
     assert.ok(

@@ -751,17 +751,21 @@ if (launched.browser === null) {
             String(width) + 'px：输入框右边界不得越出卡片内容框（±1）：' +
               JSON.stringify({ input: box.input, content: box.content }),
           )
-          // 堆叠形态：标签 / 说明在输入框**上方**，字段是 column。
+          // 堆叠形态：标签在输入框**上方**，字段是 column。
           assert.equal(box.fieldDirection, 'column', String(width) + 'px：字段必须是 flex-direction:column')
           assert.ok(
             box.label !== null && box.label.bottom <= box.input.top + 1,
             String(width) + 'px：标签必须在输入框上方（堆叠式，而不是左右同排）：' +
               JSON.stringify({ label: box.label, input: box.input }),
           )
-          assert.ok(
-            box.desc !== null && box.desc.top >= box.label.top - 1 && box.desc.bottom <= box.input.top + 1,
-            String(width) + 'px：说明文字必须夹在标签与输入框之间：' +
-              JSON.stringify({ label: box.label, desc: box.desc, input: box.input }),
+          /*
+           * task-20：字段**说明文字已删除**（它与卡片段落说的是同一件事）——
+           * 所以这里断"真的没有"，而不是断"没有重叠"。
+           */
+          assert.equal(
+            box.desc,
+            null,
+            String(width) + 'px：字段说明必须已删除（task-20 精简文案）：' + JSON.stringify(box.desc),
           )
           // 「保存 / 清除」仍在卡片内容框内（位置正常、没被挤出卡片）。
           for (const text of ['保存', '清除']) {
