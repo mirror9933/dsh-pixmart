@@ -5,6 +5,7 @@
  * 校验尺寸、并把最终提示词原样打出来。
  */
 import { findProvider, toProviderView, type PixmartConfig } from '../config.js'
+import { catalogView } from '../catalog.js'
 import { MODULES, getModule } from '../prompts/modules.js'
 import { buildPrompt } from '../prompts/build.js'
 import { checkSize } from '../sizes.js'
@@ -89,6 +90,8 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
       '列出 dsh-pixmart 已配置的厂商、模型、默认值与限制，并说明密钥是否就位。',
       '调用时机：生图前确认用哪家、哪个模型；或排查"为什么报没有密钥"。',
       '不返回任何密钥内容，只返回是否存在。',
+      '返回里的 catalog 是**只读**的厂商目录（20 家可直接添加的厂商 + 各自 added）——',
+      'Agent **不能**新增/移除厂商（本工具没有这类 action），那是设置页「添加模型提供商」的事。',
       TOOL_FOOTER,
     ].join('\n'),
     parameters: {
@@ -109,6 +112,27 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           exportDir: { type: 'string' },
           providerIds: { type: 'array', items: { type: 'string' } },
           warnings: { type: 'array', items: { type: 'string' } },
+          /**
+           * 只读厂商目录（`src/catalog.ts` 的 `catalogView`）：候选厂商 + `added`。
+           * 它**只是数据**——工具没有 action 能改配置，新增/移除都在设置页做。
+           */
+          catalog: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                id: { type: 'string' },
+                label: { type: 'string' },
+                baseUrl: { type: 'string' },
+                group: { type: 'string' },
+                imageCapable: { type: 'boolean' },
+                note: { type: 'string' },
+                added: { type: 'boolean' },
+              },
+              required: ['id', 'label', 'added'],
+            },
+          },
         },
         // 实际值还带 dataDirNotes / limits / 动态的 `provider:<id>`，因此必须开放。
         additionalProperties: true,
@@ -138,6 +162,24 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         if (Array.isArray(value.warnings) && value.warnings.length > 0) {
           lines.push(`注意：${value.warnings.join('；')}`)
         }
+        // 厂商目录：只列**还没添加**的那些。已配置的厂商上面已经逐个列过了，
+        // 这里再列一遍只会把上下文灌满；对"用户想加哪家"这个用途，未添加的才是有用信息。
+        const catalog = Array.isArray(value.catalog) ? value.catalog : []
+        if (catalog.length > 0) {
+          const missingCatalog = catalog.filter(
+            (entry) =>
+              typeof entry === 'object' &&
+              entry !== null &&
+              (entry as Record<string, unknown>).added !== true,
+          )
+          const ids = missingCatalog
+            .map((entry) => String((entry as Record<string, unknown>).id))
+            .join(' / ')
+          lines.push(
+            `厂商目录：共 ${String(catalog.length)} 家，未添加 ${String(missingCatalog.length)} 家：${ids || '（无）'}`,
+          )
+          lines.push('（新增/移除厂商在设置页「添加模型提供商」里做，本工具只读。）')
+        }
         return [textBlock(lines.join('\n'))]
       },
     },
@@ -160,6 +202,9 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
           exportDir: config.exportDir,
           limits: { ...config.limits },
           providerIds: selected.map((p) => p.id),
+          // 只读目录（与 `GET api/providers` 同一份数据、同一个 `catalogView`）：
+          // Agent 据此告诉用户"还有哪几家可加"，但**没有**任何写能力。
+          catalog: catalogView(config.providers.map((p) => p.id)),
         }
         for (const provider of selected) {
           const view = toProviderView(provider)

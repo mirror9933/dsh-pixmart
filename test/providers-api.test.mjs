@@ -14,6 +14,11 @@
  *      非环回来源 → 403；
  *   7. **写后重取**：`GET api/providers` 必须立刻反映刚写入的值（用真实 runtime，
  *      钉住"config() 吃首次读盘快照"这个实测缺陷）。
+ *   8. `GET /providers` 的只读 `catalog`（20 条目录 + 真实 `added`）；
+ *   9. `POST /providers`（从目录新增）与 `POST /providers/<id>/delete`（移除）：
+ *      落盘 / 409 / 400 / 404、默认厂商被删后的改写、
+ *      **删掉出厂预设 ofox 后重新 `load()` 不会把它补回来**（`removedProviders`
+ *      生效，即 docs/contract-notes.md §26.4 老限制的回归断言）、删到一个不剩不崩。
  *
  * **零真实网络**：探测用的 `fetch` 全部是本地 stub（见 `stubFetch`），
  * 且每个用例后还原 `globalThis.fetch`。假 runtime 沿用 `historical.test.mjs` 的写法，
@@ -27,6 +32,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { ConfigStore } from '../lib/store/config-store.js'
+import { defaultConfig } from '../lib/config.js'
 import { createRuntime } from '../lib/tools/runtime.js'
 import { registerRoutes } from '../lib/routes.js'
 
@@ -1009,6 +1015,9 @@ describe('写路由的方法与请求体约束', () => {
     '/pixmart/api/providers/ofox/refresh-models',
     '/pixmart/api/providers/ofox/models',
     '/pixmart/api/providers/ofox/test',
+    // 移除厂商也是写路由（本仓库只有 GET/POST，所以"删除"走 POST）：
+    // GET 打它必须 405，且不得有任何副作用。
+    '/pixmart/api/providers/ofox/delete',
     '/pixmart/api/defaults',
     '/pixmart/api/settings/export-dir',
   ]
@@ -1080,6 +1089,434 @@ describe('写路由的方法与请求体约束', () => {
       assert.equal(result.status, 403)
       assert.equal(result.json.error.code, 'forbidden')
       assert.equal(store.get().defaults.size, '1:1')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── 厂商目录（只读） + 新增 / 移除（写路由） ──────────────────────────────────
+//
+// 目录数据本身由 `test/catalog.test.mjs` 钉住；这里钉的是**路由契约**：
+// `GET /providers` 的 catalog 视图、`POST /providers` 新增、`POST /providers/<id>/delete` 移除。
+// 夹具注意：`makeStore()` 只种了 ofox，而 `ConfigStore.load()` 会把出厂预设 agnes 补进来，
+// 所以每个用例开始时配置里的厂商是 `['ofox', 'agnes']`。
+
+describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
+  it('catalog 20 条，added 按当前配置算（ofox / agnes 已添加）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const result = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+
+      assert.equal(result.status, 200)
+      assert.equal(result.json.catalog.length, 20)
+      const byId = new Map(result.json.catalog.map((entry) => [entry.id, entry]))
+
+      // 目录里 custom 的 baseUrl 是空串（由用户自填）；bailian 的地址逐字符正确
+      assert.equal(byId.get('custom').baseUrl, '')
+      assert.equal(byId.get('custom').group, 'custom')
+      assert.equal(byId.get('bailian').baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+      assert.equal(byId.get('bailian').imageCapable, true)
+      assert.equal(typeof byId.get('bailian').note, 'string')
+
+      // added 是**真实**的：夹具里有 ofox，load 又补了 agnes
+      assert.deepEqual(
+        result.json.providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(byId.get('ofox').added, true)
+      assert.equal(byId.get('agnes').added, true)
+      assert.equal(byId.get('bailian').added, false)
+      assert.equal(byId.get('threed-tripo'), undefined, '3D 厂商不该出现在目录里')
+
+      // 目录是只读的纯数据：响应体里既没有密钥本体，也没有 apiKey 字段
+      assert.equal(/"apiKey"\s*:/.test(result.body), false)
+      assert.equal(result.body.includes(SECRET), false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('POST /pixmart/api/providers（从目录新增）', () => {
+  it('新增 bailian：进 GET 列表、defaults 不变、盘上真的有', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const defaultsBefore = structuredClone(store.get().defaults)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian' },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.ok, true)
+      assert.equal(added.json.provider.id, 'bailian')
+      assert.equal(added.json.provider.label, '阿里云百炼')
+      assert.equal(added.json.provider.group, 'official')
+      assert.equal(added.json.provider.baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+      assert.equal(added.json.provider.dialect, 'standard')
+      assert.equal(added.json.provider.apiMode, 'images-generations')
+      assert.equal(added.json.provider.hasApiKey, false)
+      // 新增厂商是**空壳**：不带默认模型、不带尺寸表（用户接着去拉取）
+      assert.deepEqual(added.json.provider.models, [])
+      assert.deepEqual(added.json.provider.allowedSizes, [])
+      // 新增厂商**不改**默认值
+      assert.deepEqual(added.json.defaults, defaultsBefore)
+      assert.deepEqual(store.get().defaults, defaultsBefore)
+      // 响应里的 catalog 已经把它标成 added
+      assert.equal(added.json.catalog.find((entry) => entry.id === 'bailian').added, true)
+      assert.equal(added.json.catalog.filter((entry) => entry.added).length, 3)
+
+      const listed = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.deepEqual(
+        listed.json.providers.map((provider) => provider.id),
+        ['ofox', 'agnes', 'bailian'],
+      )
+      assert.equal(listed.json.catalog.find((entry) => entry.id === 'bailian').added, true)
+
+      // 盘上真的有（不只是内存副本）
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(
+        onDisk.providers.map((provider) => provider.id),
+        ['ofox', 'agnes', 'bailian'],
+      )
+      assert.equal(
+        onDisk.providers[2].baseUrl,
+        'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      )
+      assert.equal(onDisk.providers[2].dialect, 'standard')
+      assert.deepEqual(onDisk.providers[2].models, [])
+
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(
+        reloaded.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes', 'bailian'],
+      )
+      assert.deepEqual(reloaded.get().providers[2].models, [])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('custom 的 baseUrl 是空串：照样能加（地址由用户随后在设置页填）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'custom' },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.provider.id, 'custom')
+      assert.equal(added.json.provider.baseUrl, '')
+      assert.equal(added.json.provider.group, 'custom')
+      assert.deepEqual(added.json.provider.models, [])
+      // 空 baseUrl 允许落盘（parseConfig 只记 warning，不拒绝）
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.equal(onDisk.providers.at(-1).id, 'custom')
+      assert.equal(onDisk.providers.at(-1).baseUrl, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('重复添加已存在的 id → 409 already_exists，且不覆盖用户已填字段', async () => {
+    const { dir, store } = makeStore({ apiKey: SECRET, models: ['my-image-model'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      // 夹具盘上只有 ofox（agnes 是 load() 在**内存**里补的，还没落盘）：
+      // 被拒的写必须**一个字节都不落**，所以这里拿字节快照比。
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'ofox' },
+      })
+
+      assert.equal(result.status, 409)
+      assert.equal(result.json.ok, false)
+      assert.equal(result.json.error.code, 'already_exists')
+      assert.equal(result.body.includes(SECRET), false, '响应体泄露了密钥')
+
+      // 用户填的字段一个都没被目录里的默认值覆盖
+      const ofox = store.get().providers.find((provider) => provider.id === 'ofox')
+      assert.equal(ofox.apiKey, SECRET)
+      assert.deepEqual(ofox.models, ['my-image-model'])
+      // 内存里没多出一家
+      assert.deepEqual(
+        store.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      // 盘上也没多出一家、且与调用前逐字节相同
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.equal(onDisk.providers.filter((provider) => provider.id === 'ofox').length, 1)
+      assert.deepEqual(
+        onDisk.providers.map((provider) => provider.id),
+        ['ofox'],
+      )
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('未知 / 缺失 / 乱类型 catalogId → 400（unknown_catalog_id / bad_field），且不落盘', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      for (const body of [{ catalogId: 'nope' }, { catalogId: '' }, {}]) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', { body })
+        assert.equal(result.status, 400, `${JSON.stringify(body)} 应被拒`)
+        assert.equal(result.json.ok, false)
+        assert.equal(result.json.error.code, 'unknown_catalog_id')
+      }
+
+      // 非字符串 → 与其余写路由同一套字段校验（bad_field）
+      const bad = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 42 },
+      })
+      assert.equal(bad.status, 400)
+      assert.equal(bad.json.error.code, 'bad_field')
+
+      // 被拒的写入绝不落盘：内存与磁盘都没变
+      assert.deepEqual(
+        store.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
+  it('移除自己添加的厂商：列表与盘上都消失，且不必记进 removedProviders', async () => {
+    const { dir, store } = makeStore({ apiKey: SECRET })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian' },
+      })
+      assert.equal(added.status, 200)
+
+      const removed = await call(
+        webServer,
+        runtime,
+        'POST',
+        '/pixmart/api/providers/bailian/delete',
+      )
+
+      assert.equal(removed.status, 200)
+      assert.equal(removed.json.ok, true)
+      assert.equal(removed.json.removed, 'bailian')
+      assert.deepEqual(
+        removed.json.providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(removed.json.catalog.find((entry) => entry.id === 'bailian').added, false)
+      // 删掉的不是出厂预设 → 不需要记账（记账只针对出厂预设）
+      assert.deepEqual(store.get().removedProviders, [])
+
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(
+        onDisk.providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.deepEqual(onDisk.removedProviders, [])
+      // 其它厂商的字段一个都没动
+      assert.equal(onDisk.providers[0].apiKey, SECRET)
+
+      const listed = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.deepEqual(
+        listed.json.providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(listed.json.catalog.find((entry) => entry.id === 'bailian').added, false)
+
+      // 删完还能从目录再加回来（移除不是"拉黑"）
+      const readded = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian' },
+      })
+      assert.equal(readded.status, 200)
+      assert.deepEqual(
+        readded.json.providers.map((provider) => provider.id),
+        ['ofox', 'agnes', 'bailian'],
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('删的正是默认厂商 → defaults.provider 变成剩余第一个，model 不再指向已删厂商', async () => {
+    // 夹具的 ofox 有模型，于是 parseConfig 把 defaults.model 解析成 'ofox-image-1'
+    const { dir, store } = makeStore({ models: ['ofox-image-1'] })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      assert.equal(store.get().defaults.provider, 'ofox')
+      assert.equal(store.get().defaults.model, 'ofox-image-1')
+
+      const removed = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
+
+      assert.equal(removed.status, 200)
+      const agnesPreset = defaultConfig().providers.find((provider) => provider.id === 'agnes')
+      assert.equal(removed.json.defaults.provider, 'agnes', '默认厂商应变成剩余里的第一个')
+      assert.equal(
+        removed.json.defaults.model,
+        agnesPreset.models[0],
+        '默认模型必须换成新默认厂商的第一个模型',
+      )
+      assert.notEqual(removed.json.defaults.model, 'ofox-image-1')
+      assert.deepEqual(store.get().defaults, removed.json.defaults)
+      // 其余默认值（尺寸 / 张数）不动
+      assert.equal(removed.json.defaults.size, '1:1')
+      assert.equal(removed.json.defaults.n, 1)
+
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.equal(onDisk.defaults.provider, 'agnes')
+      assert.equal(onDisk.defaults.model, agnesPreset.models[0])
+      assert.deepEqual(onDisk.providers.map((provider) => provider.id), ['agnes'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('删掉出厂预设 ofox → 重新 load 不会把它补回来（contract-notes §26.4 老限制回归）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const removed = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
+      assert.equal(removed.status, 200)
+      assert.equal(removed.json.removed, 'ofox')
+
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(
+        onDisk.providers.map((provider) => provider.id),
+        ['agnes'],
+      )
+      assert.ok(
+        onDisk.removedProviders.includes('ofox'),
+        '出厂预设被删必须记账，否则下次 load 会复活',
+      )
+
+      // 关键：**重新 load** —— 这就是下次启动走的路径
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(
+        reloaded.get().providers.map((provider) => provider.id),
+        ['agnes'],
+        'ofox 不得被 applyFactoryPresets 复活',
+      )
+      assert.deepEqual(reloaded.get().removedProviders, ['ofox'])
+
+      // 而且不再出现"已从出厂预设补入厂商"的告警（没有补，就不该报）
+      const fresh = new ConfigStore(dir)
+      const loaded = await fresh.load()
+      assert.equal(
+        loaded.warnings.some((warning) => warning.includes('补入厂商')),
+        false,
+        `不该有补齐告警，实际：${JSON.stringify(loaded.warnings)}`,
+      )
+      assert.equal(loaded.config.providers.some((provider) => provider.id === 'ofox'), false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('删到一个不剩 → defaults.provider === ""、providers 为空，重新 load 仍为空且不崩', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const first = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
+      assert.equal(first.status, 200)
+      assert.equal(first.json.defaults.provider, 'agnes')
+
+      const second = await call(webServer, runtime, 'POST', '/pixmart/api/providers/agnes/delete')
+      assert.equal(second.status, 200)
+      assert.deepEqual(second.json.providers, [])
+      assert.equal(second.json.defaults.provider, '')
+      assert.equal(second.json.defaults.model, '')
+      // 目录全部回到 added:false（20 条一家不剩）
+      assert.equal(second.json.catalog.filter((entry) => entry.added).length, 0)
+
+      const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+      assert.deepEqual(onDisk.providers, [])
+      assert.equal(onDisk.defaults.provider, '')
+      assert.deepEqual([...onDisk.removedProviders].sort(), ['agnes', 'ofox'])
+
+      // 重新 load：不崩、也一家都不补回来（两家都是出厂预设且都记了账）
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(reloaded.get().providers, [])
+      assert.equal(reloaded.get().defaults.provider, '')
+      assert.equal(reloaded.get().defaults.model, '')
+
+      // 再删同一个 id → 404（列表里已经没有它了）
+      const again = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
+      assert.equal(again.status, 404)
+      assert.equal(again.json.error.code, 'unknown_provider')
+      assert.deepEqual(store.get().providers, [])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('未知厂商 → 404 unknown_provider，且不落盘', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ghost/delete')
+
+      assert.equal(result.status, 404)
+      assert.equal(result.json.ok, false)
+      assert.equal(result.json.error.code, 'unknown_provider')
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('删过一个被删过的出厂预设后，再从目录添加它能恢复（removedProviders 被摘掉）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
+      assert.deepEqual(store.get().removedProviders, ['ofox'])
+
+      const readded = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'ofox' },
+      })
+      assert.equal(readded.status, 200)
+      assert.deepEqual(readded.json.providers.map((provider) => provider.id), ['agnes', 'ofox'])
+      assert.deepEqual(store.get().removedProviders, [], '重新添加后不该再留着删除记录')
+
+      // 重新读盘：ofox 在列表里（present 优先），removedProviders 里也没有它
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(
+        reloaded.get().providers.map((provider) => provider.id),
+        ['agnes', 'ofox'],
+      )
+      assert.deepEqual(reloaded.get().removedProviders, [])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

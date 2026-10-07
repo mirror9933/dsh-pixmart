@@ -571,6 +571,59 @@ window.__ModuleLoader__.load({
       modelScrollMaxHeight: '320px',
       // ._3nPmjq_modelEmpty{padding:12px;border-radius:var(--dsw-radius-lg);border:1px dashed …}
       emptyPad: '12px',
+      /*
+       * 「添加模型配置」目录弹窗（2026-10-12）—— 几何 / 字号照抄**用户给的官方截图对应的
+       * 参考实现**（`<refer>/src/renderer/src/pages/Settings.tsx:913-1009` 的面板与网格、
+       * `…/components/shared/VendorCard.tsx:40-139` 的卡片本体）：
+       *   - 面板 `{border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px}`；
+       *   - 标题行 `15px/600` + 右侧三个 8px 步骤圆点（`border-radius:50%`）；
+       *   - 网格 `grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px`
+       *     —— **不是固定 3 列**：截图里那 3 列是"面板 ~960px + 每列最小 280px"算出来的，
+       *     窗口变宽会自动加列、窄屏自动退化到 2 列 / 1 列；
+       *   - 卡片 `{height:70px;border-radius:20px}`；
+       *   - logo 块 `{48×48;border-radius:12px;margin-left:10px}`、
+       *     文本区 `{width:calc(100% - 78px);margin-left:10px}`、
+       *     厂商名 `14px/700`、副标题 `11px;margin:2px 0 0`、角标 `10px/600;padding:2px 8px`。
+       *
+       * 圆角一律走本文件既有的 `S.radius*`（官方 `--dsw-radius-*`，20px 就是 `-xl`），
+       * 不写死 px；其余数值是"照抄参考实现"的 px —— 参考实现改了这些数，本插件**不会**
+       * 自动跟随，只能靠浏览器 lane 的同语义断言变红来提醒（与上面 `S` 的其它条目同理）。
+       */
+      catalogDialogMaxWidth: '960px',
+      catalogDialogPad: '20px',
+      catalogDialogGap: '16px',
+      catalogDialogMaxHeight: '80vh',
+      // 弹窗标题（**不要**叫 `catalogTitle*`：那三个键已经属于卡片里的「模型」区块标题，
+      // 同名会把那一处的 12px/18px 顶掉）。
+      catalogDialogTitleFontSize: '15px',
+      catalogDialogTitleLineHeight: '22px',
+      catalogDialogTitleFontWeight: 600,
+      catalogDialogTitleGap: '10px',
+      catalogStepDotSize: '8px',
+      catalogStepGap: '4px',
+      catalogGridMin: '280px',
+      catalogGridGap: '12px',
+      catalogCardHeight: '70px',
+      catalogCardHoverScale: 'scale(1.05)',
+      catalogCardOpacity: 0.5,
+      catalogLogoSize: '48px',
+      catalogLogoMarginLeft: '10px',
+      catalogLogoFontSize: '14px',
+      catalogLogoFontWeight: 700,
+      catalogTextWidth: 'calc(100% - 78px)',
+      catalogTextMarginLeft: '10px',
+      catalogNameFontSize: '14px',
+      catalogNameFontWeight: 700,
+      catalogSubtitleFontSize: '11px',
+      catalogSubtitleLineHeight: '16px',
+      catalogSubtitleMargin: '2px 0 0',
+      catalogBadgeFontSize: '10px',
+      catalogBadgeLineHeight: '16px',
+      catalogBadgeFontWeight: 600,
+      catalogBadgePad: '2px 8px',
+      catalogEmptyPad: '12px',
+      catalogErrorFontSize: '12px',
+      catalogErrorLineHeight: '18px',
     })
 
     /**
@@ -1643,25 +1696,33 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 虚线「添加模型提供商」（官方 `._3nPmjq_addButton`，`.probe/models-css-pretty.txt:39`）
-     * —— **恒定 disabled**：厂商来自出厂预设，本插件没有"新增厂商"这条写路径
-     * （`docs/contract-notes.md` §26.4 把"添加厂商 UI"明列为**本次不做**的已知限制）。
+     * 虚线「添加模型提供商」（官方 `._3nPmjq_addButton`，`.probe/models-css-pretty.txt:39`）。
      *
-     * 渲染成官方那枚按钮的形态而不是干脆不画，是为了让"这里本该能加"与"为什么加不了"
-     * 都可见：`title` / `aria-label` 就是那句原因（与 readonly 控件的做法一致）。
+     * **2026-10-12：从"恒定 disabled"改成真能点** —— 点击打开「添加模型配置」目录弹窗
+     * （`CatalogDialog`），弹窗里每一家可选厂商就是一张卡片。形态仍是官方那一枚
+     * （`1px dashed` / 44px / `min-width:180px` / `radius-lg` / `border-l3`）：
+     * 变的只是"可点"与点击后发生什么，几何一个像素都没动（浏览器 lane 3.6 钉着）。
+     *
+     * 早先恒 disabled 的理由（"厂商来自出厂预设，本插件没有新增写路径"）现在不成立了：
+     * 宿主有了 `POST api/providers {catalogId}`（task-4 §1 冻结接口）。
+     * `disabled` 只在调用方显式传 `disabled` 时生效（`props.disabled`）。
      */
-    const ADD_VENDOR_UNAVAILABLE = '暂不支持：厂商来自出厂预设（contract-notes §26.4）'
-
-    function AddVendorButton() {
+    function AddVendorButton(props) {
+      const disabled = props.disabled === true
+      const open = props.expanded === true
       return h(
         'button',
         {
           type: 'button',
           className: 'pxm-add-vendor',
           'data-pxm-add-vendor': '1',
-          disabled: true,
-          title: ADD_VENDOR_UNAVAILABLE,
-          'aria-label': ADD_VENDOR_UNAVAILABLE,
+          onClick: props.onClick,
+          disabled,
+          // 读屏与悬停都要能拿到"点下去会发生什么"：这一枚会开一个对话框。
+          title: '添加模型配置：从厂商目录里新增一家',
+          'aria-label': '添加模型配置：从厂商目录里新增一家',
+          'aria-haspopup': 'dialog',
+          'aria-expanded': open ? 'true' : 'false',
           style: {
             font: 'inherit',
             boxSizing: 'border-box',
@@ -1680,8 +1741,8 @@ window.__ModuleLoader__.load({
             color: T.label,
             fontSize: S.editorButtonFontSize,
             lineHeight: S.editorButtonLineHeight,
-            cursor: 'default',
-            opacity: 0.4,
+            cursor: disabled ? 'default' : 'pointer',
+            opacity: disabled ? 0.4 : 1,
             whiteSpace: 'nowrap',
           },
         },
@@ -1740,6 +1801,479 @@ window.__ModuleLoader__.load({
         },
         paths.map((d, index) =>
           h('path', { key: 'p' + String(index), d: d, stroke: props.color }),
+        ),
+      )
+    }
+
+    /**
+     * 「添加模型配置」目录弹窗里那一行**分组副标题**。
+     *
+     * 三档取值照抄用户给的官方截图对应的参考实现（`Settings.tsx` 把厂商分组传给
+     * `VendorCard` 的 `subtitle`）：`official` → 「官方 API 接入」、
+     * `aggregator` → 「聚合接入」、`custom` → 「自定义接入」。
+     * 认不出的分组**不编一个**：给空串，卡片只显示厂商名（宁可少一行，也不误导）。
+     */
+    const CATALOG_GROUP_SUBTITLE = Object.freeze({
+      official: '官方 API 接入',
+      aggregator: '聚合接入',
+      custom: '自定义接入',
+    })
+
+    /**
+     * 目录排序：参考实现是 `filter(key => !key.startsWith('threed-'))` +
+     * `label.localeCompare(label, 'zh-Hans-CN')` + **`custom` 固定排最后**
+     * （`Settings.tsx:972-978`）。宿主目录里本来就没有 `threed-*`
+     * （那是参考项目 3D 模型厂商那一族），所以这里只照做后两步。
+     *
+     * `added` 的**不挪位置**：参考实现里已添加的厂商仍留在原位（只是置灰），
+     * 顺序不该因为"加过没加过"而跳动 —— 否则用户每次添加完，卡片都会在眼皮底下换位。
+     */
+    function sortCatalog(entries) {
+      return entries
+        .filter(isObject)
+        .slice()
+        .sort((a, b) => {
+          const aCustom = a.group === 'custom'
+          const bCustom = b.group === 'custom'
+          if (aCustom !== bCustom) return aCustom ? 1 : -1
+          return String(a.label ?? '').localeCompare(String(b.label ?? ''), 'zh-Hans-CN')
+        })
+    }
+
+    /** 卡片上那一枚角标（「已添加」/「未取证生图」）。全圆角 + 小字号，沿用 `Pill` 的写法。 */
+    function CatalogBadge(props) {
+      return h(
+        'span',
+        {
+          'data-pxm-catalog-badge': props.tone,
+          style: {
+            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            padding: S.catalogBadgePad,
+            borderRadius: '999px',
+            border: '1px solid ' + T.borderL2,
+            background: tint(T.label, 8),
+            color: T.labelSecondary,
+            fontSize: S.catalogBadgeFontSize,
+            fontWeight: S.catalogBadgeFontWeight,
+            lineHeight: S.catalogBadgeLineHeight,
+            whiteSpace: 'nowrap',
+          },
+        },
+        props.children,
+      )
+    }
+
+    /**
+     * 目录里的一**张**厂商卡。
+     *
+     * 结构 / 取值照抄参考实现的 `VendorCard`（`…/components/shared/VendorCard.tsx:40-139`），
+     * 只做三处 token 映射替换（参考项目用的是它自己的变量名，不能照抄）：
+     *   `--bg-muted` → `T.bgLayer1`、`--border-subtle` → `T.borderL4`（本插件已对齐的
+     *   "卡片"形态：`bg-layer-1` 底 + `.5px` 发丝描边）、logo 块的白底 `#ffffff` → `T.bgLayer2`；
+     *   参考实现 logo 块的描边是它的 `--brand`，本插件**不用 brand**（`brand-primary` 是主按钮
+     *   填充色，浅色下近黑，当 1px 描边会很难看）：改成 `T.borderL3`。
+     *
+     * 交互（与参考实现一致）：hover `scale(1.05)`；`transition` **不含 `z-index`** ——
+     * 层级必须瞬时切换（参考实现注释说明过：`transition: all` 会让相邻卡片的 z 在过渡期间
+     * 互相压盖，hover 内容/描边出现"残影"）。
+     *
+     * 参考实现的 logo 是厂商真 logo（`<img>`）或图标；本插件**没有 logo 资源**，
+     * 用厂商名首字符占位（`T.label`、14px/700）—— 不下载图标、也不搬官方 asar 里的图形。
+     */
+    function CatalogCard(props) {
+      const entry = props.entry
+      const added = entry.added === true
+      const [hovered, setHovered] = React.useState(false)
+      const group = isString(entry.group) ? entry.group : ''
+      const subtitle = isString(CATALOG_GROUP_SUBTITLE[group]) ? CATALOG_GROUP_SUBTITLE[group] : ''
+      const label = String(entry.label ?? entry.id ?? '未命名')
+      const initial = label.trim().charAt(0) === '' ? '?' : label.trim().charAt(0)
+      const busy = props.busy === true
+      const lifted = hovered && !added && !busy
+
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'pxm-catalog-card',
+          // 语义锚点：jsdom / 浏览器 lane 按这三个找卡片（不按类名）。
+          'data-pxm-catalog-card': '1',
+          'data-pxm-catalog-id': String(entry.id ?? ''),
+          // `available` = 可点；`added` = 已在这一家的配置里（置灰 + 不可点）。
+          'data-pxm-state': added ? 'added' : 'available',
+          disabled: added || busy,
+          onClick: () => props.onPick?.(),
+          onMouseEnter: () => setHovered(true),
+          onMouseLeave: () => setHovered(false),
+          title: added ? label + '：已添加' : '添加 ' + label,
+          style: {
+            font: 'inherit',
+            boxSizing: 'border-box',
+            position: 'relative',
+            width: '100%',
+            height: S.catalogCardHeight,
+            background: T.bgLayer1,
+            border: '0.5px solid ' + T.borderL4,
+            borderRadius: S.radiusXl,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            transition: 'transform .3s ease-in-out, background .3s ease-in-out, border .3s ease-in-out',
+            cursor: added ? 'default' : 'pointer',
+            transform: lifted ? S.catalogCardHoverScale : 'scale(1)',
+            overflow: 'visible',
+            // 已添加 = 置灰（参考实现 `disabled → opacity:.5`），但仍留在网格里可见。
+            opacity: added ? S.catalogCardOpacity : 1,
+            zIndex: lifted ? 20 : 1,
+            padding: 0,
+            textAlign: 'left',
+            color: T.label,
+          },
+        },
+        // ── ① logo 占位方块（参考实现 48×48 / radius 12px / margin-left 10px）
+        h(
+          'span',
+          {
+            'data-pxm-catalog-logo': '1',
+            'aria-hidden': 'true',
+            style: {
+              boxSizing: 'border-box',
+              width: S.catalogLogoSize,
+              height: S.catalogLogoSize,
+              marginLeft: S.catalogLogoMarginLeft,
+              borderRadius: S.radiusMd,
+              background: T.bgLayer2,
+              border: '1px solid ' + T.borderL3,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: T.label,
+              fontSize: S.catalogLogoFontSize,
+              fontWeight: S.catalogLogoFontWeight,
+              lineHeight: 1,
+            },
+          },
+          initial,
+        ),
+        // ── ② 文本区（参考实现 `width:calc(100% - 78px)` / margin-left 10px / min-width 0）
+        h(
+          'span',
+          {
+            'data-pxm-catalog-text': '1',
+            style: {
+              display: 'block',
+              width: S.catalogTextWidth,
+              marginLeft: S.catalogTextMarginLeft,
+              minWidth: 0,
+            },
+          },
+          h(
+            'span',
+            {
+              style: {
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '4px',
+                minWidth: 0,
+              },
+            },
+            h(
+              'span',
+              {
+                'data-pxm-catalog-name': '1',
+                style: {
+                  fontSize: S.catalogNameFontSize,
+                  fontWeight: S.catalogNameFontWeight,
+                  color: T.label,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                },
+              },
+              label,
+            ),
+            /*
+             * 角标最多两枚：`added` → 「已添加」；`imageCapable === false` → 「未取证生图」。
+             * 后者是**保守标注**（"没有取证过它能生图"，不是"不支持生图"）：宿主目录里
+             * 有些厂商没有可核实的图像模型，写「不支持」会把"不知道"说成"不行"。
+             */
+            h(
+              'span',
+              {
+                style: { display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 },
+              },
+              added ? h(CatalogBadge, { tone: 'added' }, '已添加') : null,
+              entry.imageCapable === false
+                ? h(CatalogBadge, { tone: 'unverified' }, '未取证生图')
+                : null,
+            ),
+          ),
+          subtitle === ''
+            ? null
+            : h(
+                'span',
+                {
+                  'data-pxm-catalog-subtitle': '1',
+                  style: {
+                    display: 'block',
+                    margin: S.catalogSubtitleMargin,
+                    fontSize: S.catalogSubtitleFontSize,
+                    lineHeight: S.catalogSubtitleLineHeight,
+                    color: T.labelTertiary,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  },
+                },
+                subtitle,
+              ),
+        ),
+      )
+    }
+
+    /**
+     * 「添加模型配置」目录弹窗（官方那个"点虚线按钮 → 选一家厂商"的面板）。
+     *
+     * 三种关法**都要有**（缺一条就有用户关不掉）：
+     *   1. 右上角关闭按钮 `[data-pxm-catalog-close]`；
+     *   2. `Esc`（document 上的 keydown，弹窗在 iframe 里也能用）；
+     *   3. 点遮罩（`.pxm-catalog-overlay` 的 onClick；面板自己 `stopPropagation`，
+     *      所以点面板内部不会误关）。
+     * 不用 `<dialog>` / `showModal()`：宿主 iframe 的 CSP 与顶层文档策略不受本插件控制，
+     * `showModal` 在部分环境会抛 `InvalidStateError`（弹窗直接打不开），而 `position:fixed`
+     * 的遮罩在本仓库既有的查看器（`ImageViewer`）上已经验证过可用。
+     *
+     * 点一张可用卡片 → `POST api/providers {catalogId}` → 成功后**先关弹窗、再 `reload()`**：
+     * 目录里的 `added` 标记由宿主那一次重取刷新（客户端不自己猜哪家加上了）。
+     * 失败（`unknown_catalog_id` / `already_exists` / 网络）在弹窗内显示可读原因，
+     * 弹窗**不关**，用户能改选别家或重试。
+     */
+    function CatalogDialog(props) {
+      const [busyId, setBusyId] = React.useState('')
+      const [error, setError] = React.useState(null)
+      /** 卸载后不再 setState：`onClose()` 会让本组件立刻消失。 */
+      const mounted = React.useRef(true)
+      React.useEffect(() => {
+        mounted.current = true
+        return () => {
+          mounted.current = false
+        }
+      }, [])
+
+      // Esc 关闭。`props.onClose` 每次渲染都是新函数（父级内联箭头），所以这里不能只挂一次：
+      // 依赖它、每次换掉监听器，代价极小而语义正确。
+      React.useEffect(() => {
+        if (typeof document === 'undefined') return () => {}
+        const onKey = (event) => {
+          if (isObject(event) && event.key === 'Escape') props.onClose()
+        }
+        document.addEventListener('keydown', onKey)
+        return () => document.removeEventListener('keydown', onKey)
+      }, [props.onClose])
+
+      const entries = sortCatalog(isArray(props.catalog) ? props.catalog : [])
+
+      const pick = (entry) => {
+        if (entry.added === true || busyId !== '') return
+        const catalogId = String(entry.id)
+        setBusyId(catalogId)
+        setError(null)
+        // 只断 `ok`：冻结契约保证成功体是 `{ok:true, provider}`；这里再挑字段的话，
+        // 宿主多一个/少一个字段就会把"已经加上了"显示成"添加失败"，用户没有任何办法。
+        apiPost('api/providers', { catalogId }).then((result) => {
+          if (!mounted.current) return
+          setBusyId('')
+          if (result.ok) {
+            props.onClose()
+            props.reload()
+            return
+          }
+          setError(isString(result.error) ? result.error : '添加失败')
+        })
+      }
+
+      const head = h(
+        'div',
+        {
+          'data-pxm-catalog-head': '1',
+          style: { display: 'flex', alignItems: 'center', gap: S.catalogDialogTitleGap },
+        },
+        h(
+          'span',
+          {
+            'data-pxm-catalog-title': '1',
+            style: {
+              fontSize: S.catalogDialogTitleFontSize,
+              lineHeight: S.catalogDialogTitleLineHeight,
+              fontWeight: S.catalogDialogTitleFontWeight,
+              color: T.label,
+            },
+          },
+          '添加模型配置',
+        ),
+        /*
+         * 步骤圆点（参考实现是"当前步亮、其余暗"）。亮色参考实现用的是它的 `--brand`，
+         * 本插件**不把 brand-primary 当高亮**（它是主按钮填充，浅色下近黑），
+         * 亮的那一枚改用 `T.labelSecondary`、暗的两枚用 `T.borderL3`：都是明文 token，
+         * 深浅色自动跟随（与 `M17` 那条"进度色不得是 brand"是同一条纪律）。
+         */
+        h(
+          'span',
+          {
+            'data-pxm-catalog-steps': '1',
+            style: { display: 'flex', gap: S.catalogStepGap, marginLeft: 'auto' },
+          },
+          [1, 2, 3].map((step) =>
+            h('span', {
+              key: 'step' + String(step),
+              'data-pxm-catalog-step': String(step),
+              ...(step === 1 ? { 'data-pxm-step-active': '1' } : {}),
+              style: {
+                width: S.catalogStepDotSize,
+                height: S.catalogStepDotSize,
+                borderRadius: '50%',
+                transition: 'background .2s',
+                background: step === 1 ? T.labelSecondary : T.borderL3,
+              },
+            }),
+          ),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'pxm-catalog-close',
+            'data-pxm-catalog-close': '1',
+            'aria-label': '关闭「添加模型配置」',
+            onClick: props.onClose,
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '22px',
+              height: '22px',
+              padding: 0,
+              border: 'none',
+              borderRadius: S.radiusSm,
+              background: 'transparent',
+              cursor: 'pointer',
+              flexShrink: 0,
+            },
+          },
+          h(Icon, { name: 'close', size: 12, testId: 'catalog-close', color: T.labelSecondary }),
+        ),
+      )
+
+      return h(
+        'div',
+        {
+          className: 'pxm-catalog-overlay',
+          'data-pxm-catalog-overlay': '1',
+          // 点遮罩 = 关闭（第 3 种关法）。面板内部 `stopPropagation`，所以不会误关。
+          onClick: props.onClose,
+          style: {
+            position: 'fixed',
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+            // 60 < 标题栏菜单宿主的 1100：弹窗要盖住查看器（查看器是 60），但永不盖窗口 chrome。
+            zIndex: 70,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            boxSizing: 'border-box',
+            background: tint(T.bgOverlay, 92),
+            backdropFilter: 'blur(2px)',
+          },
+        },
+        h(
+          'div',
+          {
+            'data-pxm-catalog': '1',
+            className: 'pxm-catalog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': '添加模型配置',
+            onClick: (event) => event.stopPropagation(),
+            style: {
+              boxSizing: 'border-box',
+              width: '100%',
+              maxWidth: S.catalogDialogMaxWidth,
+              maxHeight: S.catalogDialogMaxHeight,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: S.catalogDialogGap,
+              padding: S.catalogDialogPad,
+              // 面板表面：与官方 `addCard` / `editor` 同一层（`bg-module-platform`）——
+              // 它是"内容之上再叠一层"的底色，与卡片（`bg-layer-1`）分层可见。
+              background: T.bgModulePlatform,
+              // 参考实现的面板 `border:1px solid var(--border)`：本插件取 `border-l2`
+              // （本文件里"区域/容器的分隔线"就是它，见模型区块与 `customized` 的 border-top）。
+              border: '1px solid ' + T.borderL2,
+              borderRadius: S.radiusLg,
+              color: T.label,
+            },
+          },
+          head,
+          error === null
+            ? null
+            : h(
+                'p',
+                {
+                  'data-pxm-catalog-error': '1',
+                  role: 'alert',
+                  style: {
+                    margin: 0,
+                    color: T.error,
+                    fontSize: S.catalogErrorFontSize,
+                    lineHeight: S.catalogErrorLineHeight,
+                  },
+                },
+                error,
+              ),
+          entries.length === 0
+            ? h(
+                'p',
+                {
+                  'data-pxm-catalog-empty': '1',
+                  style: {
+                    margin: 0,
+                    padding: S.catalogEmptyPad,
+                    color: T.labelTertiary,
+                    fontSize: S.catalogErrorFontSize,
+                    lineHeight: S.catalogErrorLineHeight,
+                  },
+                },
+                '厂商目录为空：宿主还没提供目录（或这一版没有可新增的厂商）。',
+              )
+            : h(
+                'div',
+                {
+                  'data-pxm-catalog-grid': '1',
+                  className: 'pxm-catalog-grid',
+                  style: {
+                    display: 'grid',
+                    // 自适应列数：卡片填满格子、窗口变宽自动增列（参考实现原话）。
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(' + S.catalogGridMin + ', 1fr))',
+                    gap: S.catalogGridGap,
+                  },
+                },
+                entries.map((entry) =>
+                  h(CatalogCard, {
+                    key: String(entry.id),
+                    entry,
+                    busy: busyId === String(entry.id),
+                    onPick: () => pick(entry),
+                  }),
+                ),
+              ),
         ),
       )
     }
@@ -3065,6 +3599,14 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 「移除厂商」两步确认里，第一次点击后自动复原的等待时长。
+     *
+     * 4s：短到"点错了也不会一直挂着"，长到"看到提示再点第二下"来得及。
+     * 它**不是**安全边界（真正的边界是"第二次点击"这个动作本身），只是一个便利的兜底。
+     */
+    const REMOVE_CONFIRM_MS = 4000
+
+    /**
      * 单个厂商卡片 —— 官方「模型」设置页那一张 `li.rowCard` 的同构形态。
      *
      * 默认**收起**：只渲染标头行（厂商名 + rowTag + 凭据圆点 + 右侧「编辑」）；
@@ -3126,6 +3668,38 @@ window.__ModuleLoader__.load({
       const models = useMutation()
       const probe = useMutation()
       const picker = useMutation()
+
+      /**
+       * 「移除」这一枚（官方 `row.removable ? dangerButton : null` 那个位置）走**两步确认**：
+       * 第一次点只把文案换成「确认移除」（**一个请求都不发**），第二次点才真的
+       * `POST api/providers/<id>/delete`。为什么不用 `window.confirm`：设置页跑在宿主的
+       * iframe 里，`confirm` 可能被沙箱拦掉（那时"确认"根本没发生，删除却已经执行），
+       * 而且它会把整页卡住。
+       *
+       * 误点恢复两条路（都只复原文案、都不发请求）：
+       *   - **点别处**：document 上的 `pointerdown`，事件目标不在本按钮内就复原；
+       *   - **超时**：`REMOVE_CONFIRM_MS`（4s）后复原 —— 用户点完第一次就去做别的事时，
+       *     这枚按钮不会一直停在"确认移除"的待发状态。
+       * 两条都在 `confirmRemove` 为真时才挂，恢复即卸载监听器 / 清定时器。
+       */
+      const [confirmRemove, setConfirmRemove] = React.useState(false)
+      const removeRef = React.useRef(null)
+      const remove = useMutation()
+      React.useEffect(() => {
+        if (!confirmRemove) return () => {}
+        const timer = setTimeout(() => setConfirmRemove(false), REMOVE_CONFIRM_MS)
+        const onDown = (event) => {
+          const node = removeRef.current
+          const target = isObject(event) ? event.target : null
+          if (node !== null && isObject(target) && node.contains(target)) return
+          setConfirmRemove(false)
+        }
+        document.addEventListener('pointerdown', onDown)
+        return () => {
+          clearTimeout(timer)
+          document.removeEventListener('pointerdown', onDown)
+        }
+      }, [confirmRemove])
 
       /**
        * 拉取结果与面板开合是**两件事**：取消只收起面板，不必再向厂商拉一次。
@@ -3455,8 +4029,64 @@ window.__ModuleLoader__.load({
               },
               '编辑',
             ),
+            /*
+             * 「移除」= 官方行尾动作里 `row.removable ? dangerButton : null` 那一枚
+             * （`.probe/models-css-pretty.txt:24` 的 `._3nPmjq_dangerButton` 与 secondaryButton
+             * 同一档几何）。**两步确认**：第一次点只改文案，第二次才发 `…/<id>/delete`。
+             * 请求进行中禁用（`remove.busy`），失败原因显示在卡片里（见下面的提示行）。
+             */
+            h(
+              ActionButton,
+              {
+                size: 'sm',
+                attrs: {
+                  'data-pxm-vendor-remove': '1',
+                  ref: removeRef,
+                  'aria-label':
+                    (confirmRemove ? '确认移除 ' : '从配置里移除 ') + providerLabel,
+                },
+                disabled: remove.busy,
+                onClick: () => {
+                  if (!confirmRemove) {
+                    setConfirmRemove(true)
+                    return
+                  }
+                  setConfirmRemove(false)
+                  remove
+                    .run(() =>
+                      apiPost('api/providers/' + encodeURIComponent(id) + '/delete', {}),
+                    )
+                    .then((result) => {
+                      // 成功后由宿主改 `defaults.provider`（若删的是当前默认厂商），
+                      // 客户端只负责重取一次：新视图照新值渲染。
+                      if (isObject(result) && result.ok === true) props.reload()
+                    })
+                },
+                title: confirmRemove
+                  ? '再点一次：确认从配置里移除 ' + providerLabel
+                  : '从配置里移除 ' + providerLabel,
+              },
+              remove.busy ? '移除中…' : confirmRemove ? '确认移除' : '移除',
+            ),
           ),
         ),
+        // 移除失败**不静默**：原因就地显示（与卡片内其它写操作的提示同一档小字）。
+        remove.result === null || remove.result.ok === true
+          ? null
+          : h(
+              'p',
+              {
+                'data-pxm-vendor-remove-error': '1',
+                role: 'alert',
+                style: {
+                  margin: 0,
+                  color: T.error,
+                  fontSize: S.catalogErrorFontSize,
+                  lineHeight: S.catalogErrorLineHeight,
+                },
+              },
+              String(remove.result.error ?? '移除失败'),
+            ),
         // ── ② 编辑块：官方 `.editor`（radius-lg / padding 14px 16px / gap 14px /
         //      background:bg-module-platform），字段用官方堆叠式 `.field`。
         //      **默认不渲染**：官方那一页也是 `open ? renderProviderEditor(…) : null`
@@ -4176,6 +4806,13 @@ window.__ModuleLoader__.load({
        * `:2157` 的 `open = editing?.provider === row.entry.provider`）。
        */
       const [editingVendor, setEditingVendor] = React.useState('')
+      /**
+       * 「添加模型配置」目录弹窗是否打开。
+       *
+       * 状态放在**设置页**而不是 `AddVendorButton` 里：弹窗要读整页那份 `data.catalog`、
+       * 成功后要调这一层的 `reload()`，挂在按钮内部会变成"按钮持有页面数据"。
+       */
+      const [catalogOpen, setCatalogOpen] = React.useState(false)
 
       /** 卸载后不再 setState（`reload` 会被卡片在 await 之后调用）。 */
       const alive = React.useRef(true)
@@ -4360,12 +4997,19 @@ window.__ModuleLoader__.load({
                   })
                 }),
               ),
-          // 虚线「添加模型提供商」：官方那一枚的形态，但**恒定 disabled**
-          // （厂商来自出厂预设，本插件没有"新增厂商"这条写路径，见 §26.4）。
+          // 虚线「添加模型提供商」：官方那一枚的形态，2026-10-12 起**可点** ——
+          // 点开「添加模型配置」目录弹窗（列表里每家厂商 = 一张可选卡片）。
           h(
             'div',
             { className: 'pxm-add-vendor-block', style: { display: 'flex', flexDirection: 'column', gap: S.addBlockGap } },
-            h('div', { style: { display: 'flex' } }, h(AddVendorButton)),
+            h(
+              'div',
+              { style: { display: 'flex' } },
+              h(AddVendorButton, {
+                onClick: () => setCatalogOpen(true),
+                expanded: catalogOpen,
+              }),
+            ),
           ),
         ),
 
@@ -4401,6 +5045,20 @@ window.__ModuleLoader__.load({
         h(ExportDirCard, { exportDir: data.exportDir, reload }),
 
         h('p', { style: skin.muted }, '插件 ' + PLUGIN + '@' + VERSION + ' · 设置页插槽 settings.section'),
+
+        /*
+         * 「添加模型配置」目录弹窗：`position:fixed` 的遮罩 + 面板，所以它挂在树的哪个位置
+         * 都不影响布局 —— 放在最后，DOM 顺序与"最后叠上来"一致。
+         * `catalog` 整份来自这次 `GET api/providers`；宿主没给这一项时弹窗显示一句空态提示
+         * （而不是白板），见 `CatalogDialog` 的 `entries.length === 0` 分支。
+         */
+        catalogOpen
+          ? h(CatalogDialog, {
+              catalog: isArray(data.catalog) ? data.catalog : [],
+              onClose: () => setCatalogOpen(false),
+              reload,
+            })
+          : null,
       )
     }
 

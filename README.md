@@ -116,20 +116,23 @@ dsh --profile px --dump-config
 
 ### 厂商
 
-厂商列表由配置里的 `providers` 驱动，**出厂就带两家**（新增一家只需往 `providers` 里加一条）：
-
+厂商列表由配置里的 `providers` 驱动，**出厂就带两家**；其余厂商在设置页点
+**「添加模型提供商」**从**内置目录（20 家）**里挑（目录出处见 [docs/contract-notes.md](./docs/contract-notes.md) §31）。
+卡片行尾的「移除」是两步确认；**删掉的出厂预设不会在重启后被补回来**。
 
 | 厂商 | `dialect` | 端点 | 密钥 | 状态 |
 |---|---|---|---|---|
 | **Ofox**（默认） | `ofox` | `https://api.ofox.io/v1` | `OFOX_API_KEY` | 已验证（真实出图 / 契约笔记 §11、§18） |
-| **Agnes AI** | `agnes` | `https://api.agnes-ai.cn/v1` | `AGNES_API_KEY` | **契约已取证，未做真实出图验证** |
+| **Agnes AI** | `agnes` | `https://api.agnes-ai.cn/v1` | `AGNES_API_KEY` | **已真机验证**：2.1 / 2.5-flash 真实出图（含 2K 档位，§29） |
 
 **Agnes 的取舍**（细节与出处见 [docs/contract-notes.md](./docs/contract-notes.md) §25）：
 
 - 生图与图生图**同一个端点** `POST /v1/images/generations`，`Authorization: Bearer`；**不走** `/images/edits`。
 - 参考图必须在 **`extra_body.image`**（data URI 数组），`response_format` 也必须在 **`extra_body`** 内
   ——官方明文：放到顶层会**报错**。所以它单列成一个方言 `agnes`，而不是复用 `standard`。
-- 尺寸是**「档位 + 比例」**：我们固定发 `size: '1K'`，比例由 `ratio` 给（支持 8 种：`1:1`/`3:4`/`4:3`/`16:9`/`9:16`/`2:3`/`3:2`/`21:9`）。
+- 尺寸是**「档位 + 比例」**：**档位由精确像素尺寸决定**（`2048x2048` → `size: '2K'` + `ratio: '1:1'`，
+  官方 32 个精确尺寸见 [src/sizes.ts](./src/sizes.ts)；只给比例则用默认 `1K`），
+  比例支持 8 种：`1:1`/`3:4`/`4:3`/`16:9`/`9:16`/`2:3`/`3:2`/`21:9`。
   所以在 Agnes 上前端选 `1:1` 之类的**比例**，不要按像素理解。
 - 官方文档**没有** `/models` 列表接口。点「拉取模型」**会失败**并给出可读原因（HTTP 404）——
   这是可接受的结论，不是坏了；请在设置页用「模型」列表手动勾选，或先填 `models`。
@@ -255,8 +258,8 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），364 项（其中 agnes 24 项）
-pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），62 项
+pnpm test             # node:test（含 jsdom lane），395 项（其中 agnes 24 项）
+pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），64 项
 pnpm verify           # 上面几条串起来
 ```
 

@@ -2285,7 +2285,11 @@ sha256 前后一致"）：
 
 ### 26.4 已知限制（**明说，不粉饰**）
 
-- **用户在文件里删掉某厂商，下次 `load()` 会被补回来**。因为"补齐"的判据是
+> **2026-10-12 已修复 → 见 §31**：当时列的"要真正彻底移除，需要禁用列表或添加厂商 UI"两条
+> **都做了**——配置新增 `removedProviders`（删除时的墓碑，`applyFactoryPresets` 跳过它），
+> 设置页也有了「添加 / 移除厂商」的写路径。下面这段保留为**历史记录**（它记录了当时的取舍）。
+
+- ~~**用户在文件里删掉某厂商，下次 `load()` 会被补回来**~~。因为"补齐"的判据是
   "出厂预设里有、文件里没有"，而我们**刻意不改写磁盘**，所以这个判断每次启动都会重新成立。
   要真正彻底移除，需要**"禁用列表"**（用户显式声明"我不要这个厂商"）或**"添加厂商"UI**
   （把出厂预设降级成"可添加项"）——**本次不做**，记在这里当已知限制。
@@ -2673,4 +2677,118 @@ Base URL / 原生 URL / 密钥都只改本地 state；「保存」才 `POST cred
 
 `pnpm verify` 全绿：宿主 `pnpm test` **364**（§29 的 358 + 6），
 浏览器 `pnpm test:browser` **62**（§28 的 56 + 6）。README 与 §11 的命令注释同步更新。
+
+---
+
+## 31. 「添加模型提供商」做成真功能：厂商目录 + 新增/移除（2026-10-12）
+
+用户诉求：**把那个恒 disabled 的虚线按钮做成真能点**（"厂商目录 + 新增/删除接口"），
+且**目录按参考项目 `pixmart-ai` 设置里的模型供应商配置**。本节同时**修掉 §26.4 的老限制**。
+
+### 31.1 目录数据：20 家，逐条转录，不发明
+
+出处 = 参考项目 `E:\Programs\trae\project\pixmart-ai\src\renderer\src\types\model.ts:40-197`
+的 `VENDOR_INFO`（**只读**，全程未修改那个仓库）。新增 `src/catalog.ts` 的 `PROVIDER_CATALOG`：
+
+- **20 条**：`official` 13 / `aggregator` 6 / `custom` 1。每条 `baseUrl` 与参考项目**逐字符一致**，
+  注释里标 `model.ts:<行号>`；转录后用一次性脚本与参考项目比对过（**20 条 baseUrl + label 零差异**）。
+- 与参考项目的**两处有意差异**：① `custom` 的 group 在参考项目里是 `aggregator`
+  （`model.ts:174-178`），我们单独给 `custom`（= 设置页「自定义接入」分组）；
+  ② 参考项目里 3 个 `threed-*`（3D 模型，`model.ts:179-196`）**不进目录**（PixMart 只做 2D 生图），
+  所以 23 − 3 = 20。（我在任务里写"4 个 3D"是**笔误**，子智能体按"一个都不进、总数 20"做对了。）
+- **不列默认模型、不预填密钥**：新增的 provider `models: []` / `allowedSizes: []` / `apiKey: ''`，
+  用户走既有的「拉取模型」流程。理由见 §F3 的教训：**不许编造模型名**。
+
+### 31.2 `imageCapable` 的判据（一条纪律，防止两边都误导）
+
+`imageCapable` 会在卡片上显示成「未取证生图」角标，所以标注错会误导。判据只有两类，
+`note` 里必须写明属于哪一类：
+
+| 判据 | 例子 |
+|---|---|
+| (a) **参考项目注释明写**该端点有生图/改图 | aihubmix / siliconflow / volcengine / bailian / sensenova / **minimax**（`image-01`） |
+| (b) **本插件内置能力表覆盖**该家族的图像模型，或**我们真的实测过**这条直连端点 | openai（gpt-image/DALL·E 3）、google（Gemini 图像系）、**ofox / agnes**（真测过，§7.4.1 / §25 / §29） |
+
+**只有真调用过那条直连端点才能写"已实测"** —— 子智能体起初在 openai/google 的 note 里写了
+"本插件适配器已实测出图"，而实际测过的是**聚合路径 ofox**，这是**过度声称**，已改成
+「内置能力表覆盖…；**这条直连端点本插件未实测**」。`minimax` 也从 `false` 翻成 `true`
+（判据 (a) 成立）并去掉"未取证"字样。10 家 true / 10 家 false（false 的 note 一律含
+「生图能力未取证」，这是**保守标注，不是断言它不能**）。
+
+### 31.3 界面：**用户给的截图不是 DSH 官方弹窗，而是参考项目自己的面板**
+
+这一点值得记下来，因为它决定了取值来源：
+
+| 形态 | 出处 | 是否采用 |
+|---|---|---|
+| 「第三方模型提供商 / 自定义模型 API」**内联** addCard（提供商 select + 密钥 + 自定义设置） | DSH `settings-models`（`.probe/models-css-pretty.txt:37-44`） | ✗（那是 DSH 的 LLM 目录，20 家里有 Amazon Bedrock 之类） |
+| 「添加模型配置」**3 列厂商卡片网格** | 参考项目 `Settings.tsx:915-1009` + `components/shared/VendorCard.tsx:40-139` | ✅ **采用**（它的 20 家 = `VENDOR_INFO`，与用户截图完全一致） |
+
+照抄的结构/数值（原文出处见上表）：
+- 面板：`padding 20px` / `radius-lg` / `1px` 描边 / 标题 **15px·600** / 右侧 3 枚 8px 步骤圆点；
+- 网格：`grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))` + `gap 12px`
+  （**不是固定 3 列**；截图里的 3 列是窗口宽度自然算出来的，窗口变宽会自动加列）；
+- 排序：`label.localeCompare(label, 'zh-Hans-CN')` 升序，**`custom` 固定排最后**（截图顺序即由此而来）；
+- 卡片：`height 70px` / `radius 20px` / `1px` 描边 / hover `scale(1.05)`（过渡**不含** z-index，
+  原注释解释了"层级渐升会让相邻卡片压盖"这个坑）；logo 块 `48×48` / `radius 12px` / 图中字高 28px；
+  文本宽 `calc(100% - 78px)`；标题 **14px·700**（nowrap+ellipsis）；副标题 **11px**；
+  角标 **10px·600** / `padding 2px 8px` / 全圆角。
+
+**token 映射**（参考项目用的是它自己的变量名，不能照抄；我们只走 DSH 官方 token）：
+`--bg-muted`→`bgLayer1` + `.5px borderL4`、`--border-subtle`→`borderL4`、`--fg`/`--fg-muted`→
+`label`/`labelTertiary`、面板底→`bgModulePlatform`；**`--brand` / `--brand-glow` / `#ffffff` 一律不用**
+（`brand-primary` 是**主按钮填充**，浅色下近黑，当描边/高亮会很难看——§前面踩过）。
+
+### 31.4 宿主接口（本仓库**只有 GET/POST**，没有 DELETE）
+
+| 方法/路径 | 语义 | 错误码 |
+|---|---|---|
+| `GET /providers` | 响应新增只读 `catalog`（`id/label/baseUrl/group/imageCapable/note/added`） | — |
+| `POST /providers` `{catalogId}` | 从目录新增一家（`added` 逐条来自目录，`models/allowedSizes` 为空） | 400 `unknown_catalog_id` / 409 `already_exists` |
+| `POST /providers/<id>/delete` | 移除；**出厂预设 id 记进 `removedProviders` 墓碑** | 404 `unknown_provider` |
+
+- `PixmartConfig` 新增 `removedProviders: readonly string[]`；`applyFactoryPresets` 跳过其中的 id
+  → **§26.4 的"删了会回来"从此不成立**（有回归断言：删 ofox → 重新 `load()` 不复活）。
+- 被删的若是 `defaults.provider` → 改成剩余里的第一个（无则 `''`）；
+  **并把 `defaults.model` 换成新默认厂商的第一个模型**——这一条是子智能体**超出规格自己加的**，
+  我认可并保留：否则旧模型名会被拿去打另一家（已用测试钉住）。
+- 重新添加一个曾删过的出厂预设 → **把墓碑摘掉**（也是子智能体自己想到的，合理）。
+- `pixmart_providers` 工具输出加只读 `catalog` + 一行"还有哪几家可加"；
+  **不给 Agent 任何新增/删除能力**（写路径只在设置页）。
+
+### 31.5 断言与可证伪性
+
+- 宿主：`test/catalog.test.mjs` 13 条（转录保真 / 分组计数 / dialect / `imageCapable` 纪律 /
+  视图与草稿三条纪律）+ `test/providers-api.test.mjs` 新增 13 条（新增/409/400/删除/默认厂商回退/
+  **§26.4 回归**/删到一个不剩不崩/删过再加回）。
+- 客户端：`test/client-settings-dom.test.mjs` 新增 C1–C6（20 张卡与状态锚点 / added 不可点且零请求 /
+  恰好 1 次 POST 且 body 恰为 `{catalogId}` / 三种关法且点面板内部不关 / 移除两步确认 + 点别处复原 /
+  三种副标题映射）；`test/browser/vendors.test.mjs` 新增 3.7（面板·网格·卡片几何与配色、
+  3 条轨道每条 ≥280px、压到 500px 高证明 80vh 夹子生效、真浏览器点击路径无 console.error）
+  与 3.8（真浏览器两步确认）。
+- **反向变异**：`M46-catalog-grid-one-column`（网格退回 1 列）、`M47-remove-one-step`
+  （移除退回一步直发）—— 均被 3.7 / 3.8 抓住，基线 `pass=64 fail=0`，原产物 sha256 前后一致。
+  ⚠️ 子智能体指出并处理了一个**方法论要点**：M47 的判据必须放在**浏览器 lane**，
+  因为 `tools/lane-mutations.mjs` 只跑 `test/browser/*`，只靠 jsdom 断言会"抓不到"。
+- 顺带抓到一次真实事故：新尺寸键 `S.catalogTitleFontSize` 与既有**模型区块标题**同名，
+  后写覆盖前写，把既有浏览器用例 2.2 顶红 —— 说明那条断言不是空跑。
+
+### 31.6 刻意偏差（明说）
+
+1. **不做厂商 logo**：参考项目用 logo 图/图标，我们**没有这些资源**，用**厂商名首字符**占位
+   （48×48 方块、`radius-md`、`bgLayer2`、14px/700）。**没有**去下载图标，也**没有**把官方 asar
+   里的图标搬进来（那是别人的品牌资源）。
+2. **标题行不画图标**：参考实现里 `<Pencil/>` 只在"编辑模型配置"态渲染，"添加"态本来就没有。
+3. **面板描边取 `borderL2`**（参考的 `var(--border)` 不在我们的映射表里）；lane 只钉**声明宽度 1px**，
+   没钉 token 名 —— 换 L3/L4 是一行的事。
+4. **卡片圆角按参考数值 20px 取 `radius-xl`**（我在任务里写成 `radius-lg`/16px，是我抄错；以参考为准）。
+5. **未覆盖**：「移除」的 **4s 超时复原**没有断言（要推假时钟 / 真等 4s 不值当；"点别处复原"两条
+   lane 都覆盖了）；`added` 与 `imageCapable:false`**同时为真的双角标**组合夹具里没有。
+
+### 31.7 结果
+
+`pnpm verify` 全绿：宿主 `pnpm test` **395**（§30 的 364 + 31），
+浏览器 `pnpm test:browser` **64**（§30 的 62 + 2）。
+新增的 2 条变异（M46 / M47）已自证；**全量 47 条变异的结果见 `.probe/mutations-full-run.txt`**
+（后台运行，收尾时补记结论）。
 

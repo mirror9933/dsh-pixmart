@@ -96,10 +96,56 @@ function providersPayload(over = {}) {
     defaults: { provider: 'ofox', model: '', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 3, retentionDays: 0 },
     providers: [providerView()],
+    // 宿主 `GET api/providers` 的**厂商目录**（task-4 §1 冻结形状）：20 条。
+    catalog: catalogFixture(),
     usage: { requests: 0, ok: 0, failed: 0, images: 0 },
     historical: { projects: 0, images: 0, note: '' },
     ...over,
   }
+}
+
+/**
+ * 目录条目（宿主 `catalog[]` 的一项）：`{id,label,baseUrl,group,imageCapable,note,added}`。
+ * 三组各至少一条、`imageCapable:false` 至少一条、`added:true` 至少两条 ——
+ * 六条断言要的每一种形态都在夹具里**真的存在**，否则断言会退化成"没数据也绿"。
+ */
+function catalogEntry(over = {}) {
+  return {
+    id: 'unknown',
+    label: 'Unknown',
+    baseUrl: 'https://api.example.test/v1',
+    group: 'official',
+    imageCapable: true,
+    note: '',
+    added: false,
+    ...over,
+  }
+}
+
+/** 20 条目录：8 official + 9 aggregator + 3 custom（条数与宿主契约一致）。 */
+function catalogFixture() {
+  return [
+    catalogEntry({ id: 'openai', label: 'OpenAI' }),
+    catalogEntry({ id: 'anthropic', label: 'Anthropic', imageCapable: false }),
+    catalogEntry({ id: 'google', label: 'Google', added: true }),
+    catalogEntry({ id: 'azure', label: 'Azure OpenAI' }),
+    catalogEntry({ id: 'mistral', label: 'Mistral' }),
+    catalogEntry({ id: 'cohere', label: 'Cohere' }),
+    catalogEntry({ id: 'xai', label: 'xAI' }),
+    catalogEntry({ id: 'deepseek', label: 'DeepSeek' }),
+    catalogEntry({ id: 'ofox', label: 'Ofox', group: 'aggregator', added: true }),
+    catalogEntry({ id: 'siliconflow', label: 'SiliconFlow', group: 'aggregator' }),
+    catalogEntry({ id: 'openrouter', label: 'OpenRouter', group: 'aggregator' }),
+    catalogEntry({ id: 'together', label: 'Together', group: 'aggregator' }),
+    catalogEntry({ id: 'fireworks', label: 'Fireworks', group: 'aggregator' }),
+    catalogEntry({ id: 'replicate', label: 'Replicate', group: 'aggregator' }),
+    catalogEntry({ id: 'fal', label: 'Fal', group: 'aggregator' }),
+    catalogEntry({ id: 'novita', label: 'Novita', group: 'aggregator' }),
+    catalogEntry({ id: 'dashscope', label: 'DashScope', group: 'aggregator' }),
+    catalogEntry({ id: 'custom', label: '自定义', group: 'custom' }),
+    catalogEntry({ id: 'custom-openai', label: '自定义（OpenAI 兼容）', group: 'custom' }),
+    catalogEntry({ id: 'selfhost', label: '自建端点', group: 'custom', imageCapable: false }),
+  ]
 }
 
 const jsonResponse = (body, status = 200) => ({
@@ -1026,6 +1072,261 @@ describe('jsdom lane：厂商卡片 = 官方「模型」页同构', () => {
     assert.ok(lane.text().includes('连接正常'), '测试连接成功后应显示结果')
   })
 })
+
+// ── 「添加模型配置」目录弹窗 + 「移除」两步确认（2026-10-12）──────────────────
+//
+// 宿主接口（task-4 §1 冻结）：`GET api/providers` 多一份 `catalog`（20 条，形状见
+// `catalogEntry`）；`POST api/providers {catalogId}` 新增一家；
+// `POST api/providers/<id>/delete` 移除一家（**没有 DELETE 方法**，本仓库只支持 GET/POST）。
+//
+// 定位只认锚点（`data-pxm-catalog*` / `data-pxm-vendor-remove`），不认类名、不认文案排布 ——
+// "卡片怎么排"是实现细节，"能不能点、点了发不发请求、发几次"才是行为。
+
+/** 弹窗面板根（关闭后不存在，不是隐藏）。 */
+const catalogDialog = (lane) => lane.container.querySelector('[data-pxm-catalog]')
+/** 遮罩层（点它 = 关闭）。 */
+const catalogOverlay = (lane) => lane.container.querySelector('[data-pxm-catalog-overlay]')
+/** 目录卡片集合。 */
+const catalogCards = (lane) => [...lane.container.querySelectorAll('[data-pxm-catalog-card]')]
+/** 按 `data-pxm-catalog-id` 取一张卡（**不按索引**：顺序由排序规则决定）。 */
+function catalogCard(lane, id) {
+  return lane.container.querySelector('[data-pxm-catalog-id="' + String(id) + '"]') ?? null
+}
+
+/** 点虚线按钮打开弹窗，并先断"它现在真的可点"。 */
+async function openCatalog(lane) {
+  const button = lane.container.querySelector('[data-pxm-add-vendor]')
+  assert.ok(button, '设置页必须有虚线「添加模型提供商」按钮（[data-pxm-add-vendor]）')
+  assert.equal(
+    button.disabled,
+    false,
+    '「添加模型提供商」必须可点（2026-10-12 起它打开「添加模型配置」弹窗，不再恒 disabled）',
+  )
+  await lane.click(button)
+  assert.ok(catalogDialog(lane), '点虚线按钮后必须出现弹窗（[data-pxm-catalog]）')
+  return catalogDialog(lane)
+}
+
+describe('jsdom lane：「添加模型配置」弹窗与「移除」两步确认', () => {
+  it('C1 点虚线按钮 → 弹窗出现、标题「添加模型配置」、20 张卡各带状态与字母占位方块', async () => {
+    const lane = await createLane()
+    await lane.render()
+
+    const dialog = await openCatalog(lane)
+    assert.equal(dialog.getAttribute('role'), 'dialog', '弹窗必须是 role="dialog"')
+    assert.ok(
+      (dialog.textContent ?? '').includes('添加模型配置'),
+      '弹窗标题必须是「添加模型配置」（与官方截图一致）',
+    )
+
+    const cards = catalogCards(lane)
+    assert.equal(cards.length, 20, `目录里必须渲染 20 张卡片（宿主 catalog 的条数），实际 ${cards.length}`)
+    assert.equal(
+      cards.filter((card) => card.getAttribute('data-pxm-state') === 'added').length,
+      2,
+      '夹具里有 2 家已添加（google / ofox）',
+    )
+    for (const card of cards) {
+      const state = card.getAttribute('data-pxm-state')
+      assert.ok(
+        state === 'available' || state === 'added',
+        '每张卡必须有 data-pxm-state="available|added"，实测 ' + String(state),
+      )
+      assert.ok(
+        (card.getAttribute('data-pxm-catalog-id') ?? '') !== '',
+        '每张卡必须有非空的 data-pxm-catalog-id',
+      )
+      const logo = card.querySelector('[data-pxm-catalog-logo]')
+      assert.ok(logo, '每张卡必须有字母占位方块（[data-pxm-catalog-logo]）')
+      const name = (card.querySelector('[data-pxm-catalog-name]')?.textContent ?? '').trim()
+      assert.equal(
+        (logo.textContent ?? '').trim(),
+        name.charAt(0),
+        '字母占位方块必须是厂商名首字符（' + name + '）',
+      )
+    }
+
+    // 排序：`custom` 固定排最后（参考实现 `Settings.tsx:972-978`）。
+    const tailIds = cards.slice(-3).map((card) => card.getAttribute('data-pxm-catalog-id'))
+    assert.deepEqual(
+      tailIds.slice().sort(),
+      ['custom', 'custom-openai', 'selfhost'],
+      'custom 那一组必须固定排在最后，实测尾部三张：' + JSON.stringify(tailIds),
+    )
+
+    // `imageCapable === false` → 名字旁一枚**保守**角标「未取证生图」（不能说成"不支持"）。
+    const unverified = catalogCard(lane, 'anthropic')
+    assert.ok(unverified, '夹具里必须有 anthropic 这张卡')
+    assert.ok(
+      (unverified.textContent ?? '').includes('未取证生图'),
+      'imageCapable=false 的卡片必须标注「未取证生图」',
+    )
+    assert.equal(
+      (unverified.textContent ?? '').includes('不支持'),
+      false,
+      '「未取证」是保守标注，不得写成"不支持"',
+    )
+  })
+
+  it('C2 已添加的卡片：state=added、置灰不可点、显示「已添加」，点击不发任何请求', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openCatalog(lane)
+
+    const added = catalogCard(lane, 'google')
+    assert.ok(added, '夹具里必须有已添加的 google 这张卡')
+    assert.equal(added.getAttribute('data-pxm-state'), 'added')
+    assert.equal(added.disabled, true, '已添加的卡片必须不可点（disabled）')
+    assert.ok((added.textContent ?? '').includes('已添加'), '已添加的卡片必须显示「已添加」')
+    assert.ok(
+      Number(added.style.opacity) > 0 && Number(added.style.opacity) < 1,
+      '已添加的卡片必须置灰（opacity 0~1 之间），实测 ' + added.style.opacity,
+    )
+
+    await act(async () => {
+      added.click()
+    })
+    await settleAll()
+    assert.deepEqual(lane.postCalls(), [], '点已添加的卡片不得发任何请求')
+    assert.ok(catalogDialog(lane), '点已添加的卡片不得关闭弹窗')
+  })
+
+  it('C3 点可用卡片 → 恰好 1 次 POST api/providers、body 恰为 {catalogId}；成功后弹窗关闭', async () => {
+    const posted = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(JSON.parse(String(init?.body ?? '{}')))
+          return jsonResponse({
+            ok: true,
+            provider: providerView({ id: 'openai', label: 'OpenAI' }),
+          })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    await openCatalog(lane)
+
+    const card = catalogCard(lane, 'openai')
+    assert.ok(card, '夹具里必须有可用的 openai 这张卡')
+    assert.equal(card.getAttribute('data-pxm-state'), 'available')
+    await lane.click(card)
+
+    const posts = lane.postCalls()
+    assert.equal(posts.length, 1, `点一张可用卡片必须恰好发 1 次 POST，实际 ${posts.length}`)
+    assert.match(posts[0].url, /\/api\/providers$/, 'POST 的目标必须是 api/providers')
+    assert.deepEqual(
+      JSON.parse(String(posts[0].body)),
+      { catalogId: 'openai' },
+      'body 必须恰为 {catalogId}（字段名由 task-4 §1 冻结）',
+    )
+    assert.deepEqual(posted, [{ catalogId: 'openai' }])
+    assert.equal(catalogDialog(lane), null, '添加成功后弹窗必须关闭')
+  })
+
+  it('C4 三种关法：关闭按钮 / Esc / 点遮罩（点面板内部不关）', async () => {
+    // ① 关闭按钮
+    const laneA = await createLane()
+    await laneA.render()
+    await openCatalog(laneA)
+    await laneA.click(laneA.container.querySelector('[data-pxm-catalog-close]'))
+    assert.equal(catalogDialog(laneA), null, '点 [data-pxm-catalog-close] 必须关闭')
+
+    // ② Esc（document 上的 keydown）
+    const laneB = await createLane()
+    await laneB.render()
+    await openCatalog(laneB)
+    await act(async () => {
+      laneB.window.document.dispatchEvent(
+        new laneB.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      )
+    })
+    await settleAll()
+    assert.equal(catalogDialog(laneB), null, 'Esc 必须关闭')
+
+    // ③ 点遮罩关；点面板内部**不**关
+    const laneC = await createLane()
+    await laneC.render()
+    await openCatalog(laneC)
+    await act(async () => {
+      catalogDialog(laneC).click()
+    })
+    await settleAll()
+    assert.ok(catalogDialog(laneC), '点面板内部不得关闭弹窗')
+    await act(async () => {
+      catalogOverlay(laneC).click()
+    })
+    await settleAll()
+    assert.equal(catalogDialog(laneC), null, '点遮罩必须关闭')
+
+    assert.deepEqual(laneC.postCalls(), [], '三种关法都不该发任何请求')
+  })
+
+  it('C5 「移除」两步确认：第一次只改文案（零请求）、点别处复原；第二次才 POST …/delete', async () => {
+    const deleted = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/delete$/.test(String(url))) {
+          deleted.push(String(url))
+          return jsonResponse({ ok: true, removed: 'ofox', providers: [], defaults: { provider: '' } })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+
+    const removeButton = () => lane.container.querySelector('[data-pxm-vendor-remove]')
+    assert.ok(removeButton(), '厂商卡片行动作里必须有「移除」（[data-pxm-vendor-remove]）')
+    assert.equal(removeButton().textContent.trim(), '移除')
+
+    // 第一次点：只改文案，一个请求都不发
+    await lane.click(removeButton())
+    assert.equal(removeButton().textContent.trim(), '确认移除', '第一次点只把文案改成「确认移除」')
+    assert.deepEqual(lane.postCalls(), [], '第一次点不得发任何请求（两步确认的第一半）')
+
+    // 点别处 → 复原（仍然零请求）
+    await act(async () => {
+      lane.window.document.body.dispatchEvent(new lane.window.Event('pointerdown', { bubbles: true }))
+    })
+    await settleAll()
+    assert.equal(removeButton().textContent.trim(), '移除', '点别处必须把文案复原')
+    assert.deepEqual(lane.postCalls(), [], '复原过程不得发任何请求')
+
+    // 再来一次：第一次 → 第二次，这一下才真的删
+    await lane.click(removeButton())
+    assert.equal(removeButton().textContent.trim(), '确认移除')
+    assert.deepEqual(lane.postCalls(), [], '第二次点之前仍然不得发请求')
+    await lane.click(removeButton())
+
+    assert.equal(deleted.length, 1, `第二次点必须恰好发 1 次 POST，实际 ${deleted.length}`)
+    assert.match(deleted[0], /\/api\/providers\/ofox\/delete$/, '目标必须是 POST api/providers/<id>/delete')
+    const posts = lane.postCalls()
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].method, 'POST', '本仓库只支持 GET/POST：移除也走 POST，不是 DELETE')
+  })
+
+  it('C6 副标题三种映射：official / aggregator / custom 各断言一次', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openCatalog(lane)
+
+    const subtitleOf = (id) => {
+      const card = catalogCard(lane, id)
+      assert.ok(card, `目录里必须有 id="${id}" 这张卡`)
+      const node = card.querySelector('[data-pxm-catalog-subtitle]')
+      assert.ok(node, `id="${id}" 的卡片必须有副标题（[data-pxm-catalog-subtitle]）`)
+      return (node.textContent ?? '').trim()
+    }
+
+    assert.equal(subtitleOf('openai'), '官方 API 接入', 'group=official → 「官方 API 接入」')
+    assert.equal(subtitleOf('siliconflow'), '聚合接入', 'group=aggregator → 「聚合接入」')
+    assert.equal(subtitleOf('custom'), '自定义接入', 'group=custom → 「自定义接入」')
+  })
+})
+
 
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
 

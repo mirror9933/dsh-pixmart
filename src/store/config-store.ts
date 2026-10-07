@@ -65,8 +65,11 @@ export class ConfigStore {
    *   - 已存在的厂商**一个字段都不覆盖**（用户填的 baseUrl / apiKey / models 逐字节不变）；
    *   - `defaults` / `limits` 完全以文件为准（尤其 `defaults.provider`，不会被工厂值改掉）；
    *   - **只改内存、不碰磁盘**：补齐不做任何写盘，文件只在用户显式保存时才落盘。
-   *     代价是"在文件里删掉某厂商，下次 load 会被补回来"——彻底移除需要"禁用列表"或
-   *     "添加厂商"UI，本次不做（docs/contract-notes.md §26.4 已知限制）。
+   *
+   * **2026-10-12 更新**：上一条的代价（"在文件里删掉某厂商，下次 load 会被补回来"）**已经修掉**——
+   * 配置里新增了 `removedProviders`（删除厂商时的墓碑），`applyFactoryPresets` 会跳过其中的 id，
+   * 设置页也有了「添加 / 移除厂商」的写路径（docs/contract-notes.md §31）。所以现在的语义是：
+   * **出厂预设只在"从未被删过"时补齐**。
    *
    * 幂等：每次 load 都从文件重新解析再补，所以连续两次 load 的厂商集合完全一致。
    * 缺失/损坏分支**不需要**补齐：那两条路径本来就返回 `defaultConfig()`。

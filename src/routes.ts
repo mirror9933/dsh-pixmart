@@ -16,7 +16,14 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { findProvider, toProviderView, type PixmartConfig, type ProviderConfig } from './config.js'
+import {
+  defaultConfig,
+  findProvider,
+  toProviderView,
+  type PixmartConfig,
+  type ProviderConfig,
+} from './config.js'
+import { PROVIDER_CATALOG, catalogView, findCatalogEntry, providerFromCatalog } from './catalog.js'
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
 import { TrashError, type ProjectSummaryWithModules } from './store/project-store.js'
@@ -548,9 +555,28 @@ async function handleApi(
       // 注意**不再**回传已废弃的 `outputDir`（它已无任何行为）。
       exportDir: config.exportDir,
       providers: config.providers.map((provider) => toProviderView(provider)),
+      // 厂商目录（`src/catalog.ts`）：20 家可直接添加的厂商 + 各自的 `added`。
+      // 只读：设置页「添加模型提供商」用它列出候选，`added: true` 的项不重复给"添加"。
+      catalog: catalogView(config.providers.map((provider) => provider.id)),
       usage: runtime.usage.summary(),
       historical: historicalTotals(runtime.projectStore.list()),
     })
+    return
+  }
+
+  // POST /pixmart/api/providers —— 从厂商目录新增一个（写配置）
+  if (route === '/providers' || route === '/providers/') {
+    if (requirePost()) return
+    await handleAddProvider(runtime, response, readBody)
+    return
+  }
+
+  // POST /pixmart/api/providers/<id>/delete —— 从配置里移除一个（写配置）
+  // 注意：本仓库的路由层**只接受 GET/POST**（见文件头约定 4），所以"删除"是 POST。
+  const providerDeleteMatch = /^\/providers\/([^/]+)\/delete$/.exec(route)
+  if (providerDeleteMatch !== null) {
+    if (requirePost()) return
+    await handleDeleteProvider(runtime, providerDeleteMatch[1] as string, response)
     return
   }
 
@@ -625,6 +651,152 @@ async function requireProvider(
     return undefined
   }
   return { config, provider }
+}
+
+/**
+ * `POST /pixmart/api/providers` —— 从厂商目录（`src/catalog.ts`）**新增**一家。
+ *
+ * 请求体：`{ catalogId }`（目录条目的 id，如 `bailian`）。
+ *
+ * 新增出来的厂商是**空壳但是可用的起点**：`models` / `allowedSizes` 都留空
+ * （见 `providerFromCatalog`），用户接着在设置页填密钥、点「拉取模型」。
+ * 这里**不发明**任何模型名，也不抄任何厂商的尺寸表——尺寸由 `sizes.ts` 兜底。
+ *
+ * 错误码：`catalogId` 缺失/不在目录里 → 400 `unknown_catalog_id`；
+ * 该 id 已在配置里 → 409 `already_exists`（不覆盖用户已填的字段）。
+ * 写盘走 `ConfigStore.update()`（原子写 + 串行读改写），与其余写路由一致。
+ */
+async function handleAddProvider(
+  runtime: ToolRuntime,
+  response: HttpResponseLike,
+  readBody: BodyReader,
+): Promise<void> {
+  const body = await readBody()
+  // 非字符串 → BodyError(400 bad_field)，由 guard 统一回给客户端（与其余写路由同）。
+  const catalogId = pickStringField(body, 'catalogId')
+  const entry = catalogId.present ? findCatalogEntry(catalogId.value) : undefined
+  if (entry === undefined) {
+    const known = PROVIDER_CATALOG.map((item) => item.id).join(', ')
+    fail(
+      response,
+      400,
+      'unknown_catalog_id',
+      catalogId.present
+        ? `厂商目录里没有 "${catalogId.value}"；可用：${known}`
+        : `catalogId 缺失；可用：${known}`,
+    )
+    return
+  }
+
+  // 预检：早失败、少写一次盘。真正的判重在 mutate 里再做一次（见下）。
+  const config = await runtime.config()
+  if (config.providers.some((provider) => provider.id === entry.id)) {
+    fail(response, 409, 'already_exists', `厂商 "${entry.id}" 已在配置里，未做任何修改`)
+    return
+  }
+
+  const draft = providerFromCatalog(entry)
+  // `update()` 的 mutate 是串行的读改写：两个并发添加同一家厂商时，
+  // 后到的那个会在这里看到已存在并原样返回（不写第二份、不覆盖用户刚填的字段）。
+  let conflicted = false
+  const updated = await runtime.configStore.update((current) => {
+    if (current.providers.some((provider) => provider.id === entry.id)) {
+      conflicted = true
+      return current
+    }
+    return {
+      ...current,
+      providers: [...current.providers, draft],
+      // 重新添加一个被删过的出厂预设时，把它从"已删除"清单里摘掉：
+      // 留着它不会影响本次结果（present 优先），但会让人以为"删除记录还在"。
+      removedProviders: current.removedProviders.filter((id) => id !== entry.id),
+    }
+  })
+  if (conflicted) {
+    fail(response, 409, 'already_exists', `厂商 "${entry.id}" 已在配置里，未做任何修改`)
+    return
+  }
+
+  const added = updated.providers.find((provider) => provider.id === entry.id)
+  if (added === undefined) {
+    fail(response, 500, 'internal', `新增厂商 "${entry.id}" 后未在配置里找到`)
+    return
+  }
+  sendJson(response, 200, {
+    ok: true,
+    provider: toProviderView(added),
+    providers: updated.providers.map((provider) => toProviderView(provider)),
+    defaults: updated.defaults,
+    catalog: catalogView(updated.providers.map((provider) => provider.id)),
+  })
+}
+
+/**
+ * `POST /pixmart/api/providers/<id>/delete` —— **从配置里**移除一家厂商。
+ *
+ * 本仓库的路由层只接受 GET/POST（见文件头约定 4），所以"删除"是 POST。
+ *
+ * 三条语义：
+ *   1. 只是从 `providers` 里去掉这一项，**不动**它的数据目录（厂商没有数据目录）；
+ *      用户随时可以从目录再加回来；
+ *   2. 删的正是 `defaults.provider` 时，默认厂商改成剩余里的**第一个**（一个不剩则 `''`），
+ *      同时把 `defaults.model` 换成新默认厂商的第一个模型——旧模型名属于已删掉的厂商，
+ *      留着它下一次生图就会拿一个不存在的模型去打另一家；
+ *   3. **出厂预设（`defaultConfig().providers` 的 id，即 ofox / agnes）记进
+ *      `removedProviders`**：`applyFactoryPresets` 下次 `load()` 会跳过它，
+ *      删除才是持久的（这条同时修掉了 docs/contract-notes.md §26.4 的老限制）。
+ *      用户自己添加的厂商不需要记账。
+ *
+ * 错误码：id 非法 → 400 `bad_id`；配置里没有 → 404 `unknown_provider`。
+ */
+async function handleDeleteProvider(
+  runtime: ToolRuntime,
+  rawId: string,
+  response: HttpResponseLike,
+): Promise<void> {
+  const id = decodeProviderId(rawId)
+  if (!SAFE_SEGMENT.test(id)) {
+    fail(response, 400, 'bad_id', '非法的厂商 id')
+    return
+  }
+
+  const config = await runtime.config()
+  if (!config.providers.some((provider) => provider.id === id)) {
+    fail(response, 404, 'unknown_provider', `没有 id 为 "${id}" 的厂商`)
+    return
+  }
+
+  const factoryIds = new Set(defaultConfig().providers.map((provider) => provider.id))
+
+  const updated = await runtime.configStore.update((current) => {
+    const providers = current.providers.filter((provider) => provider.id !== id)
+    const fallback = providers[0]
+    return {
+      ...current,
+      providers,
+      defaults:
+        current.defaults.provider === id
+          ? {
+              ...current.defaults,
+              provider: fallback?.id ?? '',
+              model: fallback?.models[0] ?? '',
+            }
+          : current.defaults,
+      removedProviders:
+        factoryIds.has(id) && !current.removedProviders.includes(id)
+          ? [...current.removedProviders, id]
+          : current.removedProviders,
+    }
+  })
+
+  sendJson(response, 200, {
+    ok: true,
+    // 被删掉的厂商 id（字符串）。客户端只需要 `ok`，这里给 id 是为了可核对。
+    removed: id,
+    providers: updated.providers.map((provider) => toProviderView(provider)),
+    defaults: updated.defaults,
+    catalog: catalogView(updated.providers.map((provider) => provider.id)),
+  })
 }
 
 /**

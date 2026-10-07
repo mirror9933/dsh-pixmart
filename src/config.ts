@@ -31,7 +31,14 @@ export type ApiMode = 'images-generations' | 'images-edits' | 'chat-image' | 'ge
  */
 export type Dialect = 'standard' | 'ofox' | 'agnes'
 export type SizeMode = 'whitelist' | 'exact' | 'free'
-export type ProviderGroup = 'official' | 'aggregator'
+/**
+ * 厂商分组。
+ *
+ * `custom` 是设置页「自定义接入」（用户自填 baseUrl 的那种，目录里 `custom` 那条就是），
+ * 与 `official`（「官方 API 接入」）/ `aggregator`（「聚合接入」）并列。
+ * 它是**配置层**的分组；`src/catalog.ts` 的 `CatalogGroup` 是同一套取值。
+ */
+export type ProviderGroup = 'official' | 'aggregator' | 'custom'
 
 export interface ProviderConfig {
   readonly id: string
@@ -72,6 +79,18 @@ export interface LimitsConfig {
 export interface PixmartConfig {
   readonly version: number
   readonly providers: readonly ProviderConfig[]
+  /**
+   * **用户显式删掉的出厂预设 id**（`POST /providers/<id>/delete` 写，见 `src/routes.ts`）。
+   *
+   * `applyFactoryPresets` 每次 `load()` 都会把出厂预设里缺的厂商补回来；没有这份清单，
+   * 用户删掉的 ofox/agnes 下次启动就会"复活"（旧限制见 docs/contract-notes.md §26.4）。
+   * 有它之后：补入前先跳过这里列出的 id —— 删除是**持久**的。
+   *
+   * 只记**出厂预设**的 id（用户自己添加的厂商删掉就是删掉，不需要记账）；
+   * 用户从目录重新添加同一 id 时，路由会把它从这份清单里移除（不阻挡重新添加）。
+   * 默认 `[]`；解析容错（非数组/含非字符串项都按容错规则处理），写盘原样保留。
+   */
+  readonly removedProviders: readonly string[]
   readonly defaults: DefaultsConfig
   readonly limits: LimitsConfig
   /** `<moduleId>` 或 `<moduleId>.<fragment>` → 覆盖文本（见 prompts/build.ts）。 */
@@ -181,6 +200,8 @@ export function defaultConfig(): PixmartConfig {
   return {
     version: CONFIG_VERSION,
     providers: [provider, defaultAgnesProvider()],
+    // 出厂配置里没有"被用户删掉"的厂商——这份清单只由删除路由写入。
+    removedProviders: [],
     defaults: {
       provider: provider.id,
       model: provider.models[0] ?? '',
@@ -214,15 +235,14 @@ export interface FactoryPresetMerge {
  *      必须逐字节保持原样，哪怕它和出厂预设已经不一样（那正是用户自己的选择）；
  *   2. **只追加缺的**：`factory.providers` 里文件没有的 id 追加到**末尾**，用出厂预设、
  *      `apiKey` 为空（"尚未配置"状态）。追加在末尾，文件里的厂商顺序与 `providers[0]` 不变；
- *   3. **defaults / limits / 其它字段完全不动**：它们来自文件，包括 `defaults.provider`。
+ *   3. **跳过用户删掉的**：`config.removedProviders` 里的 id 即使文件里没有也**不补**。
+ *      这一条修掉了"删了的厂商下次 load 又回来"的老限制（旧限制见
+ *      docs/contract-notes.md §26.4）：删除由 `POST /providers/<id>/delete` 写进
+ *      `removedProviders`，从此补齐**不再**把它复活；
+ *   4. **defaults / limits / 其它字段完全不动**：它们来自文件，包括 `defaults.provider`。
  *      补齐厂商**不会**顺带改默认厂商——用户原来用 ofox，就还是 ofox；
- *   4. **不改写磁盘**：本函数是纯函数，`ConfigStore.load()` 只在内存里用它；文件只会在
+ *   5. **不改写磁盘**：本函数是纯函数，`ConfigStore.load()` 只在内存里用它；文件只会在
  *      用户后续显式保存（设置页）时才落盘。
- *
- * 取舍（**明说，不粉饰**）：因为出厂预设每次 load 都补齐，用户在文件里删掉某个厂商后
- * 它下次 load 会被**补回来**。要"彻底移除"需要"禁用列表"或"添加厂商"UI——**本次不做**，
- * 记在 `docs/contract-notes.md` §26.4 的已知限制里。好处是：补齐只发生在内存，
- * 用户没保存之前磁盘上的文件一个字节都没变，"删掉"这个动作仍然保留着最后可能。
  *
  * @param config - 已解析的落盘配置（用户为准）。
  * @param factory - 出厂预设，默认 `defaultConfig()`。
@@ -232,7 +252,10 @@ export function applyFactoryPresets(
   factory: PixmartConfig = defaultConfig(),
 ): FactoryPresetMerge {
   const present = new Set(config.providers.map((provider) => provider.id))
-  const missing = factory.providers.filter((provider) => !present.has(provider.id))
+  const removed = new Set(config.removedProviders)
+  const missing = factory.providers.filter(
+    (provider) => !present.has(provider.id) && !removed.has(provider.id),
+  )
   if (missing.length === 0) return { config, added: [] }
 
   return {
@@ -438,7 +461,7 @@ const API_MODES: readonly ApiMode[] = [
 ]
 const DIALECTS: readonly Dialect[] = ['standard', 'ofox', 'agnes']
 const SIZE_MODES: readonly SizeMode[] = ['whitelist', 'exact', 'free']
-const GROUPS: readonly ProviderGroup[] = ['official', 'aggregator']
+const GROUPS: readonly ProviderGroup[] = ['official', 'aggregator', 'custom']
 
 function parseProvider(
   raw: unknown,
@@ -545,6 +568,15 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
     config: {
       version: pickNumber(raw, 'version', CONFIG_VERSION, warnings, 'config', { min: 1, max: 1_000 }),
       providers,
+      // 用户显式删掉的出厂预设 id（`POST /providers/<id>/delete` 写）。
+      // 容错：非数组/含空串按 `pickStringArray` 的既有规则处理；缺键用 `fallback` 的值。
+      removedProviders: pickStringArray(
+        raw,
+        'removedProviders',
+        fallback.removedProviders,
+        warnings,
+        'config',
+      ),
       defaults: {
         provider: resolvedProvider,
         model: resolvedModel,

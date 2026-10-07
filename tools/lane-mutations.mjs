@@ -1074,6 +1074,61 @@ const MUTATIONS = [
       },
     ],
   },
+  {
+    id: 'M46-catalog-grid-one-column',
+    /**
+     * 「添加模型配置」目录弹窗的网格退回**单列**。
+     *
+     * 参考实现写的是 `grid-template-columns:repeat(auto-fill,minmax(280px,1fr))`
+     * （`pixmart-ai/src/renderer/src/pages/Settings.tsx:969`）——**自适应列数**：
+     * 截图里那 3 列是"面板 ~960px + 每列最小 280px"算出来的，窗口变宽会自动加列。
+     * 把它写死成 `repeat(1, …)`，卡片就变成一列长条：视觉上不再是"厂商网格"，
+     * 而"列数由宽度决定"这条性质也没了。
+     *
+     * 期望由 `vendors.test.mjs` 的 **3.7** 抓住：那一条既断 `gridTemplateColumns`
+     * 解析出 3 条轨道 / 每条 ≥280px，又断等效几何（前三张卡同一行、第 4 张换行）。
+     */
+    bug: '目录弹窗的网格从 `repeat(auto-fill, minmax(280px,1fr))` 退回单列（`repeat(1, …)`）—— 自适应列数丢失',
+    expect: ['3.7 点虚线按钮'],
+    edits: [
+      {
+        // 锚点 = 目录网格那一行（含 `S.catalogGridMin`，与文件里另外两处
+        // `repeat(auto-fill, minmax(120px/180px,1fr))` 区分得开）。
+        find: "                    gridTemplateColumns: 'repeat(auto-fill, minmax(' + S.catalogGridMin + ', 1fr))',",
+        replace: "                    gridTemplateColumns: 'repeat(1, minmax(' + S.catalogGridMin + ', 1fr))',",
+      },
+    ],
+  },
+  {
+    id: 'M47-remove-one-step',
+    /**
+     * 「移除厂商」的**两步确认**退回一步直发。
+     *
+     * 正确形态：第一次点只把文案换成「确认移除」（一个请求都不发），第二次点才
+     * `POST api/providers/<id>/delete`。把 `if (!confirmRemove) { … return }` 那段删掉，
+     * 第一次点就会**立刻删掉一家厂商** —— 误点一下就没有第二次机会了。
+     *
+     * 期望由 `vendors.test.mjs` 的 **3.8** 抓住（真浏览器行为：第一次点零请求、
+     * 第二次点恰好 1 次 POST）—— 这一条**不能**只靠 jsdom lane，因为
+     * `tools/lane-mutations.mjs` 只跑 `test/browser/*`。
+     */
+    bug: '「移除厂商」的两步确认退回一步直发（第一次点就发 POST …/delete，误点即删）',
+    expect: ['3.8 「移除」两步确认'],
+    edits: [
+      {
+        // 锚点 = 「移除」按钮 onClick 里的两段式分支（`confirmRemove` 只在这里被置真，
+        // 全文件唯一）。
+        find: [
+          '                  if (!confirmRemove) {',
+          '                    setConfirmRemove(true)',
+          '                    return',
+          '                  }',
+          '                  setConfirmRemove(false)',
+        ].join('\n'),
+        replace: '                  setConfirmRemove(false)',
+      },
+    ],
+  },
 ]
 
 function applyMutation(source, mutation) {
