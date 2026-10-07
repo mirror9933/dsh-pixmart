@@ -10,14 +10,16 @@ dsh plugin --profile px add dsh-pixmart                  # 已发布到 npm，�
 dsh --profile px --dump-config                           # 输出里应出现 dsh-pixmart 层
 ```
 
-**在线安装**（`dsh plugin add <spec>`）—— 按推荐顺序：
-- **① 包名 `dsh-pixmart`**（**已发布到 npm**，最省事）；**② Release 的 `.tgz`**（**零闸门**、包内自带 `lib/`+`dist/`）：`https://github.com/mirror9933/dsh-pixmart/releases/download/v0.1.0/dsh-pixmart-0.1.0.tgz`；**③ 本地绝对路径**如 `E:\Programs\agent\dsh-pixmart`（开发用，链接安装**不会**触发构建，先自己 `pnpm build && pnpm build:client`）。
-- ⚠️ **别填 GitHub 仓库地址**（`https://github.com/mirror9933/dsh-pixmart`）：它算 git 依赖，pnpm 11 会用构建闸门拦下 `prepare`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），得手改 profile 的 `allowBuilds` 精确键（**含 commit sha、每次提交都变**），DSH 的「允许并重试」写的是裸包名、救不了 ⇒ 请用 ①②。
+在线安装（`dsh plugin add <spec>`），按推荐顺序：
 
-**改了什么 → 怎么生效**：host 半（`src/` → `lib/`）**重启宿主**；client 半（`client/client.js` → `dist/client.js`）先 `pnpm build:client` 再**刷新页面**；`package.json` / `exports` / profile bundles **重启宿主**。
-（`dsh` 的退出码恒为 1，**别用退出码判断成功**，看输出里的 `Done in …`。）
+- **包名** `dsh-pixmart` —— 已发布，最省事；
+- **Release 的 `.tgz`**（零闸门，包内自带 `lib/`+`dist/`）：
+  `https://github.com/mirror9933/dsh-pixmart/releases/download/v0.1.0/dsh-pixmart-0.1.0.tgz`
+- **本地目录**（开发用）：链接安装不触发构建，先自己 `pnpm build && pnpm build:client`。
 
-## 首次使用（这步不能省）
+⚠️ **别填仓库地址**：它算 git 依赖，pnpm 11 的构建闸门会拦下 `prepare`（`allowBuilds` 要精确键、含 commit sha，DSH 的「允许并重试」救不了）。用上面前两条。
+
+## 首次使用
 
 **插件出厂不带任何厂商**，第一次必须先自己加一家：
 
@@ -33,7 +35,7 @@ dsh --profile px --dump-config                           # 输出里应出现 ds
 
 ## 怎么用
 
-直接说人话，不用记工具名：「给这个产品做一张 1:1 的白底主图」「照这张爆款的风格换成我的产品」「出一套详情图，先给我看提示词」。
+「给这个产品做一张 1:1 的白底主图」「照这张爆款的风格换成我的产品」「出一套详情图，先给我看提示词」。
 
 Agent 的默认顺序（为了省钱）：`pixmart_prompt`（免费）→ `pixmart_check_size`（免费）→ `pixmart_generate` / `pixmart_edit` / `pixmart_batch`（**计费**）。
 **计费次数 = 项数 × 每项张数**，批量前 Agent 会先报给你确认；单张实测 **1–3 分钟**，等待期间别让它重复调同一个工具。
@@ -67,9 +69,6 @@ pnpm prepack        # pack / publish 前自动跑 → lib/ + dist/（两者同�
 pnpm verify         # typecheck + build + 宿主 lane + 浏览器 lane，全绿才算过（计数以它输出为准）
 ```
 
-`dist/` **不入库**：它是 `build:client` 的产物、可再生，而源码在 `client/`；忘了重建会被
-`test/strip-test-hooks.test.mjs` 的陈旧性守卫抓住（不一致就直接失败）。**改了 `client.js` 必须 `pnpm build:client`，刷新才看到新字节。**
-变异纪律：`node tools/lane-mutations.mjs` 把 client 实现**故意改坏**再跑浏览器 lane，**对应用例必须真的变红**，该红没红就非零退出（证明断言不是空跑）。浏览器 lane 需要系统已装 Edge / Chrome。
 
 目录：
 
