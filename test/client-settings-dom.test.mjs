@@ -96,7 +96,7 @@ function providersPayload(over = {}) {
     defaults: { provider: 'ofox', model: '', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 3, retentionDays: 0 },
     providers: [providerView()],
-    // 宿主 `GET api/providers` 的**厂商目录**（task-4 §1 冻结形状）：20 条。
+    // 宿主 `GET api/providers` 的**厂商目录**（task-4 §1 冻结形状）：**13 条、与真目录一致**。
     catalog: catalogFixture(),
     usage: { requests: 0, ok: 0, failed: 0, images: 0 },
     historical: { projects: 0, images: 0, note: '' },
@@ -106,8 +106,15 @@ function providersPayload(over = {}) {
 
 /**
  * 目录条目（宿主 `catalog[]` 的一项）：`{id,label,baseUrl,group,imageCapable,note,added}`。
- * 三组各至少一条、`imageCapable:false` 至少一条、`added:true` 至少两条 ——
- * 六条断言要的每一种形态都在夹具里**真的存在**，否则断言会退化成"没数据也绿"。
+ *
+ * 2026-10-12（task-15）：条目与**真目录逐条对齐**（只保留真目录里真有的 13 家，
+ * `group` / `imageCapable` 也取真目录的值）。以前夹具里摆着 `mimo`（小米 MiMo）、`kimi`、
+ * `custom`（自定义）这些**真目录里已经没有的厂商**，虽然不会变红（客户端渲染的是注入的 props），
+ * 但会误导后来看代码的人。
+ *
+ * 两种形态仍然**必须真的存在**（否则相应断言退化成"没数据也绿"）：
+ *   - `added: true` 至少两条（google / ofox）—— 支撑"已添加不可选 + 「（已添加）」后缀"那两条断言；
+ *   - `imageCapable: false` 至少一条（tencent）—— 保持夹具与真目录同形（目前**没有**断言依赖它）。
  */
 function catalogEntry(over = {}) {
   return {
@@ -122,29 +129,27 @@ function catalogEntry(over = {}) {
   }
 }
 
-/** 20 条目录：8 official + 9 aggregator + 3 custom（条数与宿主契约一致）。 */
+/**
+ * **13 条**目录：逐条等于真目录（含 `group` / `imageCapable`），排列顺序也就是
+ * 下拉展示的顺序（label 的 `zh-Hans-CN` 升序）—— 与 `EXPECTED_OPTION_ORDER` 一一对应。
+ *
+ * 不再有 `custom`（自定义）：用户要求下拉里不再出现它（走独立的「自定义模型 API」 tab）。
+ */
 function catalogFixture() {
   return [
-    catalogEntry({ id: 'openai', label: 'OpenAI' }),
+    catalogEntry({ id: 'bailian', label: '阿里云百炼' }),
+    catalogEntry({ id: 'volcengine', label: '火山方舟' }),
+    catalogEntry({ id: 'sensenova', label: '商汤 SenseNova' }),
+    catalogEntry({ id: 'tencent', label: '腾讯云', imageCapable: false }),
+    catalogEntry({ id: 'agnes', label: 'Agnes AI' }),
+    catalogEntry({ id: 'aihubmix', label: 'AIHubMix', group: 'aggregator' }),
     catalogEntry({ id: 'anthropic', label: 'Anthropic', imageCapable: false }),
-    catalogEntry({ id: 'google', label: 'Google', added: true }),
-    catalogEntry({ id: 'azure', label: 'Azure OpenAI' }),
-    catalogEntry({ id: 'mistral', label: 'Mistral' }),
-    catalogEntry({ id: 'cohere', label: 'Cohere' }),
-    catalogEntry({ id: 'xai', label: 'xAI' }),
-    catalogEntry({ id: 'deepseek', label: 'DeepSeek' }),
+    catalogEntry({ id: 'google', label: 'Google AI', added: true }),
     catalogEntry({ id: 'ofox', label: 'Ofox', group: 'aggregator', added: true }),
+    catalogEntry({ id: 'openai', label: 'OpenAI' }),
+    catalogEntry({ id: 'openrouter', label: 'OpenRouter', group: 'aggregator', imageCapable: false }),
+    catalogEntry({ id: 'sharellm-intl', label: 'ShareLLM 国际', group: 'aggregator', imageCapable: false }),
     catalogEntry({ id: 'siliconflow', label: 'SiliconFlow', group: 'aggregator' }),
-    catalogEntry({ id: 'openrouter', label: 'OpenRouter', group: 'aggregator' }),
-    catalogEntry({ id: 'together', label: 'Together', group: 'aggregator' }),
-    catalogEntry({ id: 'fireworks', label: 'Fireworks', group: 'aggregator' }),
-    catalogEntry({ id: 'replicate', label: 'Replicate', group: 'aggregator' }),
-    catalogEntry({ id: 'fal', label: 'Fal', group: 'aggregator' }),
-    catalogEntry({ id: 'novita', label: 'Novita', group: 'aggregator' }),
-    catalogEntry({ id: 'dashscope', label: 'DashScope', group: 'aggregator' }),
-    catalogEntry({ id: 'custom', label: '自定义', group: 'custom' }),
-    catalogEntry({ id: 'custom-openai', label: '自定义（OpenAI 兼容）', group: 'custom' }),
-    catalogEntry({ id: 'selfhost', label: '自建端点', group: 'custom', imageCapable: false }),
   ]
 }
 
@@ -1215,61 +1220,48 @@ async function switchAddMode(lane, value) {
 /**
  * 「提供商」下拉的选项值，按 DOM 顺序。
  *
- * task-8 起：下拉**列出全部目录条目**（不再只列未添加的），顺序规则不变 ——
- * `localeCompare(..., 'zh-Hans-CN')` 升序 + `custom` 那一组固定排最后
- * （与我们 `sortCatalog` 的稳定规则一致）。这里**独立复述**一遍，实现漂移就红。
+ * task-8 起：下拉**列出全部目录条目**（不再只列未添加的）；task-15 起条目与真目录一致（**13 条**）。
+ * 顺序规则不变—— `localeCompare(..., 'zh-Hans-CN')` 升序
+ * （`sortCatalog` 里那条"`custom` 那一组固定排最后"仍在代码里，但真目录里已经没有 `custom`，
+ * 所以断言里**不再有**这条期望）。这里**独立复述**一遍，实现漂移就红。
  */
 const EXPECTED_OPTION_ORDER = [
+  'bailian',
+  'volcengine',
+  'sensenova',
+  'tencent',
+  'agnes',
+  'aihubmix',
   'anthropic',
-  'azure',
-  'cohere',
-  'dashscope',
-  'deepseek',
-  'fal',
-  'fireworks',
   'google',
-  'mistral',
-  'novita',
   'ofox',
   'openai',
   'openrouter',
-  'replicate',
+  'sharellm-intl',
   'siliconflow',
-  'together',
-  'xai',
-  'custom',
-  'custom-openai',
-  'selfhost',
 ]
 /** 夹具里已添加的两家（`catalogFixture()` 的 google / ofox）。 */
 const ALREADY_ADDED = ['google', 'ofox']
 /** 全部条目数（= 宿主 catalog 的条数；`EXPECTED_OPTION_ORDER` 反过来就是它）。 */
 const EXPECTED_ALL_COUNT = EXPECTED_OPTION_ORDER.length
-/** 默认选中项 = 顺序里**第一个未添加**的。 */
+/** 默认选中项 = 顺序里**第一个未添加**的（本夹具 = bailian）。 */
 const EXPECTED_FIRST_ADDABLE =
   EXPECTED_OPTION_ORDER.find((id) => !ALREADY_ADDED.includes(id)) ?? ''
 /** 选项文案：宿主给的可读名（与 id 不同，故意有出入的名字才验得出"用的是 label"）。 */
 const EXPECTED_LABEL = {
+  bailian: '阿里云百炼',
+  volcengine: '火山方舟',
+  sensenova: '商汤 SenseNova',
+  tencent: '腾讯云',
+  agnes: 'Agnes AI',
+  aihubmix: 'AIHubMix',
   anthropic: 'Anthropic',
-  azure: 'Azure OpenAI',
-  cohere: 'Cohere',
-  dashscope: 'DashScope',
-  deepseek: 'DeepSeek',
-  fal: 'Fal',
-  fireworks: 'Fireworks',
-  google: 'Google',
-  mistral: 'Mistral',
-  novita: 'Novita',
+  google: 'Google AI',
   ofox: 'Ofox',
   openai: 'OpenAI',
   openrouter: 'OpenRouter',
-  replicate: 'Replicate',
+  'sharellm-intl': 'ShareLLM 国际',
   siliconflow: 'SiliconFlow',
-  together: 'Together',
-  xai: 'xAI',
-  custom: '自定义',
-  'custom-openai': '自定义（OpenAI 兼容）',
-  selfhost: '自建端点',
 }
 
 describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步确认', () => {
@@ -1327,7 +1319,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.equal(addPanel(lane, 'custom').hidden, true, '切回 catalog 后 custom 面板必须再隐藏')
   })
 
-  it('A3 「提供商」下拉是一个原生 select：20 条全列、已添加的 disabled 且标注「（已添加）」', async () => {
+  it('A3 「提供商」下拉是一个原生 select：13 条全列、已添加的 disabled 且标注「（已添加）」', async () => {
     const lane = await createLane()
     await lane.render()
     await openAddCard(lane)
@@ -1337,14 +1329,15 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.equal(select.tagName, 'SELECT', '官方就是原生 <select class="input selectInput"]，不是自绘下拉')
 
     /*
-     * task-8：**20 条全列**（以前只列未添加的，用户在自己已有 ofox / agnes 时只看到 18 条，
+     * task-8：**全部目录条目都列**（以前只列未添加的，用户在自己已有某几家时只看到少掉那几条，
      * 会以为"目录里少了厂商"）。已添加的那些仍然在，只是 `disabled` + 后缀「（已添加）」。
+     * task-15 起：夹具条目 = 真目录的 13 家（下拉里再也没有 `custom` 那一条）。
      */
     const values = [...select.options].map((option) => option.value)
     assert.deepEqual(
       values,
       EXPECTED_OPTION_ORDER,
-      'select 的选项必须 = 目录全部条目（20 条）、顺序不变；实测 ' + JSON.stringify(values),
+      'select 的选项必须 = 目录全部条目（13 条）、顺序不变；实测 ' + JSON.stringify(values),
     )
     assert.equal(values.length, EXPECTED_ALL_COUNT, '下拉必须列出全部 ' + String(EXPECTED_ALL_COUNT) + ' 家')
 
@@ -1377,7 +1370,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
       }
     }
 
-    // 默认选中项 = **第一个未添加**的（不是 DOM 里第一个 —— 那是 anthropic，恰好也未添加，
+    // 默认选中项 = **第一个未添加**的（不是"顺序里第一个"——那是 bailian，它恰好也未添加，
     // 所以这里额外把"选中的一定不是 disabled"这条独立断出来，顺序变了也不会误过）。
     assert.equal(select.value, EXPECTED_FIRST_ADDABLE, '默认选中第一个**未添加**的厂商')
     const selected = [...select.options].find((option) => option.value === select.value)
@@ -1664,7 +1657,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     const lane = await createLane({ respond: probeResponder(seen) })
     await lane.render()
     await openAddCard(lane)
-    // 默认选中第一个未添加的厂商（夹具 = anthropic）；密钥是唯一的必填项。
+    // 默认选中第一个未添加的厂商（夹具 = `EXPECTED_FIRST_ADDABLE`）；密钥是唯一的必填项。
     await lane.type(addKeyInput(lane), SECRET)
 
     await lane.click(probeTest(lane))
@@ -1672,7 +1665,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.equal(seen.length, 1, '「测试连接」必须恰好发 1 次探测，实际 ' + String(seen.length))
     assert.deepEqual(
       seen[0],
-      { action: 'test', catalogId: 'anthropic', apiKey: SECRET },
+      { action: 'test', catalogId: EXPECTED_FIRST_ADDABLE, apiKey: SECRET },
       'body 必须恰为 {action,catalogId,apiKey}（API 地址没填就**不许**出现 baseUrl）',
     )
     // 注意不能用 `lane.fetches[0]`：那一条是首屏的 `GET api/providers` —— 目标要看**探测**自身。
@@ -1705,7 +1698,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.equal(probes.length, 1, '「拉取模型」必须恰好发 1 次探测，实际 ' + String(probes.length))
     assert.deepEqual(
       probes[0],
-      { action: 'models', catalogId: 'anthropic', apiKey: SECRET },
+      { action: 'models', catalogId: EXPECTED_FIRST_ADDABLE, apiKey: SECRET },
       'body 必须恰为 {action,catalogId,apiKey}',
     )
     assert.ok(pulledList(lane), '拉取后必须就地出现列表（[data-pxm-add-model-list]）')
@@ -1758,7 +1751,7 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     assert.equal(adds.length, 1, '「保存」必须恰好发 1 次 POST api/providers，实际 ' + String(adds.length))
     assert.deepEqual(
       adds[0],
-      { catalogId: 'anthropic', apiKey: SECRET, models: [PROBE_MODELS[0], PROBE_MODELS[1]] },
+      { catalogId: EXPECTED_FIRST_ADDABLE, apiKey: SECRET, models: [PROBE_MODELS[0], PROBE_MODELS[1]] },
       'body 必须恰为 {catalogId, apiKey, models:[勾选的那 2 条，按拉取顺序]}',
     )
     // 凑齐一整套：探测 2 次（1 test / 1 models 之外的 pull）+ 新增 1 次 = 3 次 POST。
@@ -1914,8 +1907,8 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
     await lane.render()
     await openAddCard(lane)
 
-    // A = anthropic（默认选中）：填密钥 + 拉一次模型 + 勾一条 + 测一次连接。
-    assert.equal(providerSelect(lane).value, 'anthropic', '默认选中 A（anthropic）')
+    // A = 默认选中的那家（`EXPECTED_FIRST_ADDABLE`）：填密钥 + 拉一次模型 + 勾一条 + 测一次连接。
+    assert.equal(providerSelect(lane).value, EXPECTED_FIRST_ADDABLE, '默认选中第一个未添加的那家')
     await lane.type(addKeyInput(lane), KEY_A)
     await lane.click(probeModels(lane))
     assert.ok(pulledList(lane), 'A 家拉到的列表必须渲染出来')
@@ -1929,13 +1922,13 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
     )
 
     // 同一个厂商**再选一次**：目标标识没变 → 什么都不许清（"打字打一半"也不能被清）。
-    await lane.select(providerSelect(lane), 'anthropic')
+    await lane.select(providerSelect(lane), EXPECTED_FIRST_ADDABLE)
     assert.equal(addKeyInput(lane).value, KEY_A, '目标是同一家时不得清掉密钥')
     assert.ok(pulledList(lane), '目标是同一家时不得清掉拉到的列表')
 
-    // 切到 B = azure：属于 A 的输入必须全丢。
-    await lane.select(providerSelect(lane), 'azure')
-    assert.equal(providerSelect(lane).value, 'azure', '下拉必须停在 B')
+    // 切到 B = `openai`：属于 A 的输入必须全丢。
+    await lane.select(providerSelect(lane), 'openai')
+    assert.equal(providerSelect(lane).value, 'openai', '下拉必须停在 B')
     assert.equal(addKeyInput(lane).value, '', '切厂商后**密钥框必须为空**（这正是用户报的 bug）')
     assert.equal(pulledList(lane), null, '切厂商后拉到的列表必须消失（它属于 A）')
     assert.equal(probeResult(lane), null, '切厂商后 A 家的探测结果不该继续显示')
@@ -2009,7 +2002,7 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
         const method = String(init?.method ?? 'GET').toUpperCase()
         if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
           posted.push(String(init?.body ?? '{}'))
-          return jsonResponse({ ok: true, provider: providerView({ id: 'azure', label: 'Azure OpenAI' }) })
+          return jsonResponse({ ok: true, provider: providerView({ id: 'openai', label: 'OpenAI' }) })
         }
         return jsonResponse(providersPayload())
       },
@@ -2017,12 +2010,12 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
     await lane.render()
     await openAddCard(lane)
 
-    // 在 A（anthropic）里填密钥。
+    // 在 A（默认选中的那家）里填密钥。
     await lane.type(addKeyInput(lane), KEY_A)
     assert.equal(addKeyInput(lane).value, KEY_A)
 
-    // 切到 B（azure）→ 填 B 自己的密钥 → 保存。
-    await lane.select(providerSelect(lane), 'azure')
+    // 切到 B（`openai`）→ 填 B 自己的密钥 → 保存。
+    await lane.select(providerSelect(lane), 'openai')
     assert.equal(addKeyInput(lane).value, '', '切到 B 那一刻 A 的密钥必须已经不在框里')
     await lane.type(addKeyInput(lane), KEY_B)
     await lane.click(addSave(lane))
@@ -2030,7 +2023,7 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
     assert.equal(posted.length, 1, `保存必须恰好 1 次 POST，实际 ${posted.length}`)
     const raw = posted[0]
     const body = JSON.parse(raw)
-    assert.equal(body.catalogId, 'azure', '新增的必须是 B（azure）')
+    assert.equal(body.catalogId, 'openai', '新增的必须是 B（openai）')
     assert.equal(body.apiKey, KEY_B, 'body 里的 apiKey 必须是 **B 的**，实测 ' + JSON.stringify(body.apiKey))
     // 显式反向断言：A 的密钥绝不能出现在请求体里（原始文本也要查 —— 防"藏在别的字段"）。
     assert.notEqual(body.apiKey, KEY_A, 'A 的密钥绝不能被当成 B 的密钥提交')
@@ -2041,7 +2034,7 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
     )
     assert.deepEqual(
       body,
-      { catalogId: 'azure', apiKey: KEY_B },
+      { catalogId: 'openai', apiKey: KEY_B },
       'body 必须恰为 {catalogId, apiKey}（没有多余字段）',
     )
   })

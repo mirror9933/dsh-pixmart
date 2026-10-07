@@ -561,7 +561,7 @@ async function handleApi(
       // 注意**不再**回传已废弃的 `outputDir`（它已无任何行为）。
       exportDir: config.exportDir,
       providers: config.providers.map((provider) => toProviderView(provider)),
-      // 厂商目录（`src/catalog.ts`）：20 家可直接添加的厂商 + 各自的 `added`。
+      // 厂商目录（`src/catalog.ts`）：13 家可直接添加的厂商 + 各自的 `added`。
       // 只读：设置页「添加模型提供商」用它列出候选，`added: true` 的项不重复给"添加"。
       catalog: catalogView(config.providers.map((provider) => provider.id)),
       usage: runtime.usage.summary(),

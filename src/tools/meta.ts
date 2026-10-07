@@ -90,7 +90,7 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
       '列出 dsh-pixmart 已配置的厂商、模型、默认值与限制，并说明密钥是否就位。',
       '调用时机：生图前确认用哪家、哪个模型；或排查"为什么报没有密钥"。',
       '不返回任何密钥内容，只返回是否存在。',
-      '返回里的 catalog 是**只读**的厂商目录（20 家可直接添加的厂商 + 各自 added）——',
+      '返回里的 catalog 是**只读**的厂商目录（13 家可直接添加的厂商 + 各自 added）——',
       'Agent **不能**新增/移除厂商（本工具没有这类 action），那是设置页「添加模型提供商」的事。',
       TOOL_FOOTER,
     ].join('\n'),

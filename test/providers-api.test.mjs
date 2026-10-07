@@ -14,7 +14,7 @@
  *      非环回来源 → 403；
  *   7. **写后重取**：`GET api/providers` 必须立刻反映刚写入的值（用真实 runtime，
  *      钉住"config() 吃首次读盘快照"这个实测缺陷）。
- *   8. `GET /providers` 的只读 `catalog`（14 条目录 = 13 具名 + `custom`，+ 真实 `added`）；
+ *   8. `GET /providers` 的只读 `catalog`（13 条目录 = 全部具名厂商，**没有 `custom`**，+ 真实 `added`）；
  *   9. `POST /providers`（新增：目录 `catalogId` / 自定义 `custom` 二选一 + 可选
  *      `baseUrl` 覆盖 + 可选 `apiKey`）与 `POST /providers/<id>/delete`（移除）：
  *      落盘 / 409 / 400 / 404、默认厂商被删后的改写、
@@ -1135,7 +1135,7 @@ describe('写路由的方法与请求体约束', () => {
 // 出厂清单现在是空的，`load()` 一个厂商都不会补），所以每个用例开始时是 `['ofox', 'agnes']`。
 
 describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
-  it('catalog 14 条（13 具名 + custom），added 按当前配置算（ofox / agnes 已添加）', async () => {
+  it('catalog 13 条（全部具名，没有 custom），added 按当前配置算（ofox / agnes 已添加）', async () => {
     const { dir, store } = makeStore()
     try {
       const webServer = makeFakeWebServer()
@@ -1144,15 +1144,20 @@ describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
       const result = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
 
       assert.equal(result.status, 200)
-      assert.equal(result.json.catalog.length, 14)
+      assert.equal(result.json.catalog.length, 13)
       const byId = new Map(result.json.catalog.map((entry) => [entry.id, entry]))
 
-      // 目录里 custom 的 baseUrl 是空串（由用户自填）；bailian 的地址逐字符正确
-      assert.equal(byId.get('custom').baseUrl, '')
-      assert.equal(byId.get('custom').group, 'custom')
+      // bailian 的地址逐字符正确（目录里已没有 custom 那种空串 baseUrl 的条目）
       assert.equal(byId.get('bailian').baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1')
       assert.equal(byId.get('bailian').imageCapable, true)
       assert.equal(typeof byId.get('bailian').note, 'string')
+      // 「自定义」不再是目录条目：设置页有独立的「自定义模型 API」tab
+      assert.equal(byId.get('custom'), undefined, '目录里不该再有 custom 条目')
+      assert.equal(
+        result.json.catalog.some((entry) => entry.group === 'custom'),
+        false,
+        '目录里不该有 group=custom 的条目',
+      )
 
       // added 是**真实**的：夹具里种了 ofox + agnes 两家
       assert.deepEqual(
@@ -1241,25 +1246,55 @@ describe('POST /pixmart/api/providers（从目录新增）', () => {
     }
   })
 
-  it('custom 的 baseUrl 是空串：照样能加（地址由用户随后在设置页填）', async () => {
+  it('「自定义」已从目录移除：catalogId:"custom" → 400；而模式 B 照旧能建（group 仍是 custom）', async () => {
+    // 本用例是「删了目录条目 ≠ 功能没了」的证据：
+    //   · 模式 A（目录）里再也没有 `custom` 这条 → 400 unknown_catalog_id；
+    //   · 模式 B（设置页「自定义模型 API」tab 走的路径）**不查目录**，照旧 200，落盘 group='custom'。
     const { dir, store } = makeStore()
     try {
       const webServer = makeFakeWebServer()
       const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
 
-      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+      const rejected = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
         body: { catalogId: 'custom' },
       })
 
-      assert.equal(added.status, 200)
-      assert.equal(added.json.provider.id, 'custom')
-      assert.equal(added.json.provider.baseUrl, '')
-      assert.equal(added.json.provider.group, 'custom')
-      assert.deepEqual(added.json.provider.models, [])
-      // 空 baseUrl 允许落盘（parseConfig 只记 warning，不拒绝）
+      assert.equal(rejected.status, 400)
+      assert.equal(rejected.json.ok, false)
+      assert.equal(rejected.json.error.code, 'unknown_catalog_id')
+      assert.match(rejected.json.error.message, /custom/)
+      // 被拒的写入不落盘
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+
+      const created = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'custom', label: '我的中转', baseUrl: 'https://my-relay.example/v1' },
+          apiKey: 'sk-my-relay-secret',
+        },
+      })
+
+      assert.equal(created.status, 200)
+      assert.equal(created.json.ok, true)
+      assert.equal(created.json.provider.id, 'custom')
+      assert.equal(created.json.provider.group, 'custom', '自建厂商的 group 仍是 custom')
+      assert.equal(created.json.provider.baseUrl, 'https://my-relay.example/v1')
+      assert.deepEqual(created.json.provider.models, [])
+      // 目录里依然没有这条（删的是目录条目，不是功能）
+      assert.equal(
+        created.json.catalog.some((entry) => entry.id === 'custom'),
+        false,
+        '目录里不该出现 custom 条目',
+      )
+      // 响应体不泄露密钥
+      assert.equal(created.body.includes('sk-my-relay-secret'), false)
+      assert.equal(/"apiKey"\s*:/.test(created.body), false)
+
       const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
       assert.equal(onDisk.providers.at(-1).id, 'custom')
-      assert.equal(onDisk.providers.at(-1).baseUrl, '')
+      assert.equal(onDisk.providers.at(-1).group, 'custom')
+      assert.equal(onDisk.providers.at(-1).baseUrl, 'https://my-relay.example/v1')
+      assert.equal(onDisk.providers.at(-1).apiKey, 'sk-my-relay-secret')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -1509,12 +1544,14 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
         listed.json.providers.map((provider) => provider.id),
         ['ofox', 'agnes', 'my-relay'],
       )
-      // 自定义 id 不在目录里 → catalog 仍是 14 条，不硬塞进去
-      assert.equal(listed.json.catalog.length, 14)
+      // 自定义 id 不在目录里 → catalog 仍是 13 条，不硬塞进去
+      assert.equal(listed.json.catalog.length, 13)
       assert.equal(
         listed.json.catalog.some((entry) => entry.id === 'my-relay'),
         false,
       )
+      // 目录里也没有 `custom` 这条（但模式 B 建出来的厂商照样在 providers 里）
+      assert.equal(listed.json.catalog.some((entry) => entry.id === 'custom'), false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -1728,7 +1765,7 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
       })
 
       assert.equal(added.status, 200)
-      assert.equal(added.json.catalog.length, 14)
+      assert.equal(added.json.catalog.length, 13)
       assert.equal(added.json.catalog.find((entry) => entry.id === 'sensenova').added, true)
       assert.deepEqual(
         added.json.catalog
@@ -2354,7 +2391,7 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
       assert.deepEqual(second.json.providers, [])
       assert.equal(second.json.defaults.provider, '')
       assert.equal(second.json.defaults.model, '')
-      // 目录全部回到 added:false（14 条一家不剩）
+      // 目录全部回到 added:false（13 条一家不剩）
       assert.equal(second.json.catalog.filter((entry) => entry.added).length, 0)
 
       const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))

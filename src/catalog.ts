@@ -7,18 +7,23 @@
  * `E:\Programs\trae\project\pixmart-ai\src\renderer\src\types\model.ts`
  * 的 `VENDOR_INFO`（第 40–197 行），每条注释里标了 `model.ts:<行号>` 作为可复核的出处。
  *
- * ## 当前条数：**14 条**（13 家具名厂商 + `custom`）
+ * ## 当前条数：**13 条**（全部是具名厂商，**没有** `custom`）
  *
- * 用户决定只保留 13 家具名供应商，本文件据此**删掉 6 条**：`mimo`、`kimi`、`minimax`、
- * `zhipu`、`deepseek`、`sharellm`（注意 **`sharellm-intl` 保留**）。删除处有就地注释。
- * 参考项目那 3 个 `threed-*`（3D，model.ts:179-196）同样**不进目录**——PixMart 只做 2D 生图。
- * 所以参考项目的 23 条 = 13（保留）+ 6（本次删）+ 3（3D）+ 1（`custom` 保留）= 23。
+ * 两次收敛（都有用户明确决定）：
+ *   1. 只保留 13 家具名供应商：本文件据此**删掉 6 条** —— `mimo`、`kimi`、`minimax`、
+ *      `zhipu`、`deepseek`、`sharellm`（注意 **`sharellm-intl` 保留**）；
+ *   2. 「提供商」下拉里**不要再出现「自定义」**：设置页已经有独立的「自定义模型 API」tab，
+ *      下拉里再放一条 `custom` 就是**重复入口**，所以参考项目的 `custom`（model.ts:174-178）
+ *      也**不转录**。
+ * 两次删除处都有就地注释。参考项目那 3 个 `threed-*`（3D，model.ts:179-196）同样**不进目录**
+ * ——PixMart 只做 2D 生图。所以参考项目的 23 条 = 13（本目录）+ 6（第 1 次删）
+ * + 1（第 2 次删：`custom`）+ 3（3D）= 23。
  *
  * **目录变小 ≠ 删配置**：用户配置里若已经有被删掉的厂商，本文件/路由都不会去动它，
  * 只是它不再出现在「添加模型提供商」的候选清单里（`catalogView` 只反映目录）。
- *
- * 与参考项目的**一处有意差异**：`custom` 的 group 在参考项目里是 `aggregator`
- * （model.ts:174-178），在本目录里是 `custom`（= 设置页的「自定义接入」分组）。
+ * 同理，删掉 `custom` **条目**丝毫不影响自建厂商：那条路径用 `providerFromCustom()`
+ * 直接拼装，**不查目录**；配置层的 `ProviderGroup` 也仍然保留 `'custom'`
+ * （自建厂商落盘后 `group` 还是 `'custom'`）。
  *
  * ## 纪律
  *
@@ -39,7 +44,10 @@
 import { DEFAULT_IMAGE_RATIOS } from './sizes.js'
 import type { Dialect, ProviderConfig } from './config.js'
 
-/** 目录分组：official→「官方 API 接入」/ aggregator→「聚合接入」/ custom→「自定义接入」。 */
+/** 目录分组：official→「官方 API 接入」/ aggregator→「聚合接入」/ custom→「自定义接入」。
+ *  `custom` 与 `src/config.ts` 的 `ProviderGroup` 保持同一套词表（自建厂商落盘后 group 就是
+ *  `custom`）；**当前目录里没有任何条目用它**——「自定义」由设置页独立的
+ *  「自定义模型 API」tab 负责，不再是一条目录数据。 */
 export type CatalogGroup = 'official' | 'aggregator' | 'custom'
 
 export interface CatalogEntry {
@@ -47,7 +55,7 @@ export interface CatalogEntry {
   readonly id: string
   /** 显示名，如 '阿里云百炼'。 */
   readonly label: string
-  /** 厂商默认接入地址；`custom` 是空串（由用户自填）。 */
+  /** 厂商默认接入地址。 */
   readonly baseUrl: string
   readonly group: CatalogGroup
   /** 省略 = 'standard'；ofox 用 'ofox'、agnes 用 'agnes'。 */
@@ -59,8 +67,8 @@ export interface CatalogEntry {
 }
 
 /**
- * 14 家可直接添加的厂商（13 具名 + `custom`）。顺序 = 参考项目 `VENDOR_INFO` 的声明顺序
- * （3D 与本次删掉的 6 条已剔除），所以"同名的两家谁的注释来自哪一行"一眼可查。
+ * 13 家可直接添加的厂商（**全部具名**，没有 `custom`）。顺序 = 参考项目 `VENDOR_INFO`
+ * 的声明顺序（3D 与两次删掉的条目已剔除），所以"同名的两家谁的注释来自哪一行"一眼可查。
  *
  * 出厂预设（`defaultConfig().providers`）当前是**空数组**，与这份目录是两条独立路径：
  * 目录 = "用户主动添加"，出厂预设 = "默认就有"。往这里加条目不等于出厂就带那家。
@@ -181,14 +189,14 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     imageCapable: true,
     note: '参考项目注释（model.ts:166-168）：chat/多模态/生图路由均实测存在（models、chat/completions、images/generations；401=需有效 Key）',
   },
-  {
-    id: 'custom', // model.ts:174-178（参考项目 group 为 aggregator，本目录按规格改为 custom）
-    label: '自定义',
-    baseUrl: '',
-    group: 'custom',
-    imageCapable: false,
-    note: '自定义接入：baseUrl 由用户自填（目录里是空串）；生图能力未取证',
-  },
+  // ── 「自定义」**不再进目录**（用户澄清，2026-10）：
+  //    设置页已经有**独立**的「自定义模型 API」tab，用 ID / 显示名 / API 地址三个输入框
+  //    走 `providerFromCustom()` 直接建厂商——下拉里再放一条 `custom` 就是**重复入口**。
+  //    因此参考项目 `model.ts:174-178` 那条 `custom` 不转录（它也是唯一一条 baseUrl 为空串的）。
+  //
+  //    ⚠️ 删的只是**目录条目**这一份数据：`providerFromCustom()` 不查目录，
+  //    `ProviderGroup` 里的 `'custom'` 也保留（自建厂商落盘后 `group` 仍是 `'custom'`）。
+  //    恢复办法：把那条按 `model.ts:174-178` 转录回来即可（`group` 用 `'custom'`）。
 ]
 
 /** 按 id 取目录条目；没有则 `undefined`（路由据此回 400 `unknown_catalog_id`）。 */
@@ -277,11 +285,14 @@ export interface CustomProviderInput {
 /**
  * 用「自定义厂商」的三个字段造一个**可直接落盘**的 `ProviderConfig`。
  *
- * 与 `providerFromCatalog` 的差别**只有身份字段的来源**（用户填 vs 目录转录）：
- * 分组固定 `custom`、方言固定 `standard`、`models` 留空、`allowedSizes` 填统一的默认
- * 词表（`sizes.ts` 的 `DEFAULT_IMAGE_RATIOS`，与目录新增同一个值）、
- * `geminiNativeBaseUrl` 空串、`timeoutMs` 默认值——这样"自定义接入"和
- * "目录里 custom 那条"落盘后是同一个形状，后续路由/工具不需要区分来源。
+ * 与 `providerFromCatalog` 的差别**只有身份字段的来源与分组**（用户填 + 固定 `custom`
+ * vs 目录转录 + 该条自己的 official / aggregator）：方言固定 `standard`、`models` 留空、
+ * `allowedSizes` 填统一的默认词表（`sizes.ts` 的 `DEFAULT_IMAGE_RATIOS`，与目录新增同一个值）、
+ * `geminiNativeBaseUrl` 空串、`timeoutMs` 默认值——其余字段形状与目录草稿完全一致，
+ * 所以后续路由/工具不需要区分来源。
+ *
+ * **它不查目录**：目录里已经没有 `custom` 那条（走独立 tab，见文件头），
+ * 自建厂商这条路只依赖用户填的三个字段。
  *
  * `apiKeyEnv` **一律空串**：网页显式填的密钥是唯一来源，不指向任何环境变量
  * （与 `POST /providers/<id>/credentials` 的既有语义一致）。

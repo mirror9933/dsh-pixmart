@@ -123,41 +123,37 @@ const cat = (id, label, group, extra) => ({
 })
 
 /**
- * 20 条目录：8 official + 9 aggregator + 3 custom。
+ * **13 条**目录：逐条等于真目录（`group` / `imageCapable` 也取真目录的值），
+ * 排列顺序就是下拉展示的顺序（label 的 `zh-Hans-CN` 升序）。
  *
- * 为什么这三张卡必须存在：3.7 要量**已添加**（置灰 `opacity:.5` + `disabled`）与
- * **未取证生图**（小角标）两种形态，夹具里没有的话那两条断言就是空转。
+ * task-15：以前这里摆的是 20 条（含 `mimo`（小米 MiMo）、`kimi`、`minimax`、`zhipu`、`deepseek`、
+ * `sharellm` 这 6 家**真目录里已删**的厂商，以及将删的 `custom`）—— 虽然它们不会变红（客户端渲染的是
+ * 注入的 props），但会误导后来看代码的人，也让"目录顺序 / 已添加后缀"那几条断言跑在假数据上。
+ * 两种形态仍然真存在：`added: true` 两条（google / ofox）、`imageCapable: false` 三条。
  */
 const CATALOG = [
-  cat('openai', 'OpenAI', 'official'),
+  cat('bailian', '阿里云百炼', 'official'),
+  cat('volcengine', '火山方舟', 'official'),
+  cat('sensenova', '商汤 SenseNova', 'official'),
+  cat('tencent', '腾讯云', 'official', { imageCapable: false }),
+  cat('agnes', 'Agnes AI', 'official'),
+  cat('aihubmix', 'AIHubMix', 'aggregator'),
   cat('anthropic', 'Anthropic', 'official', { imageCapable: false }),
-  cat('google', 'Google', 'official', { added: true }),
-  cat('azure', 'Azure OpenAI', 'official'),
-  cat('mistral', 'Mistral', 'official'),
-  cat('cohere', 'Cohere', 'official'),
-  cat('xai', 'xAI', 'official'),
-  cat('deepseek', 'DeepSeek', 'official'),
+  cat('google', 'Google AI', 'official', { added: true }),
   cat('ofox', 'Ofox', 'aggregator', { added: true }),
+  cat('openai', 'OpenAI', 'official'),
+  cat('openrouter', 'OpenRouter', 'aggregator', { imageCapable: false }),
+  cat('sharellm-intl', 'ShareLLM 国际', 'aggregator', { imageCapable: false }),
   cat('siliconflow', 'SiliconFlow', 'aggregator'),
-  cat('openrouter', 'OpenRouter', 'aggregator'),
-  cat('together', 'Together', 'aggregator'),
-  cat('fireworks', 'Fireworks', 'aggregator'),
-  cat('replicate', 'Replicate', 'aggregator'),
-  cat('fal', 'Fal', 'aggregator'),
-  cat('novita', 'Novita', 'aggregator'),
-  cat('dashscope', 'DashScope', 'aggregator'),
-  cat('custom', '自定义', 'custom'),
-  cat('custom-openai', '自定义（OpenAI 兼容）', 'custom'),
-  cat('selfhost', '自建端点', 'custom', { imageCapable: false }),
 ]
 
 /**
- * task-8：下拉**列出全部 20 家**（顺序 = `sortCatalog`：label 的 `zh-Hans-CN` 升序、
- * `custom` 那一组固定最后），默认选中"第一个未添加"的那家。
- * 夹具里已添加的是 google / ofox，所以第一个未添加的是 `anthropic`（label 'Anthropic' 最小）。
+ * task-8：下拉**列出全部目录条目**（顺序 = `sortCatalog`：label 的 `zh-Hans-CN` 升序），
+ * 默认选中"第一个未添加"的那家。
+ * 夹具里已添加的是 google / ofox，所以第一个未添加的是 `bailian`（阿里云百炼，中文 label 在 `zh-Hans-CN` 下排最前）。
  * 这是**独立复述**：实现换了排序规则或又变成"过滤掉已添加"，这里就红。
  */
-const FIRST_ADDABLE_ID = 'anthropic'
+const FIRST_ADDABLE_ID = 'bailian'
 
 const providersFixture = {
   ok: true,
@@ -2042,6 +2038,8 @@ if (launched.browser === null) {
         await page.click('[data-pxm-add-probe-test]', { force: true }).catch(() => {})
         assert.deepEqual(await probeCalls(), [], '未填密钥时点探测按钮必须零探测请求')
 
+        // 先显式选定一家（不依赖"默认选中哪家"：默认由 `FIRST_ADDABLE_ID` 那条断言单独钉）。
+        await page.selectOption('[data-pxm-add-provider]', 'anthropic')
         // 填密钥 → 点「拉取模型」→ 列表就地渲染（探针回 PULLED 那么多条）。
         await page.fill('#pxm-add-key', 'sk-lane-secret')
         await page.click('[data-pxm-add-probe-models]')

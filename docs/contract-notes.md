@@ -3115,3 +3115,28 @@ label==value〔夹具 `allowedSizes:['1:1']` 证明"配置说了不算"〕、`4:
 ### 35.6 结果
 
 `pnpm verify` 全绿：宿主 `pnpm test` **465**（§34 的 459 + 6）、浏览器 `pnpm test:browser` **66**（未变）。
+
+### 35.7 追加：「自定义」从目录里删掉（用户澄清）+ 客户端夹具收敛（2026-10-12）
+
+用户看了截图后澄清：**「提供商」下拉里不要再出现「自定义」**——因为已经有一个独立的
+**「自定义模型 API」tab**，那是重复入口。
+
+- **删的只是目录条目**：`PROVIDER_CATALOG` 14 → **13 条，全部具名**（`CatalogGroup` 里的 `'custom'`
+  取值保留，将来想加回条目不必改类型）。
+- **功能没丢**（本次最关键的证据断言）：`providerFromCustom` **不查目录**、路由的模式二选一按
+  **请求体键** 判定、`ProviderGroup` 的 `'custom'` 保留 ⇒
+  用 catalogId 打 custom 现在 **400 unknown_catalog_id**，而 `{custom:{id,label,baseUrl}, apiKey}`
+  **200 + 落盘 group:'custom' + 响应体无密钥**。
+- 逐一查过所有"读目录"的路径（`GET /providers`、模式 A 的 `findCatalogEntry`、add/delete 响应里的
+  catalog、`pixmart_providers` 输出与 render、`catalogView` 的动态取值用例）——删后均不炸。
+- 顺手修掉两处**写域外的过期数字**：`src/routes.ts:564` 与 `src/tools/meta.ts:93` 仍写着"20 家"（实为 13）。
+
+**客户端测试夹具收敛（上一轮记下的缺口，本轮收掉）**：两个客户端测试文件里自带的那份 mock 目录
+从"20 条含已删 6 家 + custom"收敛到**真目录的 13 条**（顺序按 zh-Hans-CN 升序、不再有 custom），
+依赖条数/内容/顺序的断言同步（EXPECTED_ALL_COUNT 20 → 13 等），"（已添加）"后缀 + disabled、
+"选厂商不发请求""保存恰 1 次且 body 精确"这些断言**一条没放宽**。
+`CATALOG_GROUP_SUBTITLE` 里的 custom 项保留（配置层仍有 group=custom 的自建厂商）。
+
+### 35.8 结果（§35 全部落地后）
+
+`pnpm verify` 全绿：宿主 `pnpm test` **466**（§34 的 459 + 7）、浏览器 `pnpm test:browser` **66**（未变）。
