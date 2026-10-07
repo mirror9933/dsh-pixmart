@@ -99,8 +99,10 @@ dsh --profile px --dump-config
 1. **重启宿主**（安装后必须重启；改完 `package.json` / exports 也一样）。
 2. **刷新页面**（浏览器端改动刷新即可生效）。
 3. 打开 **设置 → PixMart**。
-4. 在**厂商**卡片里填 **API Key**（默认厂商是 **Ofox**；也可以先设环境变量 `OFOX_API_KEY`，它的优先级高于设置页）。
+4. 点**厂商卡片右侧的「编辑」**展开编辑区，填 **API Key**，再点**「保存」**（默认厂商是 **Ofox**；也可以先设环境变量 `OFOX_API_KEY`，它的优先级高于设置页）。
    密钥只以「是否就位」的形式回显，任何时候都不会显示内容。
+   - 卡片默认是**收起**的，只显示厂商名、密钥圆点与「编辑」；**改字段不再即时落盘**——「保存」才写，「取消」丢弃本地改动且不发任何请求。
+   - Base URL 在编辑区里的 **「自定义设置」** 折叠项里（平时收着）；填错端点时就是去那里改。
 5. 点 **「测试连接」**——确认端点与密钥都对。
 6. 点 **「拉取模型」**（`GET {baseUrl}/models`，**只拉取、不写配置**）→ 在列表里**多选**你需要的生图模型 → 点 **「保存选择」**（这是唯一会写入模型列表的入口）。
    - 列表很长：搜索框按子串过滤；「全选 / 全不选」只作用于**当前筛选结果**；「只选图像模型」按启发式**重设**选择。
@@ -253,8 +255,8 @@ pnpm install
 pnpm typecheck        # host + client 两个 program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），358 项（其中 agnes 24 项）
-pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），56 项
+pnpm test             # node:test（含 jsdom lane），364 项（其中 agnes 24 项）
+pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），62 项
 pnpm verify           # 上面几条串起来
 ```
 

@@ -46,6 +46,14 @@
         --dsw-alias-border-l1: #0000000a;
         --dsw-alias-border-l2: #0000001a;
         /*
+         * 官方**按钮描边**：`._3nPmjq_secondaryButton,._3nPmjq_addButton{
+         *   border:.5px solid var(--dsw-alias-border-l3)}`
+         * （`dsh-client-ui-settings-models/lib/client.js:58`）。
+         * 取值来源 = `dsh-client-ui-theme/lib/client.js:1148` 的 base CSS（浅色那份），
+         * 与 `l2` / `l4` 都不同值，所以 30 那节的「编辑/取消按钮描边」断言才成立。
+         */
+        --dsw-alias-border-l3: #0000001f;
+        /*
          * 官方**输入控件描边**：`primitives` 的 `settings-form/fields.module.css` 里
          * `.input{border:.5px solid var(--dsw-alias-border-l4)}`（`Input.module.css` 的
          * `.wrap`、`settings-plugin-inventory` 的搜索框也是它）。
@@ -53,6 +61,16 @@
          */
         --dsw-alias-border-l4: #00000029;
         --dsw-alias-brand-primary: #0f1115;
+        /*
+         * 官方**主按钮**（「保存」）的两枚：`._3nPmjq_primaryButton{
+         *   background:var(--dsw-alias-button-primary-fill);
+         *   color:var(--dsw-alias-label-primary-foreground)}`。
+         * `button-primary-fill` 官方就是 `var(--dsw-alias-brand-primary)` 的别名，
+         * 这里照抄别名链而不是抄色值 —— 「挂在官方 token 上」才算对齐。
+         * 前景色官方是 `var(--dsw-static-neutral-bluish-00)` = `#fff`（浅色那份）。
+         */
+        --dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary);
+        --dsw-alias-label-primary-foreground: #fff;
         --dsw-alias-label-primary: #0f1115;
         --dsw-alias-label-secondary: #61666b;
         --dsw-alias-label-tertiary: #81858c;

@@ -818,25 +818,31 @@ const MUTATIONS = [
   },
   {
     id: 'M38-no-test-connection-button',
-    /** 样式统一的第二形态：**把「测试连接」按钮删掉**（另一个硬性保留项）。 */
+    /**
+     * 样式统一的第二形态：**把「测试连接」按钮删掉**（另一个硬性保留项）。
+     *
+     * 2026-10-12 结构适配：这一枚随"点「编辑」展开"的同构改造从**行尾动作**挪进了
+     * **展开后的模型区标题行**，并且和「拉取模型」一样改用官方的 `linkButton`
+     * （`LinkButton` 而不是 `Btn`）—— 所以锚点跟着实现搬家，`bug` / `expect` 一个字不改。
+     */
     bug: '把「测试连接」按钮从卡片上删掉（保留项丢失）',
     expect: ['1.2 「测试连接」按钮存在、可点'],
     edits: [
       {
         find: [
-          '            h(',
-          '              Btn,',
-          '              {',
-          "                role: 'test-connection',",
-          "                className: 'pxm-test-connection',",
-          '                disabled: probe.busy,',
-          '                onClick: onTest,',
-          "                title: '发一次探测请求，不写配置',",
-          '              },',
-          "              probe.busy ? '测试中…' : '测试连接',",
-          '            ),',
+          '              h(',
+          '                LinkButton,',
+          '                {',
+          "                  role: 'test-connection',",
+          "                  className: 'pxm-test-connection',",
+          '                  disabled: probe.busy,',
+          '                  onClick: onTest,',
+          "                  title: '发一次探测请求，不写配置',",
+          '                },',
+          "                probe.busy ? '测试中…' : '测试连接',",
+          '              ),',
         ].join('\n'),
-        replace: '            null,',
+        replace: '              null,',
       },
     ],
   },
@@ -1017,6 +1023,54 @@ const MUTATIONS = [
         // 且下一行是那句注释）—— 锚点必须唯一。
         find: "      color: T.label,\n      background: T.bgLayer1,\n      // 描边与 `inputStyle` 同一枚",
         replace: "      color: T.label,\n      background: T.bgLayer3,\n      // 描边与 `inputStyle` 同一枚",
+      },
+    ],
+  },
+  // ── 厂商卡片重构（2026-10-12）：点「编辑」展开 / 自定义设置 / 虚线添加 ──────────
+  {
+    id: 'M44-editor-surface-is-bg-base',
+    /**
+     * 重构后新增的**折叠编辑器**最容易退成的那一档：底色写回**应用最底层**
+     * `--dsw-alias-bg-base`。
+     *
+     * 官方 `._3nPmjq_editor{border-radius:var(--dsw-radius-lg);
+     * background:var(--dsw-alias-bg-module-platform);gap:14px;padding:14px 16px}`
+     * （`.probe/models-css-pretty.txt:27`）—— 编辑器要与卡片（`settings-card-fill`
+     * = `bg-layer-2`）**分层**；`bg-base` 在深色下是 `#151517`（比弹窗面板更暗），
+     * 编辑器会与卡片糊成一片。
+     *
+     * 期望由 `vendors.test.mjs` 的 **2.2** 抓住：那一条既断"等于 bg-module-platform
+     * 的解析值"，又断"不得等于 bg-base / bg-layer-1"（后两条是为这条变异写的反向判据）。
+     */
+    bug: '编辑块底色从官方 `bg-module-platform` 退回应用底色 `bg-base`（编辑器与卡片糊成一片）',
+    expect: ['2.2 标头 / 编辑块 / 模型区块'],
+    edits: [
+      {
+        // 锚点 = editor 样式里那一行（`background: T.bgModulePlatform,` 全文件唯一）。
+        find: '                  background: T.bgModulePlatform,',
+        replace: '                  background: T.bgBase,',
+      },
+    ],
+  },
+  {
+    id: 'M45-add-button-solid',
+    /**
+     * 重构新增的虚线按钮退回实线：官方有**两条**规则都命中 `._3nPmjq_addButton` ——
+     * `:19` 的 `.secondaryButton,.addButton{border:.5px solid …}` 与 `:39` 的
+     * `.addButton{border:1px dashed var(--dsw-alias-border-l3);…min-width:180px;height:44px}`
+     * （同优先级、后者在后 → 实到 `1px dashed`）。把 `dashed` 改回 `solid`，
+     * "这一枚是虚线"这条形态信息就没了。
+     *
+     * 期望由 `vendors.test.mjs` 的 **3.6** 抓住（`borderTopStyle` 与声明值都断）。
+     */
+    bug: '虚线「添加模型提供商」退回实线（`1px dashed` → `1px solid`），官方 addButton 的虚线形态丢失',
+    expect: ['3.6 虚线「添加模型提供商」'],
+    edits: [
+      {
+        // 锚点 = `AddVendorButton` 的边框那一行（`dashed + T.borderL3` 全文件唯一；
+        // 另一处 `1px dashed` 挂的是 `T.borderL2`，命不中）。
+        find: "            border: '1px dashed ' + T.borderL3,",
+        replace: "            border: '1px solid ' + T.borderL3,",
       },
     ],
   },

@@ -88,6 +88,15 @@ const REQUIRED_TOKENS = [
   '--dsw-alias-bg-overlay',
   '--dsw-alias-border-l1',
   '--dsw-alias-border-l2',
+  /*
+   * 2026-10-12 厂商卡片改成官方同构形态时进的一枚：官方**次级按钮**（「编辑」「取消」）
+   * 与**虚线添加按钮**的描边就是它 ——
+   * `._3nPmjq_secondaryButton,._3nPmjq_addButton{border:.5px solid var(--dsw-alias-border-l3)}`
+   * （`@deepseek-ai/dsh-client-ui-settings-models/lib/client.js:58` 那条 CSS）。
+   * 与 `border-l2`（`#0000001a`）/`border-l4`（`#00000029`）**不同值**（`#0000001f`），
+   * 所以不能拿已有的两枚顶替——差的那点 alpha 正是"卡片描边 vs 按钮描边"的区别。
+   */
+  '--dsw-alias-border-l3',
   '--dsw-alias-border-l4',
   '--dsw-alias-label-primary',
   '--dsw-alias-label-secondary',
@@ -96,6 +105,18 @@ const REQUIRED_TOKENS = [
   '--dsw-alias-state-idle-primary',
   '--dsw-alias-state-success-primary',
   '--dsw-alias-state-warn-primary',
+  /*
+   * 2026-10-12 同上：官方**主按钮**（「保存」）的两枚 ——
+   * `._3nPmjq_primaryButton{background:var(--dsw-alias-button-primary-fill);
+   *   color:var(--dsw-alias-label-primary-foreground)}`（同处 CSS）。
+   * `button-primary-fill` 官方是 `var(--dsw-alias-brand-primary)` 的别名；
+   * `label-primary-foreground` 是**前景**色（浅色白、深色近黑），与 fill 成对出现，
+   * 少一枚就会出现"深色主题下按钮文字看不清"这类只在某一主题暴露的问题。
+   * 注：官方 `primaryButton:hover` 用的 `interactive-bg-hover` **不入清单** ——
+   * 本插件的样式是内联 `style`，表达不了 `:hover`，本次不做悬停态（见 contract-notes §30）。
+   */
+  '--dsw-alias-button-primary-fill',
+  '--dsw-alias-label-primary-foreground',
   /*
    * 2026-10-08 组件尺寸对齐再进四枚：**官方尺寸里唯一做成变量的那一族**
    * （`--dsw-radius-{xs,sm,md,lg,xl,panel}`，见 `dsh-client-ui-theme` 的 base CSS `:root{…}`）。

@@ -2548,3 +2548,129 @@ pixmart_check_size(provider=agnes, model=agnes-image-2.5-flash, size=2048x2048, 
   真机上"从 UI 选 2K 再出图"没走一遍（本次两次调用都是我直接传的尺寸）。
 - `agnes-image-2.0-flash` 仍然不可用（503 + `model_not_found`，见 §27.4），未再试。
 
+---
+
+## 30. 厂商配置改成官方「模型」页同构：卡片列表 + 点「编辑」展开（2026-10-12）
+
+用户诉求（原话拆成三条）：
+1. 删掉 **agnes** 模型配置里的「Gemini 原生 Base URL（可选）」，以后除非特殊说明只留 Base URL；
+2. 把 PixMart 的**模型厂商界面**改成和 DSH 官方一样的风格（截图 = 官方「模型」页：卡片列表 +
+   右侧「编辑」+ 虚线「添加模型提供商」；展开后是 提供商 / API 密钥 / **自定义设置** 折叠区 + 取消/保存）；
+3. 允许派子智能体。
+
+### 30.1 官方实现就是规格（先取证，再写代码）
+
+官方这一页在 `app.asar` 里：`dsh/node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js`。
+本仓库早先已把它提取成两份只读证据（`tools/asar.mjs` 可随时复核原文）：
+
+| 证据 | 位置 | 用途 |
+|---|---|---|
+| 官方 client 标记与逻辑 | `.probe/models-client.js` | `:2150-2232` 卡片列表 + `open ? editor : null`；`:2235-2300` addBlock；`:1640-1760` 编辑器内部（field / customized details / EditorFooter） |
+| 官方 CSS（`._3nPmjq_*`） | `.probe/models-css-pretty.txt` | 逐条取值：rows 6 / rowCard 7 / rowHead 8 / rowIdentity 9 / rowName 10 / rowTag 11 / credentialDot 12-14 / rowActions 15 / **按钮基础几何 16** / primaryButton 17 / secondary+addButton 描边 19 / `.rowActions` 缩小档 24 / editor 27-30 / field 31-32 / linkButton 33 / editorActions 36 / addButton 39 / customized 45-51 / input 73-77 |
+
+### 30.2 落地形态（`client/client.js`）
+
+- `<ul data-pxm-vendor-list class="pxm-vendor-rows">` + 每张卡 `<li data-pxm-vendor-card>`：
+  默认只渲染 `rowHead`（厂商名 + rowTag + 凭据圆点 + 右侧官方 `.rowActions` **缩小档**「编辑」按钮）。
+- 点「编辑」在**该卡内部**展开 `._3nPmjq_editor` 同构体；「同时只展开一张」由父级
+  `ProvidersSection` 的单值 `editingVendor` 保证（官方是 `editing?.provider === row.entry.provider`）。
+- 编辑器顺序：API 密钥 → `<details>自定义设置`（**Base URL 在里面**）→ 模型区
+  （「拉取模型」+「测试连接」两枚 linkButton + 候选列表）→ 底部右对齐「取消 / 保存」。
+- 虚线「添加模型提供商」`addButton` 同构（`1px dashed border-l3` / `radius-lg` / `44px` /
+  `min-width 180px`）。
+- 「Gemini 原生 Base URL（可选）」**按厂商条件渲染**（`hasNativeUrl = geminiNativeBaseUrl 非空`）：
+  agnes 是 `''` → 那张卡没有这一项（用户诉求 1）；ofox 非空 → 保留且可改。
+  **`src/` 与 `config.json` 里的字段一个字没动**，ofox 的 gemini-native 路由照旧。
+
+### 30.3 显式保存（行为变更）：不再"失焦即写"
+
+Base URL / 原生 URL / 密钥都只改本地 state；「保存」才 `POST credentials`，且**只提交改动过的
+字段**；「取消」丢草稿 + 收起 + **零请求**。草稿基线（`committedBase` / `committedNative`）对齐
+官方 `committedOriginal`。这修掉了旧实现里"输入过程失焦就写盘"的隐式副作用。
+
+### 30.4 token 强耦合：加一枚官方 token 要同时改四处
+
+这是本次最容易踩的坑，**必须写下来**：
+
+| # | 文件 | 角色 |
+|---|---|---|
+| 1 | `client/client.js` 的 `T` 色彩表 | 唯一的用色来源（都走 `var()`） |
+| 2 | `test/client-tokens.test.mjs` 的 `REQUIRED_TOKENS` | `:255` 断言"代码里出现的 token 种类数 == 清单长度"；`:281` 断言"`T` 表里的颜色 token == 清单里的颜色项" |
+| 3 | `test/browser/shell.html` | 浅色夹具：lane 要能**解析**这些 token 才能断言"等于官方值" |
+| 4 | `test/browser/theme.test.mjs` 的 `DARK` | 深色夹具：证明"换主题跟着变" |
+
+本次新增 **3 枚**（Lead 冻结清单，超出需先问）：
+
+| token | 浅色 | 深色 | 官方出处 |
+|---|---|---|---|
+| `--dsw-alias-border-l3` | `#0000001f` | `#ffffff29` | `secondaryButton,addButton{border:.5px solid …}` |
+| `--dsw-alias-button-primary-fill` | `var(--dsw-alias-brand-primary)` | `#f9fafb` | `primaryButton{background:…}` |
+| `--dsw-alias-label-primary-foreground` | `#fff` | `#0f1115` | `primaryButton{color:…}` |
+
+（`l3` 与既有 `l2 #0000001a` / `l4 #00000029` **都不同值**，所以不能拿已有的顶替。）
+
+### 30.5 打包守卫生效：一条注释让 `pnpm test` 直接失败
+
+`tools/strip-test-hooks.mjs` 的自证里有一条：**产物不得出现 `__test__`（连注释也不行）**。
+子智能体在新加的 JSDoc 里写了「单独挂载（`__test__.ProviderCard`）」→ `pnpm verify` 在
+`pretest` 阶段报「剥离失败：自证失败：产物里仍含 `__test__`」。
+
+**这正是"Lead 必须自己跑 verify"的价值**：两个子智能体各自的单测都是绿的，只有整条
+`pnpm verify` 链会经过打包步骤。修法是把那处注释改成不写出该标识符（并在注释里说明原因）。
+教训：**在 `client/client.js` 里写注释时，不要出现那个标识符**。
+
+### 30.6 刻意偏差（明说，不粉饰）
+
+1. **hover 态不做**：官方 `secondaryButton:hover` / `addButton:hover` 用
+   `--dsw-alias-interactive-bg-hover(-solid)`，而本插件按钮几何写在**内联** `style` 里，
+   只有伪类才需要样式表；本次不新建样式表、不加这两枚 token。**保留了 focus-visible 环**
+   （键盘可达性不依赖 hover）。
+2. **「保存」在零改动时 disabled**：官方 `EditorFooter.submitDisabled` 只判 `disabled||!ready`，
+   **没有脏检查**。本插件加了脏检查，让"零改动零请求"由 UI 保证（官方靠提交后关编辑器规避）。
+   若要与官方严格一致，改成常开 + `onSave` 早退即可（两版都是零请求）。
+3. **「添加模型提供商」恒 disabled**：厂商来自出厂预设，**没有新增写路径**（§26.4 的已知限制）。
+   渲染它是为了形态一致，`title` / `aria-label` 说明了原因——不做"点了没反应"的假按钮。
+4. **`data-pxm-vendor-route` 的可见文本改为 host**（`group · apiMode` 移到该元素 `title`）：
+   官方 `editorRoute` 只放端点主机名。
+5. **「清除密钥」保留**：官方没有这一枚（官方靠"留空 = 不改动"），本插件保留为密钥字段内的
+   linkButton `data-pxm-role="clear-credential"`。
+6. **`EditorField` 双锚点**：契约要求保留 `data-pxm-field`（既有 lane 依赖），于是新增
+   `data-pxm-editor-field*` 的同时也挂 `data-pxm-field*`。收起态下编辑器不在 DOM，默认态
+   的行式断言不受影响。
+7. **密钥 placeholder 有条件分支**（与官方同逻辑）：已配置 →「已就位，留空不改动」；
+   未配置 → 官方「输入 API 密钥，或留空使用环境认证」。
+
+### 30.7 断言与可证伪性
+
+- jsdom（`test/client-settings-dom.test.mjs`）：默认收起 / 只展开一张 / 取消零请求 /
+  保存只带改动字段 / agnes 无而 ofox 有「Gemini 原生」项 / 自定义设置可展开 / 既有
+  拉取模型·测试连接·模型列表行为不丢。
+- 浏览器 lane（`test/browser/vendors.test.mjs` 等）：按 §30.1 的官方取值逐条断言计算样式。
+- **反向变异**（`tools/lane-mutations.mjs`）：`M44-editor-surface-is-bg-base`（编辑块底色退回
+  `bg-base`）、`M45-add-button-solid`（虚线退回实线）—— Lead 实测自证：
+
+```
+✔ M44 → 对应用例失败：2.2 标头 / 编辑块 / 模型区块 = 官方 rowHead + editor + modelCatalog …
+✔ M45 → 对应用例失败：3.6 虚线「添加模型提供商」= 官方 addButton（dashed / 44px / …）
+仓库原产物未被改动（sha256 33589c2537b6 前后一致）
+```
+
+- 既有断言**只做结构性适配**（先点「编辑」再量），**没有一条被删弱**：`git diff` 里删除的
+  4 行 assert 全是等价替换，其中"卸载后不得再重取"一条从"回调计数"改成了**更硬的网络计数**
+  （`providerGets`）。
+
+### 30.8 过程如实记录
+
+- 本次派了 2 个子智能体（`vendor-ui` 改 `client/client.js`；`ui-tests` 改测试与变异），
+  写域按文件切分、DOM 契约与 token 清单先冻结再分发。
+- **机器在此期间蓝屏 7 次**（同一个 bugcheck，见 `docs/蓝屏排查记录.md`），两个子智能体
+  各被打断两次，最终 `ui-tests` 未能自己回报。**剩余项（跑 5 条 lane、变异自证、全量 verify）
+  由 Lead 亲自补完**，所以 §30.7 的证据是我自己跑出来的，不是转述。
+- 顺带修掉一条**我自己写错的规格**：初期我把密钥输入框的 id 写成 `pxm-provider-key`，
+  实际是 `pxm-provider-api-key`（子智能体提出后按实测更正）。
+
+### 30.9 结果
+
+`pnpm verify` 全绿：宿主 `pnpm test` **364**（§29 的 358 + 6），
+浏览器 `pnpm test:browser` **62**（§28 的 56 + 6）。README 与 §11 的命令注释同步更新。
+

@@ -1212,7 +1212,7 @@ pnpm build:client     # = node tools/strip-test-hooks.mjs → 写 dist/client.js
 ```sh
 pnpm typecheck      # host + client 两个 program
 pnpm build:client   # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js（§11.5）
-pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，358 项；pretest 会先跑 build:client）
+pnpm test           # node:test（jsdom lane + 纯函数 / 宿主契约，364 项；pretest 会先跑 build:client）
 pnpm test:browser   # 真实排版引擎 lane（需系统 Edge/Chrome，见 §13.7）
 pnpm build          # host tsc（client bundle 是手写产物，无转译构建步骤）
 pnpm verify         # 上面四条串起来；无浏览器时 test:browser 会醒目失败（可用 PXM_LANE_ALLOW_SKIP=1 显式放行）

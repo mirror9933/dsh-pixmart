@@ -47,6 +47,23 @@
  * `sizes.test.mjs` 管"控件档位"（按钮 / 输入框 / 胶囊 / 卡片的内边距与圆角）；
  * 本文件管**这一张**卡片重排之后的**区块级**几何与那三个保留项。两条都会在
  * 反向变异里被证明不是空跑（`tools/lane-mutations.mjs` 的 `M37`~`M40`）。
+ *
+ * ## 2026-10-12：卡片改成"列表 + 点「编辑」展开"之后新增的 `3.x`
+ *
+ * 卡片默认收起之后，"先点 `[data-pxm-vendor-edit]` 把编辑器打开"是本文件所有用例的
+ * **共同前置**——这是**结构性适配**，不是放宽：任何期望值（内边距 / 圆角 / 字号 /
+ * 解析出来的颜色）一个字都没动。
+ *
+ * 新增 `3.x` 钉的是重构新增的那几处，官方取值同样逐条复述：
+ *   - `:24` `._3nPmjq_rowActions ._3nPmjq_secondaryButton{border-radius:var(--dsw-radius-sm);
+ *     height:28px;padding:0 10px;font-size:12px;line-height:18px}` ← 「编辑」
+ *   - `:19` `._3nPmjq_secondaryButton{…border:.5px solid var(--dsw-alias-border-l3);
+ *     background:0 0}` ← 「编辑」/「取消」的描边与透明填充
+ *   - `:45-49` `._3nPmjq_customized` / `…Summary`（含 `[open]` 时箭头 `rotate(45deg)`）
+ *   - `:16-17` `._3nPmjq_primaryButton{background:var(--dsw-alias-button-primary-fill);
+ *     height:36px;padding:0 14px;14px/22px}` ← 「保存」
+ *   - `:39` `._3nPmjq_addButton{border:1px dashed var(--dsw-alias-border-l3);
+ *     border-radius:var(--dsw-radius-lg);min-width:180px;height:44px}`
  */
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -206,8 +223,7 @@ const OFFICIAL_LINK_BUTTON = {
 }
 
 /** 模型列表行 = 官方候选列表那一套（同文件 :88-91） */
-const OFFICIAL_MODEL_ROW = {
-  rowGap: '8px',
+const OFFICIAL_MODEL_ROW = {  rowGap: '8px',
   rowPadTop: '6px',
   rowPadRight: '8px',
   rowPadBottom: '6px',
@@ -232,6 +248,81 @@ const OFFICIAL_MODEL_ROW = {
    */
   listMaxHeight: '320px',
 }
+
+/**
+ * 行尾动作里那一枚「编辑」= 官方 `._3nPmjq_rowActions ._3nPmjq_secondaryButton`
+ * （`.probe/models-css-pretty.txt:24`）：
+ *   `{border-radius:var(--dsw-radius-sm);height:28px;padding:0 10px;font-size:12px;line-height:18px}`
+ * 它的描边 / 填充来自 `._3nPmjq_secondaryButton`（同文件 :19）：
+ *   `{border:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-primary);background:0 0}`
+ * —— 与大号 `secondaryButton` 只差 `:24` 那一行的三个几何值，所以这里两者都要钉。
+ */
+const OFFICIAL_ROW_BUTTON = {
+  height: '28px',
+  paddingTop: '0px',
+  paddingRight: '10px',
+  paddingBottom: '0px',
+  paddingLeft: '10px',
+  fontSize: '12px',
+  lineHeight: '18px',
+  radiusVar: '--dsw-radius-sm',
+  /** `border:.5px solid var(--dsw-alias-border-l3)` —— 同处（**不是**卡片用的 l4） */
+  borderColorVar: '--dsw-alias-border-l3',
+  /** `background:0 0` → 计算值就是全透明 */
+  transparent: 'rgba(0, 0, 0, 0)',
+}
+
+/** `._3nPmjq_editorActions` 里那两枚：`…:16-19`（几何 + 配色）+ `:36`（对齐 / 间距） */
+const OFFICIAL_EDITOR_BUTTON = {
+  height: '36px',
+  paddingTop: '0px',
+  paddingRight: '14px',
+  paddingBottom: '0px',
+  paddingLeft: '14px',
+  fontSize: '14px',
+  lineHeight: '22px',
+  radiusVar: '--dsw-radius-md',
+  /** `._3nPmjq_primaryButton{background:var(--dsw-alias-button-primary-fill)}` —— :17 */
+  saveFillVar: '--dsw-alias-button-primary-fill',
+  /** `._3nPmjq_secondaryButton{border:.5px solid var(--dsw-alias-border-l3)}` —— :19 */
+  cancelBorderVar: '--dsw-alias-border-l3',
+  transparent: 'rgba(0, 0, 0, 0)',
+}
+
+/**
+ * `._3nPmjq_customized` + `…Summary`（`.probe/models-css-pretty.txt:45-51`）：
+ *   `{border-top:.5px solid var(--dsw-alias-border-l2);padding-top:10px}` /
+ *   `…Summary{border-radius:var(--dsw-radius-sm);cursor:pointer;width:fit-content;
+ *    color:var(--dsw-alias-label-secondary);gap:6px;margin-left:-4px;padding:2px 4px;
+ *    font-size:12px;font-weight:500;line-height:18px;list-style:none}`
+ * 箭头是 `::before`（`:48` 收起 `rotate(-45deg)` / `:49` `[open]` 时 `rotate(45deg)`）。
+ */
+const OFFICIAL_CUSTOMIZED = {
+  padTop: '10px',
+  borderTopWidth: '0.5px',
+  borderTopColorVar: '--dsw-alias-border-l2',
+  summaryFontSize: '12px',
+  summaryLineHeight: '18px',
+  summaryFontWeight: '500',
+  summaryWidth: 'fit-content',
+  summaryColorVar: '--dsw-alias-label-secondary',
+}
+
+/**
+ * 虚线「添加模型提供商」= 官方 `._3nPmjq_addButton`（`.probe/models-css-pretty.txt:37-39`）：
+ *   `{border:1px dashed var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);
+ *     flex:1 1 0;gap:6px;min-width:180px;height:44px}`
+ */
+const OFFICIAL_ADD_BUTTON = {
+  height: '44px',
+  minWidth: '180px',
+  borderTopStyle: 'dashed',
+  radiusVar: '--dsw-radius-lg',
+  borderColorVar: '--dsw-alias-border-l3',
+}
+
+/** 未配置密钥的圆点色：`._3nPmjq_credentialDotMissing{background:--dsw-alias-state-error-primary}`（:14） */
+const DOT_MISSING_VAR = '--dsw-alias-state-error-primary'
 
 // ── lane 启动 ───────────────────────────────────────────────────────────────
 
@@ -279,8 +370,13 @@ if (launched.browser === null) {
   const probeArgs = (page, name, args) =>
     page.evaluate(([fn, list]) => window.__pxmLane[fn].apply(null, list), [name, args])
 
-  /** 开一个真页面：真 HTTP 源 + 真 shell 骨架 + 原产物 client.js，挂设置页。 */
-  async function openVendorLane() {
+  /**
+   * 开一个真页面：真 HTTP 源 + 真 shell 骨架 + 原产物 client.js，挂设置页。
+   *
+   * `overrides` 用来换夹具的某一块（例如把 `providers` 换成"没配密钥"的那份），
+   * 不动其余默认值。
+   */
+  async function openVendorLane(overrides) {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 900 },
       deviceScaleFactor: 1,
@@ -292,10 +388,18 @@ if (launched.browser === null) {
       if (msg.type() === 'error') problems.push('console.error: ' + msg.text())
     })
     await page.goto(server.origin + '/shell.html', { waitUntil: 'load' })
-    await page.evaluate((payload) => window.__pxmLane.install(payload), fixture())
+    const payload = fixture()
+    if (overrides !== undefined) Object.assign(payload, overrides)
+    await page.evaluate((data) => window.__pxmLane.install(data), payload)
     await page.evaluate(() => window.__pxmLane.mount('settings.section'))
     // 设置页要等取数回来才画卡片。
     await page.waitForSelector('[data-pxm-vendor-card]', { timeout: 15000 })
+    /*
+     * 2026-10-12 结构变化的**统一前置**：卡片默认收起，编辑器（字段 / 模型区 /
+     * 底部动作）点「编辑」才渲染。本文件所有 vendor 用例先展开再量/再点。
+     */
+    await page.click('[data-pxm-vendor-edit]')
+    await page.waitForSelector('[data-pxm-editor]', { timeout: 10000 })
     /*
      * 请求记录由 **lane** 交出来，而不是 `page.on('request')`：插件的 `window.fetch`
      * 被 lane 换成了夹具路由，浏览器侧**没有真实网络请求**，Playwright 的请求事件
@@ -384,6 +488,11 @@ if (launched.browser === null) {
     'borderColorVar',
     'expectBorderTopWidth',
     'expectNoBorder',
+    /** `background:0 0` 的透明填充：单独用 `assert.equal(backgroundColor, 'rgba(0, 0, 0, 0)')` 断 */
+    'transparent',
+    /** 官方配色 token 的名字（值要靠 `resolveColors` 现场解析，不是字面量） */
+    'saveFillVar',
+    'cancelBorderVar',
   ])
 
   /** 一组"必须等于官方"的字段 → 逐条 diff（失败信息带实测值）。 */
@@ -417,6 +526,113 @@ if (launched.browser === null) {
       where + ' 的 ' + prop + '：实测 ' + String(measured[prop]) +
         '，官方 var(' + token + ') 的解析值 ' + String(parsed),
     ]
+  }
+
+  /**
+   * 重构新增那几处的**事实**（只有事实，判断在用例里）。
+   *
+   * 为什么自己 evaluate 而不是加 `lane.js` 的探针：`lane.js` 是**共用** harness，
+   * 这四个区块（编辑按钮 / 自定义设置 / 保存取消 / 添加按钮）只有本文件消费，
+   * 放这里改动面最小（且 lane.js 的 `vendorFacts` 已经负责卡片与三个保留项）。
+   *
+   * 一次取完所有需要的量，避免多次往返（这台机器近期反复蓝屏，命令越少越好）。
+   */
+  async function refactorFacts(page) {
+    return page.evaluate(() => {
+      const dump = (el) => {
+        if (el === null || el === undefined) return null
+        const cs = window.getComputedStyle(el)
+        const r = el.getBoundingClientRect()
+        return {
+          tag: el.tagName,
+          text: (el.textContent || '').trim().slice(0, 40),
+          disabled: el.disabled === true,
+          rect: { width: r.width, height: r.height },
+          display: cs.display,
+          flexDirection: cs.flexDirection,
+          alignItems: cs.alignItems,
+          justifyContent: cs.justifyContent,
+          gap: cs.gap,
+          paddingTop: cs.paddingTop,
+          paddingRight: cs.paddingRight,
+          paddingBottom: cs.paddingBottom,
+          paddingLeft: cs.paddingLeft,
+          marginTop: cs.marginTop,
+          marginRight: cs.marginRight,
+          marginBottom: cs.marginBottom,
+          marginLeft: cs.marginLeft,
+          fontSize: cs.fontSize,
+          lineHeight: cs.lineHeight,
+          fontWeight: cs.fontWeight,
+          color: cs.color,
+          backgroundColor: cs.backgroundColor,
+          borderRadius: cs.borderRadius,
+          borderTopWidth: cs.borderTopWidth,
+          borderTopStyle: cs.borderTopStyle,
+          borderTopColor: cs.borderTopColor,
+          width: cs.width,
+          height: cs.height,
+          minWidth: cs.minWidth,
+          listStyleType: cs.listStyleType,
+          /** 声明值里那几项计算样式读不出来的（`fit-content` 会被解析成用后的 px） */
+          declaredWidth: el.style.width,
+          declaredBorder: el.style.getPropertyValue('border'),
+          declaredBorderTop: el.style.getPropertyValue('border-top'),
+          declaredBorderTopWidth: el.style.getPropertyValue('border-top-width'),
+        }
+      }
+      const text = (el, want) =>
+        el === null
+          ? null
+          : Array.prototype.find.call(
+              el.querySelectorAll('button'),
+              (b) => (b.textContent || '').trim() === want,
+            ) || null
+      const card = document.querySelector('[data-pxm-vendor-card]')
+      const actions = card === null ? null : card.querySelector('[data-pxm-vendor-actions]')
+      const edit =
+        actions === null ? null : actions.querySelector('[data-pxm-vendor-edit]') || text(actions, '编辑')
+      const details = card === null ? null : card.querySelector('[data-pxm-vendor-customized]')
+      const summary = details === null ? null : details.querySelector('summary')
+      const editorActions = card === null ? null : card.querySelector('[data-pxm-editor-actions]')
+      const addButton =
+        document.querySelector('[data-pxm-add-vendor]') ||
+        Array.prototype.find.call(
+          document.querySelectorAll('button'),
+          (b) => (b.textContent || '').indexOf('添加模型提供商') >= 0,
+        ) ||
+        null
+      /**
+       * 箭头 = summary 上**真正带动画的那一处** `transform`。官方用 `::before` 画
+       * （`.probe/models-css-pretty.txt:48-49`），本插件的内联样式表达不了伪元素，
+       * 所以两处都收：伪元素（若实现走样式表）与 summary 内第一个带 transform 的真实元素。
+       */
+      const arrowTransforms = (el) => {
+        if (el === null) return null
+        const out = {}
+        const pseudo = window.getComputedStyle(el, '::before').transform
+        if (pseudo !== undefined && pseudo !== '' && pseudo !== 'none') out.pseudo = pseudo
+        Array.prototype.forEach.call(el.querySelectorAll('*'), (kid) => {
+          const t = window.getComputedStyle(kid).transform
+          if (t !== undefined && t !== '' && t !== 'none') {
+            out.child = (out.child === undefined ? '' : out.child + '|') + t
+          }
+        })
+        return out
+      }
+      return {
+        rows: dump(card === null ? null : card.parentElement),
+        edit: dump(edit),
+        details: dump(details),
+        detailsOpen: details === null ? null : details.open === true,
+        summary: dump(summary),
+        summaryArrow: arrowTransforms(summary),
+        editorActions: dump(editorActions),
+        save: dump(editorActions === null ? null : editorActions.querySelector('[data-pxm-vendor-save]') || text(editorActions, '保存')),
+        cancel: dump(editorActions === null ? null : editorActions.querySelector('[data-pxm-vendor-cancel]') || text(editorActions, '取消')),
+        addButton: dump(addButton),
+      }
+    })
   }
 
   // ── 1. 三个保留项 ─────────────────────────────────────────────────────────
@@ -563,8 +779,12 @@ if (launched.browser === null) {
 
         // 卡片是**列表项**：官方把每一家厂商放在 `ul.rows` 的一个 `li.rowCard` 里。
         assert.equal(facts.card.tag, 'LI', '厂商卡片必须是 <li>（官方 ul.rows 的列表项）')
-        const rowsBad = diffOf(facts.rowsRoot, OFFICIAL_ROWS, '厂商列表（ul.rows）')
+        // 列表容器：2026-10-12 起按**父节点**取（卡片自己知道它住在哪个 `ul.rows` 里），
+        // 这样断言不依赖列表上挂的类名。
+        const refactor = await refactorFacts(page)
+        const rowsBad = diffOf(refactor.rows, OFFICIAL_ROWS, '厂商列表（ul.rows）')
         assert.deepEqual(rowsBad, [], '厂商列表与官方 ._3nPmjq_rows 不一致：\n' + rowsBad.join('\n'))
+        assert.equal(refactor.rows.tag, 'UL', '厂商列表必须是 <ul>（官方 rows 是 ul）')
 
         assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
       } finally {
@@ -583,6 +803,9 @@ if (launched.browser === null) {
         const colors = await resolveColors(page, [
           { key: OFFICIAL_HEAD.dotOkColorVar, token: OFFICIAL_HEAD.dotOkColorVar },
           { key: OFFICIAL_EDITOR.backgroundVar, token: OFFICIAL_EDITOR.backgroundVar },
+          // 两枚"不许退回去"的对照面（见下面编辑块底色的反向断言）
+          { key: 'bgBase', token: '--dsw-alias-bg-base' },
+          { key: 'bgLayer1', token: '--dsw-alias-bg-layer-1' },
         ])
 
         const bad = []
@@ -650,6 +873,20 @@ if (launched.browser === null) {
         bad.push(
           ...colorDiff(facts.editor, 'backgroundColor', OFFICIAL_EDITOR.backgroundVar, colors, '编辑块'),
         )
+        /*
+         * 底色这一条还要求**反向**成立：官方 `._3nPmjq_editor` 是
+         * `background:var(--dsw-alias-bg-module-platform)`，不能退回应用底色 `bg-base`，
+         * 也不能退回输入控件那一层 `bg-layer-1`（`._3nPmjq_input{background:…bg-layer-1}`）。
+         * 只看"等于 bg-module-platform"是不够的：夹具若把两枚 token 解成同一个值，
+         * 上面的相等断言会同时成立、缺陷形态被掩盖。
+         */
+        for (const [key, label] of [['bgBase', 'bg-base'], ['bgLayer1', 'bg-layer-1']]) {
+          assert.notEqual(
+            facts.editor.backgroundColor,
+            colors[key],
+            '编辑块的底色不得等于 ' + label + '（官方 editor 用的是 bg-module-platform）',
+          )
+        }
         bad.push(
           ...diffOf(
             { gap: facts.editorActions.gap, justifyContent: facts.editorActions.justifyContent },
@@ -804,6 +1041,356 @@ if (launched.browser === null) {
         }
         assert.deepEqual(bad, [], '「拉取模型」与官方 linkButton 不一致：\n' + bad.join('\n'))
         expectNoVisibleBorder(metrics, '「拉取模型」')
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+  })
+
+  // ── 3. 2026-10-12 重构新增的那几处（编辑按钮 / 圆点两色 / rows / 自定义设置 / 保存取消 / 虚线添加） ──
+
+  describe('3. 卡片重构（点「编辑」展开）新增的官方取值', () => {
+    it('3.1 行尾「编辑」= 官方 rowActions .secondaryButton 小号形态（28px / 0 10px / 12px-18px / radius-sm / border-l3 / 透明填充）', async () => {
+      const { page, context, problems } = await openVendorLane()
+      try {
+        const r = await refactorFacts(page)
+        assert.ok(r.edit !== null, '标头行尾必须有「编辑」按钮（[data-pxm-vendor-edit]）')
+        assert.equal(r.edit.tag, 'BUTTON', '「编辑」必须是原生 button（Tab / Enter 才有原生行为）')
+        assert.equal(r.edit.text, '编辑', '「编辑」的文案不许改：' + JSON.stringify(r.edit))
+
+        const radii = await resolveRadii(page, [OFFICIAL_ROW_BUTTON.radiusVar])
+        const borderColors = await resolveColors(page, [
+          {
+            key: OFFICIAL_ROW_BUTTON.borderColorVar,
+            token: OFFICIAL_ROW_BUTTON.borderColorVar,
+            prop: 'borderTopColor',
+          },
+        ])
+
+        const bad = diffOf(r.edit, OFFICIAL_ROW_BUTTON, '「编辑」')
+          .concat(radiusDiff(r.edit, OFFICIAL_ROW_BUTTON.radiusVar, radii, '「编辑」'))
+          .concat(
+            colorDiff(
+              r.edit,
+              'borderTopColor',
+              OFFICIAL_ROW_BUTTON.borderColorVar,
+              borderColors,
+              '「编辑」',
+            ),
+          )
+        if (Math.abs(r.edit.rect.height - 28) > 0.51) {
+          bad.push('「编辑」的真实几何高度：实测 ' + String(r.edit.rect.height) + 'px，官方 rowActions 里是 28px')
+        }
+        assert.deepEqual(bad, [], '「编辑」与官方 `._3nPmjq_rowActions ._3nPmjq_secondaryButton` 不一致：\n' + bad.join('\n'))
+        // 声明值那一半走 lane 的 `boxMetrics`（0.5px 被量化，只能读声明的边框）
+        expectDeclaredBorder(
+          await probeArgs(page, 'boxMetrics', ['[data-pxm-vendor-edit]']),
+          '0.5px',
+          '「编辑」',
+        )
+        assert.equal(
+          r.edit.backgroundColor,
+          OFFICIAL_ROW_BUTTON.transparent,
+          '「编辑」不得有填充（官方 `._3nPmjq_secondaryButton{background:0 0}`）',
+        )
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('3.2 凭据圆点：8×8 圆；已配置 = state-success-primary，未配置 = state-error-primary', async () => {
+      const { page, context, problems } = await openVendorLane()
+      try {
+        const dot = await probeArgs(page, 'boxMetrics', ['[data-pxm-credential-dot]'])
+        assert.ok(dot !== null, '标头必须有凭据状态点（[data-pxm-credential-dot]）')
+        const colors = await resolveColors(page, [
+          { key: 'configured', token: OFFICIAL_HEAD.dotOkColorVar },
+          { key: 'missing', token: DOT_MISSING_VAR },
+        ])
+        assert.equal(dot.rect.width, 8, '圆点宽必须是 8px：' + JSON.stringify(dot.rect))
+        assert.equal(dot.rect.height, 8, '圆点高必须是 8px：' + JSON.stringify(dot.rect))
+        assert.equal(dot.borderRadius, OFFICIAL_HEAD.dotRadius, '圆点必须是正圆（border-radius:50%）')
+        assert.equal(
+          dot.backgroundColor,
+          colors.configured,
+          '已配置密钥 → 圆点必须是 `--dsw-alias-state-success-primary` 的解析值：实测 ' +
+            String(dot.backgroundColor) + '，解析值 ' + String(colors.configured),
+        )
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+
+      /*
+       * 另一侧：没配密钥的夹具 → 同一枚圆点必须换成 `--dsw-alias-state-error-primary`。
+       * 只断"已配置那一色"的话，"两色接线接反 / 恒定成功色"这种缺陷测不到。
+       */
+      const missingProviders = {
+        ...providersFixture,
+        providers: [
+          { ...providersFixture.providers[0], hasApiKey: false, apiKeySource: 'none' },
+        ],
+      }
+      const second = await openVendorLane({ providers: missingProviders })
+      try {
+        const dot = await probeArgs(second.page, 'boxMetrics', ['[data-pxm-credential-dot]'])
+        assert.ok(dot !== null, '未配置密钥时标头同样必须显示凭据状态点')
+        const colors = await resolveColors(second.page, [
+          { key: 'configured', token: OFFICIAL_HEAD.dotOkColorVar },
+          { key: 'missing', token: DOT_MISSING_VAR },
+        ])
+        assert.equal(
+          dot.backgroundColor,
+          colors.missing,
+          '未配置密钥 → 圆点必须是 `--dsw-alias-state-error-primary` 的解析值：实测 ' +
+            String(dot.backgroundColor) + '，解析值 ' + String(colors.missing),
+        )
+        assert.notEqual(
+          dot.backgroundColor,
+          colors.configured,
+          '未配置时不得仍然画成功色：实测 ' + String(dot.backgroundColor),
+        )
+        assert.deepEqual(second.problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await second.context.close()
+      }
+    })
+
+    it('3.3 厂商列表容器 = 官方 ._3nPmjq_rows（gap 8px / margin-top 12px / padding 0 / list-style none / 竖列）', async () => {
+      const { page, context, problems } = await openVendorLane()
+      try {
+        const r = await refactorFacts(page)
+        assert.ok(r.rows !== null, '卡片必须住在列表里（父节点存在）')
+        assert.equal(r.rows.tag, 'UL', '官方厂商列表是 <ul class="rows">')
+        const bad = diffOf(r.rows, OFFICIAL_ROWS, '厂商列表（ul.rows）')
+        assert.deepEqual(bad, [], '厂商列表与官方 `._3nPmjq_rows` 不一致：\n' + bad.join('\n'))
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('3.4 「自定义设置」= 官方 .customized（border-top .5px border-l2 + padding-top 10px；summary 12px/18px 500 label-secondary width:fit-content；开合两态箭头 transform 不同）', async () => {
+      const { page, context, problems } = await openVendorLane()
+      try {
+        const closed = await refactorFacts(page)
+        assert.ok(closed.details !== null, '编辑器里必须有 details[data-pxm-vendor-customized]')
+        assert.equal(closed.detailsOpen, false, '「自定义设置」初始必须是收起的（不带 open）')
+
+        // 上边线：声明值是官方那根 0.5px 发丝线（计算值会被量化成 1px）
+        assert.match(
+          String(closed.details.declaredBorderTop),
+          /^0\.5px\s+solid/,
+          '「自定义设置」的上边线声明值必须是 0.5px solid，实测 ' +
+            JSON.stringify(closed.details.declaredBorderTop),
+        )
+        assert.equal(
+          closed.details.paddingTop,
+          OFFICIAL_CUSTOMIZED.padTop,
+          '「自定义设置」的 padding-top：实测 ' + String(closed.details.paddingTop) +
+            '，官方 ' + OFFICIAL_CUSTOMIZED.padTop,
+        )
+        const borderColors = await resolveColors(page, [
+          {
+            key: 'l2',
+            token: OFFICIAL_CUSTOMIZED.borderTopColorVar,
+            prop: 'borderTopColor',
+          },
+        ])
+        assert.equal(
+          closed.details.borderTopColor,
+          borderColors.l2,
+          '上边线颜色必须是 var(--dsw-alias-border-l2) 的解析值：实测 ' +
+            String(closed.details.borderTopColor) + '，解析值 ' + String(borderColors.l2),
+        )
+
+        // summary：12px/18px + 500 + label-secondary + width:fit-content
+        const summary = closed.summary
+        assert.ok(summary !== null, '「自定义设置」必须有 summary')
+        assert.equal(summary.fontSize, OFFICIAL_CUSTOMIZED.summaryFontSize, 'summary 字号')
+        assert.equal(summary.lineHeight, OFFICIAL_CUSTOMIZED.summaryLineHeight, 'summary 行高')
+        assert.equal(summary.fontWeight, OFFICIAL_CUSTOMIZED.summaryFontWeight, 'summary 字重')
+        assert.equal(
+          summary.declaredWidth,
+          OFFICIAL_CUSTOMIZED.summaryWidth,
+          'summary 的**声明宽度**必须是 fit-content（官方 `…Summary{width:fit-content}`），实测 ' +
+            JSON.stringify(summary.declaredWidth),
+        )
+        const summaryColors = await resolveColors(page, [
+          { key: 'secondary', token: OFFICIAL_CUSTOMIZED.summaryColorVar, prop: 'color' },
+        ])
+        assert.equal(
+          summary.color,
+          summaryColors.secondary,
+          'summary 文字色必须是 var(--dsw-alias-label-secondary) 的解析值：实测 ' +
+            String(summary.color) + '，解析值 ' + String(summaryColors.secondary),
+        )
+
+        /*
+         * 箭头：官方 `:48` 收起是 `rotate(-45deg)`、`:49` `[open]` 时 `rotate(45deg)`
+         * （`._3nPmjq_customized[open]>…Summary:before{transform:rotate(45deg)…}`）。
+         * 所以判据就是"两态的 transform 必须不同"——不必猜实现用的是 ::before 还是真实元素。
+         */
+        await page.click('[data-pxm-vendor-customized] summary')
+        /*
+         * 箭头的 `transform` 带 `.12s` 过渡（官方 `:48` 的 `transition:transform .12s`），
+         * 点完立刻读会落在过渡途中、读到与收起态几乎相同的插值 —— 那是**测试自己的竞态**，
+         * 不是实现没换箭头。等过渡结束再读。
+         */
+        await page.waitForTimeout(250)
+        const open = await refactorFacts(page)
+        assert.equal(open.detailsOpen, true, '点 summary 后 details 必须真的展开')
+        const closedArrow = JSON.stringify(closed.summaryArrow)
+        const openArrow = JSON.stringify(open.summaryArrow)
+        assert.notEqual(
+          openArrow,
+          closedArrow,
+          '箭头在开合两态的 transform 必须不同（官方 -45deg → 45deg）：收起=' +
+            closedArrow + ' 展开=' + openArrow,
+        )
+        assert.ok(
+          Object.keys(closed.summaryArrow ?? {}).length > 0 ||
+            Object.keys(open.summaryArrow ?? {}).length > 0,
+          '箭头必须真的画出来（两态都没有任何 transform 说明根本没有箭头）：收起=' +
+            closedArrow + ' 展开=' + openArrow,
+        )
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('3.5 编辑器底部「保存」= 官方 primaryButton（button-primary-fill + 36px）；「取消」= secondaryButton（.5px border-l3 + 透明填充）', async () => {
+      const { page, context, problems } = await openVendorLane()
+      try {
+        const r = await refactorFacts(page)
+        assert.ok(r.save !== null, '编辑器底部必须有「保存」（[data-pxm-vendor-save]）')
+        assert.ok(r.cancel !== null, '编辑器底部必须有「取消」（[data-pxm-vendor-cancel]）')
+
+        const geometry = {
+          height: OFFICIAL_EDITOR_BUTTON.height,
+          paddingTop: OFFICIAL_EDITOR_BUTTON.paddingTop,
+          paddingRight: OFFICIAL_EDITOR_BUTTON.paddingRight,
+          paddingBottom: OFFICIAL_EDITOR_BUTTON.paddingBottom,
+          paddingLeft: OFFICIAL_EDITOR_BUTTON.paddingLeft,
+          fontSize: OFFICIAL_EDITOR_BUTTON.fontSize,
+          lineHeight: OFFICIAL_EDITOR_BUTTON.lineHeight,
+        }
+        const radii = await resolveRadii(page, [OFFICIAL_EDITOR_BUTTON.radiusVar])
+        const colors = await resolveColors(page, [
+          { key: OFFICIAL_EDITOR_BUTTON.saveFillVar, token: OFFICIAL_EDITOR_BUTTON.saveFillVar },
+          {
+            key: OFFICIAL_EDITOR_BUTTON.cancelBorderVar,
+            token: OFFICIAL_EDITOR_BUTTON.cancelBorderVar,
+            prop: 'borderTopColor',
+          },
+        ])
+
+        const bad = diffOf(r.save, geometry, '「保存」')
+          .concat(radiusDiff(r.save, OFFICIAL_EDITOR_BUTTON.radiusVar, radii, '「保存」'))
+          .concat(
+            colorDiff(
+              r.save,
+              'backgroundColor',
+              OFFICIAL_EDITOR_BUTTON.saveFillVar,
+              colors,
+              '「保存」',
+            ),
+          )
+          .concat(diffOf(r.cancel, geometry, '「取消」'))
+          .concat(radiusDiff(r.cancel, OFFICIAL_EDITOR_BUTTON.radiusVar, radii, '「取消」'))
+          .concat(
+            colorDiff(
+              r.cancel,
+              'borderTopColor',
+              OFFICIAL_EDITOR_BUTTON.cancelBorderVar,
+              colors,
+              '「取消」',
+            ),
+          )
+        for (const [label, measured] of [['「保存」', r.save], ['「取消」', r.cancel]]) {
+          if (Math.abs(measured.rect.height - 36) > 0.51) {
+            bad.push(label + ' 的真实几何高度：实测 ' + String(measured.rect.height) + 'px，官方是 36px')
+          }
+        }
+        assert.deepEqual(
+          bad,
+          [],
+          '编辑器底部两枚按钮与官方 `._3nPmjq_editorActions` 里的取值不一致：\n' + bad.join('\n'),
+        )
+        expectDeclaredBorder(
+          await probeArgs(page, 'boxMetrics', ['[data-pxm-vendor-cancel]']),
+          '0.5px',
+          '「取消」',
+        )
+        assert.equal(
+          r.cancel.backgroundColor,
+          OFFICIAL_EDITOR_BUTTON.transparent,
+          '「取消」不得有填充（官方 `._3nPmjq_secondaryButton{background:0 0}`）',
+        )
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('3.6 虚线「添加模型提供商」= 官方 addButton（dashed / 44px / min-width 180px / radius-lg / border-l3 / disabled）', async () => {
+      const { page, context, problems } = await openVendorLane()
+      try {
+        const r = await refactorFacts(page)
+        const add = r.addButton
+        assert.ok(add !== null, '厂商列表后面必须有「添加模型提供商」按钮（[data-pxm-add-vendor]）')
+        assert.equal(add.tag, 'BUTTON', '「添加模型提供商」必须是原生 button')
+        assert.ok(
+          add.text.indexOf('添加模型提供商') >= 0,
+          '按钮文案必须是「添加模型提供商」，实测 ' + JSON.stringify(add.text),
+        )
+        assert.equal(
+          add.disabled,
+          true,
+          '这一枚在本插件里恒定 disabled（厂商来自出厂预设，没有新增写路径）',
+        )
+
+        const radii = await resolveRadii(page, [OFFICIAL_ADD_BUTTON.radiusVar])
+        const colors = await resolveColors(page, [
+          {
+            key: OFFICIAL_ADD_BUTTON.borderColorVar,
+            token: OFFICIAL_ADD_BUTTON.borderColorVar,
+            prop: 'borderTopColor',
+          },
+        ])
+        const bad = diffOf(add, OFFICIAL_ADD_BUTTON, '「添加模型提供商」')
+          .concat(radiusDiff(add, OFFICIAL_ADD_BUTTON.radiusVar, radii, '「添加模型提供商」'))
+          .concat(
+            colorDiff(
+              add,
+              'borderTopColor',
+              OFFICIAL_ADD_BUTTON.borderColorVar,
+              colors,
+              '「添加模型提供商」',
+            ),
+          )
+        if (Math.abs(add.rect.height - 44) > 0.51) {
+          bad.push('「添加模型提供商」的真实几何高度：实测 ' + String(add.rect.height) + 'px，官方 44px')
+        }
+        assert.deepEqual(
+          bad,
+          [],
+          '「添加模型提供商」与官方 `._3nPmjq_addButton` 不一致：\n' + bad.join('\n'),
+        )
+        /*
+         * 声明值那一半：官方 `._3nPmjq_addButton` 有**两条**规则都命中它 ——
+         * `:19` 的 `.secondaryButton,.addButton{border:.5px solid var(--dsw-alias-border-l3)}`
+         * 与 `:39` 的 `.addButton{border:1px dashed var(--dsw-alias-border-l3);…}`。
+         * 同优先级、后者在后 → **实到的是 `1px dashed`**（这也是"虚线"的字面来源）。
+         */
+        expectDeclaredBorder(
+          await probeArgs(page, 'boxMetrics', ['[data-pxm-add-vendor]']),
+          '1px',
+          '「添加模型提供商」',
+        )
         assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
       } finally {
         await context.close()

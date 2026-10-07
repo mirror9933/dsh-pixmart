@@ -566,6 +566,16 @@ if (launched.browser === null) {
          * ——这是实测踩过的坑，不是防御性代码。
          */
         await page.waitForSelector('.pxm-settings input[type="text"]', { timeout: 15000 })
+        /*
+         * 2026-10-12 结构变化：厂商卡片**默认收起**，官方同语义的「模型页输入档」控件
+         * （Base URL 文本框 / API 密钥密码框）只在点「编辑」之后才渲染。不展开的话，
+         * 页面里第一个 `input[type="text"]` 会落到作品库导出路径那一枚（它属于另一档
+         * `settings-form .input`），量的是错对象。
+         *
+         * 这是**结构性适配**（先展开，再照原期望值量），不是放宽：所有取值一个字没动。
+         */
+        await page.click('[data-pxm-vendor-edit]')
+        await page.waitForSelector('[data-pxm-editor]', { timeout: 10000 })
         // 角色来源：设置页 + 预览徽标（`.pxm-badge` 在别的页面里正是"第一枚 .pxm-pill"，
         // 所以设置页的 `tag` 必须由 `settingsSlots` 在 `.pxm-settings` 内定位）。
         const roles = await measureRoles(page, ['settingsSlots', 'overlaySlots'])

@@ -187,11 +187,30 @@ window.__ModuleLoader__.load({
       bgModulePlatform: 'var(--dsw-alias-bg-module-platform)',
       borderL1: 'var(--dsw-alias-border-l1)',
       borderL2: 'var(--dsw-alias-border-l2)',
+      /*
+       * **按钮 / 虚线添加按钮的描边**（2026-10-12 厂商卡片改官方同构时进的一枚）：
+       * 官方 `secondaryButton` 与 `addButton` 都是它
+       * （`.probe/models-css-pretty.txt:19`、`:39`）。与 `borderL2`（`#0000001a`）、
+       * `borderL4`（`#00000029`）**不同值**（`#0000001f`），不能顶替 —— 差的那点 alpha
+       * 正是"卡片描边 vs 按钮描边"的区别（`.probe` 是官方 asar 里那条内联 CSS 的转写）。
+       */
+      borderL3: 'var(--dsw-alias-border-l3)',
       borderL4: 'var(--dsw-alias-border-l4)',
       label: 'var(--dsw-alias-label-primary)',
       labelSecondary: 'var(--dsw-alias-label-secondary)',
       labelTertiary: 'var(--dsw-alias-label-tertiary)',
       error: 'var(--dsw-alias-state-error-primary)',
+      /*
+       * **主按钮**（「保存」）的两枚（2026-10-12，官方 `primaryButton`）：
+       *   `.probe/models-css-pretty.txt:17` →
+       *   `{background:var(--dsw-alias-button-primary-fill);
+       *     color:var(--dsw-alias-label-primary-foreground)}`。
+       * 两枚成对出现：少一枚就会出现"某个主题下按钮文字看不清"这类只在一边暴露的问题。
+       * 官方 `primaryButton:hover` 用的 `interactive-bg-hover` **不用**：我们的样式是内联
+       * `style`，表达不了 `:hover`，本次不做悬停态（已知偏差记在 docs/contract-notes.md §30）。
+       */
+      buttonPrimaryFill: 'var(--dsw-alias-button-primary-fill)',
+      labelPrimaryForeground: 'var(--dsw-alias-label-primary-foreground)',
       idle: 'var(--dsw-alias-state-idle-primary)',
       success: 'var(--dsw-alias-state-success-primary)',
       warn: 'var(--dsw-alias-state-warn-primary)',
@@ -471,6 +490,54 @@ window.__ModuleLoader__.load({
       stackLabelLineHeight: '18px',
       // ._3nPmjq_editorActions{gap:8px}
       actionsGap: '8px',
+      /*
+       * 官方主 / 次按钮的**整档几何**（`.probe/models-css-pretty.txt:16`）——
+       * `._3nPmjq_primaryButton,._3nPmjq_secondaryButton,._3nPmjq_addButton
+       *  {border-radius:var(--dsw-radius-md);height:36px;padding:0 14px;font-size:14px;
+       *   line-height:22px}`；`primaryButton` 的填充/前景见 `T.buttonPrimaryFill` /
+       * `T.labelPrimaryForeground`（同文件 `:17`），`secondaryButton` 的描边见 `T.borderL3`
+       * （同文件 `:19`）。编辑器底部的「取消 / 保存」两枚就是这一档。
+       *
+       * 注意与 `button*`（= 官方 `Button.module.css` 的 `.sm`，28px / `0 10px` / 12px/18px）
+       * 是**两个档位**：官方只在 `.rowActions` 里把 secondaryButton 缩到 28px
+       * （`.probe/models-css-pretty.txt:24`），页内其它位置的次按钮仍是 36px。
+       */
+      editorButtonHeight: '36px',
+      editorButtonPad: '0 14px',
+      editorButtonFontSize: '14px',
+      editorButtonLineHeight: '22px',
+      /*
+       * 虚线「添加模型提供商」（`.probe/models-css-pretty.txt:37-39`）：
+       *   `._3nPmjq_addBlock{flex-direction:column;gap:12px}`（:37）
+       *   `._3nPmjq_addActions{display:flex}`（:38）
+       *   `._3nPmjq_addButton{border:1px dashed var(--dsw-alias-border-l3);
+       *    border-radius:var(--dsw-radius-lg);flex:1 1 0;gap:6px;min-width:180px;height:44px}`（:39）
+       * 基础几何（`0 14px` / 14px / 22px）来自同一文件 `:16`；禁用态 `opacity:.4`（:25）。
+       */
+      addBlockGap: '12px',
+      addButtonHeight: '44px',
+      addButtonMinWidth: '180px',
+      addButtonGap: '6px',
+      /*
+       * 官方「自定义设置」折叠块（`.probe/models-css-pretty.txt:45-51`）：
+       *   `._3nPmjq_customized{border-top:.5px solid var(--dsw-alias-border-l2);padding-top:10px}`（:45）
+       *   `._3nPmjq_customizedSummary{border-radius:var(--dsw-radius-sm);cursor:pointer;
+       *    width:fit-content;align-items:center;gap:6px;margin-left:-4px;padding:2px 4px;
+       *    font-size:12px;font-weight:500;line-height:18px;list-style:none}`（:46）
+       *   `._3nPmjq_customizedBody{flex-direction:column;gap:12px;padding-top:12px}`（:51）
+       * 箭头（5px 方块 + 两边框 + 旋转）在文件末的 `CSS` 里 —— 它只能靠 `::before` 表达。
+       */
+      customizedPadTop: '10px',
+      customizedSummaryPad: '2px 4px',
+      customizedSummaryGap: '6px',
+      customizedSummaryMarginLeft: '-4px',
+      customizedSummaryFontSize: '12px',
+      customizedSummaryLineHeight: '18px',
+      customizedBodyGap: '12px',
+      customizedBodyPadTop: '12px',
+      // ._3nPmjq_customizedSummary:before{width:5px;height:5px;border-*:1.5px solid}（:48）
+      customizedArrowSize: '5px',
+      customizedArrowBorderWidth: '1.5px',
       // ._3nPmjq_modelCatalog{gap:10px;padding-top:12px}
       catalogGap: '10px',
       catalogPadTop: '12px',
@@ -538,6 +605,22 @@ window.__ModuleLoader__.load({
     }
     /** 夹取到 `[lo, hi]`；`hi < lo` 时以 `lo` 为准（极端窄屏下宁可略溢出也不给空盒子）。 */
     const clamp = (value, lo, hi) => Math.min(Math.max(value, lo), Math.max(lo, hi))
+
+    /**
+     * 从一个 URL 里取**主机名**（官方 `._3nPmjq_editorRoute` 放的就是端点的 host）。
+     *
+     * 用户可能还没填协议（`api.example.com/v1`）——那时 `new URL` 会抛，退回原文
+     * （总比空着好，且与输入框里看到的一致）。空串照旧返回空串，由调用方决定占位符。
+     */
+    const hostOf = (value) => {
+      const raw = String(value ?? '').trim()
+      if (raw === '') return ''
+      try {
+        return new URL(raw).host
+      } catch {
+        return raw
+      }
+    }
 
     // ── URL 与取数 ──────────────────────────────────────────────────────────
 
@@ -1320,9 +1403,16 @@ window.__ModuleLoader__.load({
      * 是堆叠式（`.field` + `.fieldLabel`，Base URL / API Key 就在里面）。
      * 2026-10-11 复刻时按官方分工各自取用，不是"两套随便挑"。
      *
-     * 锚点是 `data-pxm-editor-field` / `-label` / `-control`（语义锚点，浏览器 lane 按它定位），
-     * **刻意不复用** `data-pxm-field`：那个锚点属于行式 `Field`，混用会让
-     * `test/browser/layout.test.mjs` 7.1 的"行式"几何断言把这里的堆叠字段也算进去。
+     * 锚点有两套，**都是语义锚点**（浏览器 lane / jsdom lane 按它定位，不按类名）：
+     *   - `data-pxm-editor-field` / `-label` / `-control`：本插件自有的**堆叠式**锚点；
+     *   - `data-pxm-field` / `data-pxm-field-label`：与行式 `Field` 共用的那对通用锚点
+     *     （任务规格里把它列为"必须保留"的契约）。
+     *
+     * ⚠️ 2026-10-12 起**特意两套都挂**：厂商编辑器**默认收起**（`ProviderCard` 只有点
+     * 「编辑」才渲染编辑块），所以这些堆叠字段在收起态**根本不在 DOM 里** ——
+     * 而 `test/browser/layout.test.mjs` 7.1 的"行式"几何断言（`[data-pxm-field]` 必须
+     * 标签与控件在同一行）只会在设置页**默认态**跑，遇不到它们。两套并存因此不冲突，
+     * 又同时满足"通用锚点仍可定位到编辑器字段"的期望。
      */
     function EditorField(props) {
       const controlId = isString(props.controlId) ? props.controlId : undefined
@@ -1331,6 +1421,7 @@ window.__ModuleLoader__.load({
         'div',
         {
           'data-pxm-editor-field': '1',
+          'data-pxm-field': '1',
           style: {
             display: 'flex',
             flexDirection: 'column',
@@ -1343,6 +1434,7 @@ window.__ModuleLoader__.load({
           'label',
           {
             'data-pxm-editor-field-label': '1',
+            'data-pxm-field-label': '1',
             ...(controlId === undefined ? {} : { htmlFor: controlId }),
             ...(describedBy === undefined ? {} : { id: describedBy }),
             style: {
@@ -1479,6 +1571,121 @@ window.__ModuleLoader__.load({
           },
         },
         props.children,
+      )
+    }
+
+    /**
+     * 官方**主 / 次按钮**（`._3nPmjq_primaryButton` / `._3nPmjq_secondaryButton`，
+     * `.probe/models-css-pretty.txt:16-19`）——编辑器底部的「保存」（primary）与
+     * 「取消」、以及厂商标头行里的「编辑」（secondary）都用它。
+     *
+     * 与 `Btn` / `LinkButton` 的分工（三枚是官方**三个**不同的类，不是三套口味）：
+     *   - `LinkButton` = `._3nPmjq_linkButton`（无描边、label-tertiary，「拉取模型」等）；
+     *   - `Btn` = 官方行内动作按钮 `.sm`（`Button.module.css`，本插件作品库/设置页通用）；
+     *   - `ActionButton`（本组件）= 官方「模型」页**本页**的 primary/secondary，
+     *     分两档：`size:'sm'` = `.rowActions` 里缩小的那一档（28px / `0 10px` / 12px/18px /
+     *     `radius-sm`，`:24`），默认 = 整档 36px / `0 14px` / 14px/22px / `radius-md`（`:16`）。
+     *
+     * 颜色只来自 token：primary 填充/前景 = `T.buttonPrimaryFill` /
+     * `T.labelPrimaryForeground`（`:17`），secondary 描边 = `T.borderL3`（`:19`），
+     * 文字 = `T.label`。禁用态 `opacity:.4`（`:25`）。
+     *
+     * `props.attrs` 是给语义锚点（`data-pxm-*`）用的透传口 —— 与 `Btn` 的 `role` 同一做法，
+     * 只是这里要挂多个锚点（例如「编辑」按钮的 `data-pxm-vendor-edit` + `aria-label`）。
+     */
+    function ActionButton(props) {
+      const disabled = props.disabled === true
+      const primary = props.variant === 'primary'
+      const small = props.size === 'sm'
+      const geometry = small
+        ? {
+            height: S.buttonHeight,
+            padding: S.buttonPad,
+            fontSize: S.buttonFontSize,
+            lineHeight: S.buttonLineHeight,
+            borderRadius: S.radiusSm,
+          }
+        : {
+            height: S.editorButtonHeight,
+            padding: S.editorButtonPad,
+            fontSize: S.editorButtonFontSize,
+            lineHeight: S.editorButtonLineHeight,
+            borderRadius: S.radiusMd,
+          }
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: primary ? 'pxm-primary-btn' : 'pxm-secondary-btn',
+          ...(isString(props.role) && props.role !== '' ? { 'data-pxm-role': props.role } : {}),
+          ...(isObject(props.attrs) ? props.attrs : {}),
+          onClick: props.onClick,
+          disabled,
+          ...(isString(props.title) ? { title: props.title } : {}),
+          style: {
+            font: 'inherit',
+            boxSizing: 'border-box',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px',
+            ...geometry,
+            border: primary ? 'none' : '0.5px solid ' + T.borderL3,
+            background: primary ? T.buttonPrimaryFill : 'transparent',
+            color: primary ? T.labelPrimaryForeground : T.label,
+            cursor: disabled ? 'default' : 'pointer',
+            opacity: disabled ? 0.4 : 1,
+            whiteSpace: 'nowrap',
+          },
+        },
+        props.children,
+      )
+    }
+
+    /**
+     * 虚线「添加模型提供商」（官方 `._3nPmjq_addButton`，`.probe/models-css-pretty.txt:39`）
+     * —— **恒定 disabled**：厂商来自出厂预设，本插件没有"新增厂商"这条写路径
+     * （`docs/contract-notes.md` §26.4 把"添加厂商 UI"明列为**本次不做**的已知限制）。
+     *
+     * 渲染成官方那枚按钮的形态而不是干脆不画，是为了让"这里本该能加"与"为什么加不了"
+     * 都可见：`title` / `aria-label` 就是那句原因（与 readonly 控件的做法一致）。
+     */
+    const ADD_VENDOR_UNAVAILABLE = '暂不支持：厂商来自出厂预设（contract-notes §26.4）'
+
+    function AddVendorButton() {
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'pxm-add-vendor',
+          'data-pxm-add-vendor': '1',
+          disabled: true,
+          title: ADD_VENDOR_UNAVAILABLE,
+          'aria-label': ADD_VENDOR_UNAVAILABLE,
+          style: {
+            font: 'inherit',
+            boxSizing: 'border-box',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: S.addButtonGap,
+            flex: '1 1 0',
+            minWidth: S.addButtonMinWidth,
+            height: S.addButtonHeight,
+            // 官方 addButton 用的是共享那一条的 `padding:0 14px` / 14px / 22px（`:16`）。
+            padding: S.editorButtonPad,
+            border: '1px dashed ' + T.borderL3,
+            borderRadius: S.radiusLg,
+            background: 'transparent',
+            color: T.label,
+            fontSize: S.editorButtonFontSize,
+            lineHeight: S.editorButtonLineHeight,
+            cursor: 'default',
+            opacity: 0.4,
+            whiteSpace: 'nowrap',
+          },
+        },
+        '添加模型提供商',
       )
     }
 
@@ -2857,15 +3064,60 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** 单个厂商的凭据表单：baseUrl / apiKey / 拉取模型 / 选择模型 / 测试连接。 */
+    /**
+     * 单个厂商卡片 —— 官方「模型」设置页那一张 `li.rowCard` 的同构形态。
+     *
+     * 默认**收起**：只渲染标头行（厂商名 + rowTag + 凭据圆点 + 右侧「编辑」）；
+     * 点「编辑」在本卡**内部**展开官方同构的编辑块（`._3nPmjq_editor`），再点收起。
+     * 「同时只允许一张展开」由父级 `ProvidersSection` 持有（传 `open` / `onToggle`）；
+     * 单独挂载（由文件末尾的测试钩子导出这张卡）时退回内部 state，默认同样是收起。
+     * 注：本注释**刻意不写出那个钩子对象的名字**——`node tools/strip-test-hooks.mjs`
+     * 会断言打包产物里不得出现该标识符（连注释也不行），写出来会让 `pnpm test` 直接失败。
+     *
+     * 编辑器内容（顺序即官方 `ProviderEditor` 的顺序，见 `.probe/models-client.js:1683-1712`）：
+     *   API 密钥 → `<details>自定义设置</details>`（**Base URL 在里面**）→ 模型区 → 取消/保存。
+     *
+     * 「Gemini 原生 Base URL（可选）」**按厂商条件渲染**：只有 `provider.geminiNativeBaseUrl`
+     * 非空时才出现在「自定义设置」里（agnes 是 `''` → 那张卡没有这一项；ofox 是
+     * `https://api.ofox.io/gemini/v1beta` → 仍然能改）。这正是官方 `customized` 折叠区的用法
+     * （放"按家族不同的额外字段"，`.probe/models-client.js:1710-1759`）：一刀切删掉会让
+     * ofox 的 `gemini-native` 端点**从界面上再也改不了**，是能力的净损失。
+     * 判据取**宿主视图**（不是草稿）：否则用户把输入框清空的那一瞬间字段会自己消失。
+     */
     function ProviderCard(props) {
       const provider = props.provider
       const id = isString(provider.id) ? provider.id : ''
       const hasKey = provider.hasApiKey === true
       const keyFromEnv = provider.apiKeySource === 'env'
+      /**
+       * 这一家有没有"Gemini 原生端点"这件事 —— 有才渲染那一项。
+       * `trim()`：只有一个空格/空串的配置等于没配（与 `src/vendor/models.ts:61` 的判据同源）。
+       */
+      const hasNativeUrl = String(provider.geminiNativeBaseUrl ?? '').trim() !== ''
+
+      /** 展开态：列表里由父级**受控**（同时只许一张开），单独挂载时自持。 */
+      const controlled = props.open === true || props.open === false
+      const [openLocal, setOpenLocal] = React.useState(false)
+      const open = controlled ? props.open === true : openLocal
 
       const [baseUrl, setBaseUrl] = React.useState(String(provider.baseUrl ?? ''))
       const [nativeUrl, setNativeUrl] = React.useState(String(provider.geminiNativeBaseUrl ?? ''))
+      /**
+       * **已提交的基线**（官方 `ProviderEditor` 里的 `committedOriginal`，见
+       * `.probe/models-client.js:1604-1611`）：草稿与它的差值才是"改动过"。
+       *
+       * 为什么不直接跟 `provider.baseUrl` 比：写成功之后宿主会重取，但**重取回来的视图
+       * 不一定马上带上刚写的值**（宿主的视图是上一次的快照、或者返回的是别处的旧值）。
+       * 那种时候拿 prop 当基线，会把"刚保存过的值"继续当成未提交的改动，
+       * 下一次只改密钥的保存就又带上 `baseUrl` —— "只提交改动过的字段"立刻失真。
+       * 所以基线只在**两处**更新：写成功时（用刚提交的值）、以及宿主视图真的换成
+       * 另一个值时（见下面的 `lastSeenBase`）。
+       */
+      const [committedBase, setCommittedBase] = React.useState(String(provider.baseUrl ?? ''))
+      // 原生端点同上：非空的厂商才有这一份草稿，同样有"已提交的基线"。
+      const [committedNative, setCommittedNative] = React.useState(
+        String(provider.geminiNativeBaseUrl ?? ''),
+      )
       // 不再暴露 `apiKeyEnv`：环境变量会**优先于**本页填写的密钥，只留字段却藏掉输入框
       // 会变成"哪天环境变量被设上，界面里的 key 就静默失效且无从察觉"。
       // 因此保存凭据时显式清空它（见 writeCredentials 的调用点）。
@@ -2892,11 +3144,63 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      // 宿主的视图变了（例如拉取模型后重取成功）→ 同步输入框的初值
+      /**
+       * 宿主的视图变了（例如拉取模型后重取成功）→ 同步输入框的初值。
+       *
+       * 只在**值真的变了**时才动：重取回来的还是同一个值（写成功后宿主那次重取常常如此）
+       * 就不该把刚刚提交的草稿/基线打回旧值。值真的变了 → 草稿与基线一起对齐新视图。
+       */
+      const lastSeenBase = React.useRef(String(provider.baseUrl ?? ''))
+      const lastSeenNative = React.useRef(String(provider.geminiNativeBaseUrl ?? ''))
       React.useEffect(() => {
-        setBaseUrl(String(provider.baseUrl ?? ''))
-        setNativeUrl(String(provider.geminiNativeBaseUrl ?? ''))
+        const next = String(provider.baseUrl ?? '')
+        if (next !== lastSeenBase.current) {
+          lastSeenBase.current = next
+          setBaseUrl(next)
+          setCommittedBase(next)
+        }
+        const nextNative = String(provider.geminiNativeBaseUrl ?? '')
+        if (nextNative !== lastSeenNative.current) {
+          lastSeenNative.current = nextNative
+          setNativeUrl(nextNative)
+          setCommittedNative(nextNative)
+        }
       }, [provider.id, provider.baseUrl, provider.geminiNativeBaseUrl])
+
+      /** 丢弃草稿：两个 URL 回到**已提交的基线**，密钥框清空（密钥从不回显）。 */
+      const discardDraft = () => {
+        setBaseUrl(committedBase)
+        setNativeUrl(committedNative)
+        setKeyValue('')
+        setPickerOpen(false)
+      }
+
+      /**
+       * 任何路径的**收起**都要丢弃本地改动：官方那一版的编辑器状态住在编辑器组件里，
+       * 一收起就卸载、草稿随之消失。我们的草稿状态住在卡片上（卡片收起后仍在），
+       * 所以这里显式对齐那条语义 —— 「取消」、再点一次「编辑」、以及"开了另一张卡"
+       * （父级把 `open` 置 false）走的都是这一条。
+       */
+      const wasOpen = React.useRef(open)
+      React.useEffect(() => {
+        if (wasOpen.current && !open) {
+          setBaseUrl(committedBase)
+          setNativeUrl(committedNative)
+          setKeyValue('')
+          setPickerOpen(false)
+        }
+        wasOpen.current = open
+      })
+
+      /** 展开 / 收起。收起前先把草稿丢掉（见上面的注释），再交给受控方或本地 state。 */
+      const setOpen = (next) => {
+        if (!next) discardDraft()
+        if (controlled) {
+          if (typeof props.onToggle === 'function') props.onToggle(next)
+        } else {
+          setOpenLocal(next)
+        }
+      }
 
       const endpoint = 'api/providers/' + encodeURIComponent(id) + '/'
 
@@ -2905,6 +3209,15 @@ window.__ModuleLoader__.load({
           const outcome = await apiPost(endpoint + 'credentials', payload)
           if (outcome.ok !== true) return postResult(outcome, '')
           setKeyValue('')
+          // 写成功 = 这次提交的值成为新基线（只针对真的提交过的字段）。
+          if (isString(payload.baseUrl)) {
+            setCommittedBase(payload.baseUrl)
+            lastSeenBase.current = String(provider.baseUrl ?? '')
+          }
+          if (isString(payload.geminiNativeBaseUrl)) {
+            setCommittedNative(payload.geminiNativeBaseUrl)
+            lastSeenNative.current = String(provider.geminiNativeBaseUrl ?? '')
+          }
           return postResult(outcome, '已保存')
         }).then((outcome) => {
           if (outcome.ok === true) props.reload()
@@ -2972,6 +3285,36 @@ window.__ModuleLoader__.load({
       const disableCredentials = creds.busy || id === ''
 
       /*
+       * ── 显式保存（2026-10-12）──────────────────────────────────────────────
+       * 不再"失焦即写"：Base URL / Gemini 原生 Base URL / API 密钥都只改本地 state，
+       * 点「保存」才发那一次 POST，且**只提交改动过的字段**（未改动的字段根本不进 body，
+       * 宿主按缺省保留原值 —— 这也是 `providers-api.test.mjs`「apiKey 与 apiKeyEnv
+       * 未出现在请求里 → 原值保留」那条宿主契约所依赖的形态）。「取消」只丢草稿、零请求。
+       */
+      const baseChanged = baseUrl.trim() !== committedBase.trim()
+      // 只有"这一家有原生端点"的厂商才比这一项（字段本身也是条件渲染的）。
+      const nativeChanged = hasNativeUrl && nativeUrl.trim() !== committedNative.trim()
+      const dirty = baseChanged || nativeChanged || keyValue !== ''
+
+      const onSave = () => {
+        const payload = {}
+        if (baseChanged) payload.baseUrl = baseUrl.trim()
+        if (nativeChanged) payload.geminiNativeBaseUrl = nativeUrl.trim()
+        if (keyValue !== '') {
+          payload.apiKey = keyValue
+          // 同时清空 apiKeyEnv：环境变量优先级高于本页填写的密钥，
+          // 只留字段会变成"哪天环境变量被设上，这里的 key 就静默失效"。
+          payload.apiKeyEnv = ''
+        }
+        // 没有任何改动时按钮本来就是 disabled，这里再收一道，保证"零改动 = 零请求"。
+        if (Object.keys(payload).length === 0) return Promise.resolve({ ok: true, text: '' })
+        return writeCredentials(payload)
+      }
+
+      /** 「取消」= 丢草稿 + 收起，**不发任何请求**（`setOpen(false)` 里已经重置草稿）。 */
+      const onCancel = () => setOpen(false)
+
+      /*
        * 卡片几何 = 官方 `._3nPmjq_rowCard`（`settings-models/lib/client.js:58`，标记结构见
        * 同文件 :2160-2232）：
        *   `{border:.5px solid var(--dsw-alias-settings-card-stroke);
@@ -3001,10 +3344,34 @@ window.__ModuleLoader__.load({
       }
 
       const modelCount = isArray(provider.models) ? provider.models.length : 0
-      const routeText =
+      const providerLabel = String(provider.label ?? id ?? '未命名')
+      /**
+       * 可见的 `.editorRoute` 放**主机名**（官方那一枚放的就是端点 host，`.probe/models-css-pretty.txt:30`）；
+       * 我们原来放在那里的是 `group · apiMode` 这一串路由细节 —— 它没被丢掉，改挂到
+       * `title` 上（悬停可见），因为可见那一行按官方只该是 host。
+       */
+      const routeHost = hostOf(baseUrl) || '—'
+      const routeDetail =
         [String(provider.group ?? ''), String(provider.apiMode ?? '')]
           .filter((part) => part !== '')
           .join(' · ') || '—'
+
+      /** 字段下方的 12px/18px 小字（官方 `.advancedHint` / `.modelCatalogMeta` 那一档）。 */
+      const hint = (text) =>
+        h(
+          'span',
+          {
+            style: {
+              color: T.labelTertiary,
+              fontSize: S.catalogMetaFontSize,
+              lineHeight: S.catalogMetaLineHeight,
+            },
+          },
+          text,
+        )
+
+      /** 「清除密钥」：官方没有这一枚（官方凭据只写不删），但原有能力不能丢。 */
+      const onClearKey = () => writeCredentials({ apiKey: '', apiKeyEnv: '' })
 
       return h(
         'li',
@@ -3059,8 +3426,11 @@ window.__ModuleLoader__.load({
               offLabel: '密钥缺失',
             }),
           ),
-          // 行尾动作：官方 `.rowActions{margin-left:auto;gap:4px}`，按钮是 `Button.sm`（28px）。
-          // 「测试连接」没有官方对应物（官方不做连接探测），落在官方**行尾动作**那一档里。
+          // 行尾动作：官方 `.rowActions{margin-left:auto;gap:4px}`，里面的
+          // secondaryButton 缩到 28px 档（`radius-sm` / `0 10px` / 12px/18px，`:24`）。
+          // 「编辑」就是官方那一枚（`aria-label` 带上下文，见 `.probe/models-client.js:2190-2199`）；
+          // 「测试连接」不再住在这里 —— 它和「拉取模型」一样属于**模型区标题行**的
+          // linkButton（用户要求保留下来的两枚，位置随官方同构一起挪进展开后的编辑器）。
           h(
             'span',
             {
@@ -3074,65 +3444,182 @@ window.__ModuleLoader__.load({
               },
             },
             h(
-              Btn,
+              ActionButton,
               {
-                role: 'test-connection',
-                className: 'pxm-test-connection',
-                disabled: probe.busy,
-                onClick: onTest,
-                title: '发一次探测请求，不写配置',
+                size: 'sm',
+                attrs: { 'data-pxm-vendor-edit': '1' },
+                disabled: false,
+                onClick: () => setOpen(!open),
+                label: (open ? '收起 ' : '编辑 ') + providerLabel,
+                title: open ? '收起这一家的设置' : '展开这一家的设置：密钥 / 端点 / 模型',
               },
-              probe.busy ? '测试中…' : '测试连接',
+              '编辑',
             ),
           ),
         ),
         // ── ② 编辑块：官方 `.editor`（radius-lg / padding 14px 16px / gap 14px /
         //      background:bg-module-platform），字段用官方堆叠式 `.field`。
-        h(
-          'div',
-          {
-            'data-pxm-editor': '1',
-            className: 'pxm-vendor-editor',
-            style: {
-              display: 'flex',
-              flexDirection: 'column',
-              gap: S.editorGap,
-              padding: S.editorPad,
-              borderRadius: S.radiusLg,
-              background: T.bgModulePlatform,
-              minWidth: 0,
-            },
-          },
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'baseline', gap: S.editorHeaderGap, flexWrap: 'wrap' } },
-            h(
-              'span',
+        //      **默认不渲染**：官方那一页也是 `open ? renderProviderEditor(…) : null`
+        //      （`.probe/models-client.js:2220`），卡片收起时只有上面那一行标头。
+        open
+          ? h(
+              'div',
               {
+                'data-pxm-editor': '1',
+                className: 'pxm-vendor-editor',
                 style: {
-                  color: T.label,
-                  fontSize: S.editorTitleFontSize,
-                  fontWeight: 500,
-                  lineHeight: S.editorTitleLineHeight,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: S.editorGap,
+                  padding: S.editorPad,
+                  borderRadius: S.radiusLg,
+                  background: T.bgModulePlatform,
+                  minWidth: 0,
                 },
               },
-              '凭据与端点',
-            ),
-            // 官方 `.editorRoute`：把"这一条走哪个协议/路由"写成标题旁边的小字。
-            // 我们的 `group` / `apiMode` 正是这个语义（官方没有 group 这一项）。
-            h(
-              'span',
-              {
-                'data-pxm-vendor-route': '1',
-                style: {
-                  color: T.labelTertiary,
-                  fontSize: S.editorRouteFontSize,
-                  lineHeight: S.editorRouteLineHeight,
+              // 官方 `.editorHeader{align-items:baseline;gap:8px}`（`.probe/models-css-pretty.txt:28-30`）：
+              // 标题 = 厂商名，旁边小字 = 端点的 host（过长省略）。
+              h(
+                'div',
+                {
+                  style: {
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    gap: S.editorHeaderGap,
+                    minWidth: 0,
+                    flexWrap: 'wrap',
+                  },
                 },
-              },
-              routeText,
-            ),
-          ),
+                h(
+                  'span',
+                  {
+                    style: {
+                      color: T.label,
+                      fontSize: S.editorTitleFontSize,
+                      fontWeight: 500,
+                      lineHeight: S.editorTitleLineHeight,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    },
+                  },
+                  providerLabel,
+                ),
+                h(
+                  'span',
+                  {
+                    'data-pxm-vendor-route': '1',
+                    // `group · apiMode` 这一串路由细节挂 title（可见那行按官方放 host）。
+                    title: routeDetail,
+                    style: {
+                      color: T.labelTertiary,
+                      fontSize: S.editorRouteFontSize,
+                      lineHeight: S.editorRouteLineHeight,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    },
+                  },
+                  routeHost,
+                ),
+              ),
+              // ── ① 字段：API 密钥。官方 `ProviderEditor` 的第一个字段就是它
+              //      （`.probe/models-client.js:1683-1709`：`field` + 密码框 + 可选的错误行）。
+              h(
+                EditorField,
+                { label: 'API 密钥', controlId: 'pxm-provider-api-key' },
+                h(TextInput, {
+                  id: 'pxm-provider-api-key',
+                  type: 'password',
+                  value: keyValue,
+                  disabled: creds.busy,
+                  // 官方 `SettingsSecretField` 里的密钥框在同一页用的是**本页私有**那枚
+                  // `._3nPmjq_input`（32px / `bg-layer-1`）。
+                  style: modelsPageInputStyle,
+                  /*
+                   * placeholder 与官方同样是**条件**的（官方 `keyPlaceholder`：
+                   * `keyState?.configured ? t("keyStored") : t("keyPlaceholder")`，
+                   * `.probe/models-client.js:1664` / `:1695`）：
+                   *   - 已经配了密钥 → 「已就位，留空不改动」（`t("keyStored")` 那一支）；
+                   *   - 还没配     → 官方原文「输入 API 密钥，或留空使用环境认证」（`t("keyPlaceholder")`）。
+                   */
+                  placeholder: hasKey
+                    ? '已就位，留空不改动'
+                    : '输入 API 密钥，或留空使用环境认证',
+                  autoComplete: 'new-password',
+                  onChange: (event) => setKeyValue(event.target.value),
+                }),
+                hint(
+                  keyFromEnv
+                    ? '留空表示不修改；当前密钥来自环境变量，清除本页填写不会生效'
+                    : '留空表示不修改',
+                ),
+                // 「清除密钥」官方没有这一枚（官方凭据只写不删），但本插件原有能力不能丢
+                // （"改样式不许丢东西"）。放**字段里**而不是 editorActions：
+                // 底部动作行严格保持官方的「取消 / 保存」两枚。
+                h(
+                  LinkButton,
+                  {
+                    role: 'clear-credential',
+                    className: 'pxm-clear-credential',
+                    disabled: disableCredentials,
+                    onClick: onClearKey,
+                    title: '清除本机配置里的密钥与环境变量名（写空值，不改其它字段）',
+                  },
+                  '清除密钥',
+                ),
+              ),
+              // ── ② 官方「自定义设置」折叠块（`.probe/models-client.js:1710-1717`）：
+              //      `<details class="customized">` + `<summary>` + `<div class="customizedBody">`。
+              //      **Base URL 就住在里面**（官方 `baseURL` 字段在 customizedBody 里，
+              //      `.probe/models-client.js:1735-1759`）。details 是**非受控**的：
+              //      开合由浏览器原生行为负责（官方也不受控），React 只负责初始渲染。
+              h(
+                'details',
+                {
+                  'data-pxm-vendor-customized': '1',
+                  className: 'pxm-customized',
+                  style: {
+                    borderTop: '0.5px solid ' + T.borderL2,
+                    paddingTop: S.customizedPadTop,
+                  },
+                },
+                h(
+                  'summary',
+                  {
+                    'data-pxm-vendor-customized-summary': '1',
+                    className: 'pxm-customized-summary',
+                    style: {
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: S.customizedSummaryGap,
+                      width: 'fit-content',
+                      marginLeft: S.customizedSummaryMarginLeft,
+                      padding: S.customizedSummaryPad,
+                      borderRadius: S.radiusSm,
+                      color: T.labelSecondary,
+                      fontSize: S.customizedSummaryFontSize,
+                      fontWeight: 500,
+                      lineHeight: S.customizedSummaryLineHeight,
+                      cursor: 'pointer',
+                      listStyle: 'none',
+                    },
+                  },
+                  '自定义设置',
+                ),
+                h(
+                  'div',
+                  {
+                    className: 'pxm-customized-body',
+                    style: {
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: S.customizedBodyGap,
+                      paddingTop: S.customizedBodyPadTop,
+                    },
+                  },
           h(
             EditorField,
             { label: 'Base URL', controlId: 'pxm-provider-base-url' },
@@ -3143,120 +3630,34 @@ window.__ModuleLoader__.load({
               // 官方「模型」页本页的输入控件那一档（32px / `bg-layer-1`，见 `modelsPageInputStyle`）。
               style: modelsPageInputStyle,
               placeholder: 'https://api.example.com/v1',
+              // **显式保存**（2026-10-12）：这里只改本地 state，`onBlur` 不再写配置。
               onChange: (event) => setBaseUrl(event.target.value),
-              onBlur: () => {
-                const next = baseUrl.trim()
-                if (next !== String(provider.baseUrl ?? '')) writeCredentials({ baseUrl: next })
-              },
             }),
-            h(
-              'span',
-              {
-                style: {
-                  color: T.labelTertiary,
-                  fontSize: S.catalogMetaFontSize,
-                  lineHeight: S.catalogMetaLineHeight,
-                },
-              },
-              'OpenAI 兼容的 /v1 根地址',
-            ),
+            hint('OpenAI 兼容的 /v1 根地址'),
           ),
-          h(
-            EditorField,
-            { label: 'Gemini 原生 Base URL（可选）', controlId: 'pxm-provider-native-url' },
-            h(TextInput, {
-              id: 'pxm-provider-native-url',
-              value: nativeUrl,
-              disabled: creds.busy,
-              // 同 Base URL：官方本页私有的 `._3nPmjq_input` 那一档。
-              style: modelsPageInputStyle,
-              placeholder: 'https://api.example.com/gemini/v1beta',
-              onChange: (event) => setNativeUrl(event.target.value),
-              onBlur: () => {
-                const next = nativeUrl.trim()
-                if (next !== String(provider.geminiNativeBaseUrl ?? '')) {
-                  writeCredentials({ geminiNativeBaseUrl: next })
-                }
-              },
-            }),
-            h(
-              'span',
-              {
-                style: {
-                  color: T.labelTertiary,
-                  fontSize: S.catalogMetaFontSize,
-                  lineHeight: S.catalogMetaLineHeight,
-                },
-              },
-              '只有走 Gemini 原生接口时才需要',
-            ),
-          ),
-          h(
-            EditorField,
-            { label: 'API Key', controlId: 'pxm-provider-api-key' },
-            h(TextInput, {
-              id: 'pxm-provider-api-key',
-              type: 'password',
-              value: keyValue,
-              disabled: creds.busy,
-              // 官方 `SettingsSecretField` 里的密钥框在同一页用的是**本页私有**那枚
-              // `._3nPmjq_input`（32px / `bg-layer-1`），与上面两个 URL 字段同一个类。
-              style: modelsPageInputStyle,
-              placeholder: hasKey ? '已就位，留空不改动' : '粘贴密钥',
-              autoComplete: 'new-password',
-              onChange: (event) => setKeyValue(event.target.value),
-            }),
-            h(
-              'span',
-              {
-                style: {
-                  color: T.labelTertiary,
-                  fontSize: S.catalogMetaFontSize,
-                  lineHeight: S.catalogMetaLineHeight,
-                },
-              },
-              keyFromEnv
-                ? '留空表示不修改；当前密钥来自环境变量，清除本页填写不会生效'
-                : '留空表示不修改',
-            ),
-          ),
-          // 动作行：官方 `.editorActions{justify-content:flex-end;gap:8px}`。
-          h(
-            'div',
-            {
-              'data-pxm-editor-actions': '1',
-              style: {
-                display: 'flex',
-                justifyContent: 'flex-end',
-                alignItems: 'center',
-                gap: S.actionsGap,
-                flexWrap: 'wrap',
-              },
-            },
-            creds.busy ? h(Spinner, { label: '保存中' }) : null,
-            h(
-              Btn,
-              {
-                disabled: disableCredentials || keyValue === '',
-                // 同时清空 apiKeyEnv：环境变量优先级高于本页填写的密钥，
-                // 只留字段会变成"哪天环境变量被设上，这里的 key 就静默失效"。
-                onClick: () => writeCredentials({ apiKey: keyValue, apiKeyEnv: '' }),
-                title: '把上面填写的密钥写入本机配置；同时清空配置里的环境变量名，避免它静默覆盖',
-              },
-              creds.busy ? '保存中…' : '保存',
-            ),
-            h(
-              Btn,
-              {
-                disabled: disableCredentials,
-                onClick: () => writeCredentials({ apiKey: '', apiKeyEnv: '' }),
-                title: '清除本机配置里的密钥与环境变量名',
-              },
-              '清除密钥',
-            ),
-          ),
-          h(Msg, { result: creds.result }),
-        ),
+                  // Base URL 之后是**按厂商条件渲染**的「Gemini 原生 Base URL（可选）」：
+                  // 只有 `provider.geminiNativeBaseUrl` 非空的家族才有这一项（agnes 没有、
+                  // ofox 有）。它是 `自定义设置` 里的第二个字段 —— 官方这个折叠区放的就是
+                  // "按家族不同的额外字段"（`.probe/models-client.js:1710-1759`）。
+                  hasNativeUrl
+                    ? h(
+                        EditorField,
+                        { label: 'Gemini 原生 Base URL（可选）', controlId: 'pxm-provider-native-url' },
+                        h(TextInput, {
+                          id: 'pxm-provider-native-url',
+                          value: nativeUrl,
+                          disabled: creds.busy,
+                          // 同 Base URL：官方本页私有的 `._3nPmjq_input` 那一档。
+                          style: modelsPageInputStyle,
+                          placeholder: 'https://api.example.com/gemini/v1beta',
+                          // **显式保存**：同样只改本地 state，`onBlur` 不再写配置。
+                          onChange: (event) => setNativeUrl(event.target.value),
+                        }),
+                        hint('只有走 Gemini 原生接口时才需要'),
+                      )
+                    : null,
+                  ),
+                ),
         // ── ③ 模型区块：官方 `section.modelCatalog`
         //      （`{border-top:.5px solid var(--dsw-alias-border-l2);gap:10px;padding-top:12px}`）
         h(
@@ -3353,6 +3754,20 @@ window.__ModuleLoader__.load({
                 },
                 models.busy ? '拉取中…' : '拉取模型',
               ),
+              // 「测试连接」：官方没有"连接探测"这件事，所以它借用官方**同档位**的
+              // `linkButton` 与「拉取模型」并排。这是用户要求保留的两枚之一，
+              // 位置随本次同构改造从行尾动作挪进模型区标题行（展开后才可见）。
+              h(
+                LinkButton,
+                {
+                  role: 'test-connection',
+                  className: 'pxm-test-connection',
+                  disabled: probe.busy,
+                  onClick: onTest,
+                  title: '发一次探测请求，不写配置',
+                },
+                probe.busy ? '测试中…' : '测试连接',
+              ),
             ),
           ),
           h(Msg, { result: models.result }),
@@ -3404,6 +3819,58 @@ window.__ModuleLoader__.load({
               )
             : null,
         ),
+              // 动作行：官方 `.editorActions{justify-content:flex-end;gap:8px}`
+              // （`.probe/models-css-pretty.txt:36`）—— 官方 `EditorFooter` 就是
+              // 「取消（secondary）+ 提交（primary）」两枚（`.probe/models-client.js:145-163`），
+              // 排在整个编辑块的**最后一行**（模型区之后）。
+              h(
+                'div',
+                {
+                  'data-pxm-editor-actions': '1',
+                  style: {
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    alignItems: 'center',
+                    gap: S.actionsGap,
+                    flexWrap: 'wrap',
+                  },
+                },
+                creds.busy ? h(Spinner, { label: '保存中' }) : null,
+                h(
+                  ActionButton,
+                  {
+                    attrs: { 'data-pxm-vendor-cancel': '1' },
+                    // 「取消」不写配置，所以只受请求中限制（没有 id 也能收起）。
+                    disabled: creds.busy,
+                    onClick: onCancel,
+                    title: '丢弃这次改动并收起（不发任何请求）',
+                  },
+                  '取消',
+                ),
+                h(
+                  ActionButton,
+                  {
+                    variant: 'primary',
+                    attrs: { 'data-pxm-vendor-save': '1' },
+                    /*
+                     * 没有改动就不给提交（"零改动 = 零请求"的第一道闸；第二道在 `onSave`）。
+                     *
+                     * ⚠️ **这是本插件在官方之外的收敛，不是官方取值**：官方 `EditorFooter`
+                     * 的 `submitDisabled` 只判 `disabled || !ready`（以及未知 layout / 模型
+                     * 报错 / 必填密钥为空），**没有**"脏检查"（`.probe/models-client.js:1422`
+                     * / `:1828`）。官方的净效果由"提交成功后关闭编辑器"保证；我们保留
+                     * 「已保存」提示所以不关，于是改用这一枚 disabled 表达"没有可提交的改动"。
+                     */
+                    disabled: disableCredentials || !dirty,
+                    onClick: onSave,
+                    title: '只提交改动过的字段（Base URL / API 密钥），其余保持原值',
+                  },
+                  creds.busy ? '保存中…' : '保存',
+                ),
+              ),
+              h(Msg, { result: creds.result }),
+            )
+          : null,
         h(Msg, { result: picker.result }),
       )
     }
@@ -3703,6 +4170,12 @@ window.__ModuleLoader__.load({
 
     function ProvidersSection(props) {
       const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
+      /**
+       * 当前展开的厂商 id（空串 = 全部收起）。**单值**就是"同时只允许一张展开"那条规则的
+       * 实现：官方那一页同样只有一个 `editing` 目标（`.probe/models-client.js:1976` /
+       * `:2157` 的 `open = editing?.provider === row.entry.provider`）。
+       */
+      const [editingVendor, setEditingVendor] = React.useState('')
 
       /** 卸载后不再 setState（`reload` 会被卡片在 await 之后调用）。 */
       const alive = React.useRef(true)
@@ -3837,7 +4310,9 @@ window.__ModuleLoader__.load({
          *   - 区块 `{flex-direction:column;gap:12px}`（这里 12px 由 `vendorRows` 承担，
          *     外层 `skin.wrap` 已经是列方向 + 14px 间距）；
          *   - 列表 `ul.rows{flex-direction:column;gap:8px;margin:12px 0 0;padding:0;list-style:none}`，
-         *     每一家厂商 = 一个 `li.rowCard`（见 `ProviderCard` 的 `rowCardStyle`）。
+         *     每一家厂商 = 一个 `li.rowCard`（见 `ProviderCard` 的 `rowCardStyle`）；
+         *   - 列表之后是 `._3nPmjq_addBlock` + 虚线 `._3nPmjq_addButton`（同文件 :2235-2300 /
+         *     `.probe/models-css-pretty.txt:37-39`）—— 官方"添加提供商"那一枚。
          * 这里**不再**用 `skin.card` 套一层壳：官方没有"卡片套卡片"，厂商卡片本身就是卡片。
          */
         h(
@@ -3855,6 +4330,8 @@ window.__ModuleLoader__.load({
             : h(
                 'ul',
                 {
+                  // 语义锚点：浏览器 lane / jsdom lane 按它定位这张列表（不按类名）。
+                  'data-pxm-vendor-list': '1',
                   className: 'pxm-vendor-rows',
                   style: {
                     display: 'flex',
@@ -3866,15 +4343,30 @@ window.__ModuleLoader__.load({
                     minWidth: 0,
                   },
                 },
-                providers.map((provider, index) =>
-                  h(ProviderCard, {
-                    key: isString(provider.id) ? provider.id : 'p' + String(index),
+                providers.map((provider, index) => {
+                  /*
+                   * 「同时只允许一张卡展开」由**这里**持有（官方也是单值 `editing`，
+                   * 见 `.probe/models-client.js:1976` + `:2157`）：`open` / `onToggle`
+                   * 受控传给卡片，点另一张卡的「编辑」时上一张自动收起（草稿随之丢弃）。
+                   */
+                  const key = isString(provider.id) ? provider.id : 'p' + String(index)
+                  return h(ProviderCard, {
+                    key,
                     provider,
                     index,
                     reload,
-                  }),
-                ),
+                    open: editingVendor === key,
+                    onToggle: (next) => setEditingVendor(next ? key : ''),
+                  })
+                }),
               ),
+          // 虚线「添加模型提供商」：官方那一枚的形态，但**恒定 disabled**
+          // （厂商来自出厂预设，本插件没有"新增厂商"这条写路径，见 §26.4）。
+          h(
+            'div',
+            { className: 'pxm-add-vendor-block', style: { display: 'flex', flexDirection: 'column', gap: S.addBlockGap } },
+            h('div', { style: { display: 'flex' } }, h(AddVendorButton)),
+          ),
         ),
 
         h(
@@ -6495,6 +6987,43 @@ window.__ModuleLoader__.load({
       '.pxm-select-trigger:focus-visible,.pxm-stepper button:focus-visible{outline:2px solid ' +
         T.labelTertiary +
         ';outline-offset:1px;}',
+      /*
+       * 厂商编辑器里的「自定义设置」折叠块（2026-10-12）。
+       *
+       * 官方是 `._3nPmjq_customizedSummary:before{border-bottom:1.5px solid;
+       * border-right:1.5px solid;width:5px;height:5px;transform:rotate(-45deg) translate(-1px,-1px)}`
+       * 与 `._3nPmjq_customized[open]>.…Summary:before{transform:rotate(45deg) translate(-1px,-1px)}`
+       * （`.probe/models-css-pretty.txt:48-49`），以及 `::-webkit-details-marker{display:none}`（:47）。
+       * 这三条**只能**靠伪元素表达，所以走本文件既有的那一张样式表 ——
+       * 不新建样式表、不加 token：描边色取 `T.labelSecondary`（= summary 自身的文字色，
+       * 官方写的是不带颜色的 `solid`，即 `currentColor`；本插件一律把颜色显式挂在 token 上，
+       * 见 `test/client-tokens.test.mjs` 的"不许用当前颜色关键字凑色"）。
+       */
+      '.pxm-customized-summary::-webkit-details-marker{display:none;}',
+      '.pxm-customized-summary::before{content:"";flex:none;width:' +
+        S.customizedArrowSize +
+        ';height:' +
+        S.customizedArrowSize +
+        ';border-bottom:' +
+        S.customizedArrowBorderWidth +
+        ' solid ' +
+        T.labelSecondary +
+        ';border-right:' +
+        S.customizedArrowBorderWidth +
+        ' solid ' +
+        T.labelSecondary +
+        ';transform:rotate(-45deg) translate(-1px,-1px);transition:transform .12s;}',
+      '.pxm-customized[open]>.pxm-customized-summary::before{transform:rotate(45deg) translate(-1px,-1px);}',
+      /*
+       * 交互态：官方 `secondaryButton:hover:not(:disabled)` / `addButton:hover:not(:disabled)`
+       * 用的是 `--dsw-alias-interactive-bg-hover(-solid)`。**本次不做**这些悬停态：
+       * 本插件的按钮几何写在**内联** `style` 里，只有伪类规则才需要样式表，而这两枚 token
+       * 也不在已冻结的 token 清单里（见 docs/contract-notes.md §30 的已知偏差）。
+       * 唯一保留的是**可见焦点环**：它不依赖 hover 能力，且键盘可达性是硬要求。
+       */
+      '.pxm-secondary-btn:focus-visible,.pxm-primary-btn:focus-visible,.pxm-add-vendor:focus-visible,.pxm-customized-summary:focus-visible{outline:2px solid ' +
+        T.labelTertiary +
+        ';outline-offset:2px;}',
       '.pxm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}',
       /* 窄屏（<640px）：退化为底部整宽 + 另设更小高度上限 */
       '@media (max-width:640px){',

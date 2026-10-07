@@ -305,6 +305,112 @@ afterEach(async () => {
   }
 })
 
+// ── 厂商卡片：点「编辑」在卡片内展开（2026-10-12 重构）───────────────────────
+//
+// 结构照官方「模型」设置页（`.probe/models-client.js:2160-2232`）：`ul.rows` 里每家一个
+// `li.rowCard`，卡片**默认只显示** 厂商名 + 凭据圆点 + 「编辑」按钮；点「编辑」才在
+// **同一张卡内**插入编辑器（同文件 `:2220-2230` 的 `open ? renderProviderEditor(...) : null`）。
+//
+// 下面这些定位函数只认**冻结的语义锚点**（task-1 契约）与**必要的结构事实**，
+// 不认类名：类名是实现细节，换个名字不该让行为断言失效。
+
+/** 卡片集合（锚点：`[data-pxm-vendor-card]`）。 */
+function vendorCards(lane) {
+  const cards = [...lane.container.querySelectorAll('[data-pxm-vendor-card]')]
+  assert.ok(cards.length > 0, '设置页必须渲染出厂商卡片（[data-pxm-vendor-card]）')
+  return cards
+}
+
+const firstCard = (lane) => vendorCards(lane)[0]
+
+/**
+ * 卡片内那一枚「编辑」= 官方 `rowActions .secondaryButton`（小号形态）。
+ * 锚点 `[data-pxm-vendor-edit]`，退路是卡内文案为「编辑」的按钮。
+ */
+function editButtonOf(card) {
+  return (
+    card.querySelector('[data-pxm-vendor-edit]') ??
+    [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === '编辑') ??
+    null
+  )
+}
+
+/** 卡片内的编辑器（收起时**不存在** —— 官方也是条件渲染，不是隐藏）。 */
+const editorOf = (card) => card.querySelector('[data-pxm-editor]')
+
+/** 密钥输入框：契约冻结的 id 优先，退路是编辑器里的 password 框。 */
+function keyInputOf(card) {
+  return (
+    card.querySelector('#pxm-provider-key') ??
+    card.querySelector('#pxm-provider-api-key') ??
+    card.querySelector('[data-pxm-editor] input[type="password"]') ??
+    null
+  )
+}
+
+/** Base URL 输入框（契约冻结 id `pxm-provider-base-url`）。 */
+const baseUrlInputOf = (card) => card.querySelector('#pxm-provider-base-url')
+
+/** 「自定义设置」那一枚 `<details>`（官方 `._3nPmjq_customized`）。 */
+function customizedOf(card) {
+  return (
+    card.querySelector('[data-pxm-vendor-customized]') ??
+    card.querySelector('[data-pxm-editor] details') ??
+    null
+  )
+}
+
+function customizedSummaryOf(card) {
+  const details = customizedOf(card)
+  return details === null
+    ? null
+    : (details.querySelector('[data-pxm-vendor-customized-summary]') ??
+        details.querySelector('summary') ??
+        null)
+}
+
+/** 卡内动作按钮：锚点优先，退路是卡内同文案的按钮（忙碌时文案会变，所以锚点更重要）。 */
+function cardButtonOf(card, anchor, label) {
+  return (
+    card.querySelector(anchor) ??
+    [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === label) ??
+    null
+  )
+}
+
+const saveButtonOf = (card) => cardButtonOf(card, '[data-pxm-vendor-save]', '保存')
+const cancelButtonOf = (card) => cardButtonOf(card, '[data-pxm-vendor-cancel]', '取消')
+
+/** 展开某张卡（幂等）：点「编辑」→ 断言编辑器真的出现。 */
+async function openVendorCard(lane, card) {
+  if (editorOf(card) === null) {
+    const button = editButtonOf(card)
+    assert.ok(button, '卡片上必须有「编辑」按钮（[data-pxm-vendor-edit]）')
+    await act(async () => {
+      button.click()
+    })
+    await settleAll()
+  }
+  assert.ok(editorOf(card), '点「编辑」后卡片内必须出现编辑器（[data-pxm-editor]）')
+  return card
+}
+
+/** 展开卡片内那枚 `<details>`（自定义设置）。jsdom 30 已实现 summary 激活 → 切 open。 */
+async function openCustomized(lane, card) {
+  const details = customizedOf(card)
+  assert.ok(details, '编辑器里必须有「自定义设置」details（[data-pxm-vendor-customized]）')
+  if (details.open !== true) {
+    const summary = customizedSummaryOf(card)
+    assert.ok(summary, '「自定义设置」必须有 summary')
+    await act(async () => {
+      summary.click()
+    })
+    await settleAll()
+  }
+  assert.equal(details.open, true, '点 summary 后 details.open 必须为真')
+  return details
+}
+
 // ── 用例 ────────────────────────────────────────────────────────────────────
 
 describe('jsdom lane：设置页可写', () => {
@@ -319,12 +425,14 @@ describe('jsdom lane：设置页可写', () => {
     })
     await lane.render()
 
-    const keyInput = lane.inputByPlaceholder('粘贴密钥')
-    assert.ok(keyInput, '应有一个密钥输入框')
+    // 结构变了：卡片默认收起，密钥输入框要先点「编辑」才存在。
+    const card = await openVendorCard(lane, firstCard(lane))
+    const keyInput = keyInputOf(card)
+    assert.ok(keyInput, '展开编辑器后应有一个密钥输入框')
     assert.equal(keyInput.getAttribute('type'), 'password', '密钥输入框必须是 password')
 
     await lane.type(keyInput, SECRET)
-    await lane.click('保存')
+    await lane.click(saveButtonOf(card))
     await lane.click('刷新') // 触发一次显式 GET，便于数请求
 
     const posts = lane.postCalls()
@@ -362,6 +470,7 @@ describe('jsdom lane：设置页可写', () => {
       },
     })
     await lane.render()
+    await openVendorCard(lane, firstCard(lane))
 
     await lane.click('拉取模型')
 
@@ -389,6 +498,7 @@ describe('jsdom lane：设置页可写', () => {
       },
     })
     await lane.render()
+    await openVendorCard(lane, firstCard(lane))
 
     await lane.click('测试连接')
     assert.ok(lane.text().includes('连接正常'), '成功应显示结果')
@@ -412,14 +522,15 @@ describe('jsdom lane：设置页可写', () => {
       },
     })
     await lane.render()
+    const card = await openVendorCard(lane, firstCard(lane))
 
-    await lane.type(lane.inputByPlaceholder('粘贴密钥'), SECRET)
-    await lane.click('保存')
+    await lane.type(keyInputOf(card), SECRET)
+    await lane.click(saveButtonOf(card))
 
     assert.ok(lane.text().includes('没有 id'), '应显示宿主返回的可读原因')
     assert.ok(lane.text().includes('unknown_provider'), '应带上错误 code')
     // 表单仍在（没有白屏）
-    assert.ok(lane.button('保存'), '失败后表单仍应存在')
+    assert.ok(saveButtonOf(card), '失败后表单仍应存在')
     assert.equal(lane.text().includes(SECRET), false, '错误提示里不得出现密钥')
   })
 
@@ -435,23 +546,25 @@ describe('jsdom lane：设置页可写', () => {
       },
     })
     await lane.render()
+    const card = await openVendorCard(lane, firstCard(lane))
 
-    await lane.type(lane.inputByPlaceholder('粘贴密钥'), SECRET)
-    const saveButton = lane.button('保存')
+    await lane.type(keyInputOf(card), SECRET)
+    const saveButton = saveButtonOf(card)
     // 不 await：让请求停在途中
     await act(async () => {
       saveButton.click()
     })
 
-    const during = lane.button('保存中…')
+    const during = cardButtonOf(card, '[data-pxm-vendor-save]', '保存中…')
     assert.ok(during, '请求中按钮文案应变为「保存中…」')
+    assert.equal(during.textContent.trim(), '保存中…', '请求中按钮文案应变为「保存中…」')
     assert.equal(during.disabled, true, '请求中按钮必须禁用')
 
     await act(async () => {
       release()
     })
     await settleAll()
-    assert.ok(lane.button('保存'), '请求结束后按钮应恢复')
+    assert.ok(saveButtonOf(card), '请求结束后按钮应恢复')
   })
 
   it('默认值卡片：三个字段是自绘下拉，模型选项来自当前厂商', async () => {
@@ -647,6 +760,273 @@ describe('jsdom lane：设置页可写', () => {
   })
 })
 
+// ── 厂商卡片：默认收起 / 取消丢弃 / 保存只写改动 / Gemini 字段消失 ──────────────
+
+describe('jsdom lane：厂商卡片 = 官方「模型」页同构', () => {
+  /** 两家厂商的页面：用来证明「同时只展开一张」。 */
+  const twoProviders = () =>
+    providersPayload({
+      providers: [
+        providerView(),
+        providerView({ id: 'agnes', label: 'Agnes AI', dialect: 'agnes', models: ['a-1'] }),
+      ],
+    })
+
+  /** React 的 onBlur 挂在 `focusout` 上（与作品库导出路径那条用例同一处理）。 */
+  const focusOut = (lane, element) =>
+    act(async () => {
+      element.dispatchEvent(new lane.window.FocusEvent('focusout', { bubbles: true }))
+    })
+
+  it('A1 默认收起；点「编辑」只展开被点的那一张，再点收起', async () => {
+    const lane = await createLane({ respond: () => jsonResponse(twoProviders()) })
+    await lane.render()
+
+    const cards = vendorCards(lane)
+    assert.equal(cards.length, 2, '夹具给了两家厂商，必须有两张卡片')
+    const [first, second] = cards
+
+    // 默认收起：卡里既没有编辑器，也没有密钥输入框 / Base URL 输入框。
+    assert.equal(editorOf(first), null, '默认收起：卡片里不该有编辑器')
+    assert.equal(keyInputOf(first), null, '默认收起：卡片里看不到 API 密钥输入框')
+    assert.equal(baseUrlInputOf(first), null, '默认收起：卡片里看不到 Base URL 输入框')
+    assert.equal(saveButtonOf(first), null, '默认收起：不该有「保存」')
+    // 收起时仍然看得见的是：厂商名 + 凭据圆点 + 「编辑」按钮（官方 rowHead 那一行）。
+    assert.ok((first.textContent ?? '').includes('Ofox'), '收起态必须显示厂商名')
+    assert.ok(first.querySelector('[data-pxm-credential-dot]'), '收起态必须显示凭据圆点')
+    assert.ok(editButtonOf(first), '收起态必须有「编辑」按钮')
+
+    await openVendorCard(lane, first)
+    assert.ok(keyInputOf(first), '点「编辑」后必须出现密钥输入框')
+
+    // 只展开被点的那一张（官方同一时刻只有一张卡带 editor）。
+    assert.equal(editorOf(second), null, '另一张必须仍然收起')
+
+    // 点第二张的「编辑」→ 第一张收起（同时只允许一张展开）。
+    await openVendorCard(lane, second)
+    assert.ok(editorOf(second), '第二张应展开')
+    assert.equal(editorOf(first), null, '展开第二张时第一张必须收起')
+
+    // 再点同一张的「编辑」→ 收起。
+    await act(async () => {
+      editButtonOf(second).click()
+    })
+    await settleAll()
+    assert.equal(editorOf(second), null, '再点「编辑」应收起')
+    assert.equal(keyInputOf(second), null, '收起后密钥输入框必须消失')
+  })
+
+  it('A2 「取消」丢弃改动：零 POST、收起、重新展开后回到配置里的原值', async () => {
+    const ORIGINAL_BASE = 'https://api.example.test/v1'
+    const lane = await createLane({ respond: () => jsonResponse(providersPayload()) })
+    await lane.render()
+    const card = await openVendorCard(lane, firstCard(lane))
+
+    // 改密钥 + 改 Base URL（Base URL 在「自定义设置」里）。
+    await lane.type(keyInputOf(card), SECRET)
+    await openCustomized(lane, card)
+    const baseUrl = baseUrlInputOf(card)
+    assert.ok(baseUrl, '「自定义设置」里必须有 Base URL 输入框')
+    await lane.type(baseUrl, 'https://changed.example.test/v1')
+
+    /*
+     * 真实浏览器里点「取消」之前会先失焦（mousedown 让输入框 blur，然后才 click）。
+     * 所以这里显式把 focusout 也发出去：实现若还留着"失焦即写"，这一步就该被抓。
+     */
+    await focusOut(lane, baseUrl)
+    await focusOut(lane, keyInputOf(card))
+
+    const cancel = cancelButtonOf(card)
+    assert.ok(cancel, '编辑器底部必须有「取消」')
+    await act(async () => {
+      cancel.click()
+    })
+    await settleAll()
+
+    assert.equal(lane.postCalls().length, 0, '「取消」不得发任何写请求')
+    assert.equal(editorOf(card), null, '「取消」后卡片应收起')
+
+    await openVendorCard(lane, card)
+    assert.equal(
+      baseUrlInputOf(card).value,
+      ORIGINAL_BASE,
+      '重新展开后 Base URL 必须回到配置里的原值（本地改动被丢弃）',
+    )
+    assert.equal(keyInputOf(card).value, '', '重新展开后密钥框必须为空（不回显、不残留改动）')
+    assert.equal(lane.postCalls().length, 0, '整个过程一次写请求都不该发生')
+  })
+
+  it('A3 「保存」才写：恰好 1 次 credentials，且只带改动过的字段', async () => {
+    const lane = await createLane({
+      respond: (url, init) => {
+        if (String(init?.method).toUpperCase() === 'POST') {
+          return jsonResponse({ ok: true, provider: providerView() })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    const card = await openVendorCard(lane, firstCard(lane))
+
+    // 只改 Base URL：不得带 apiKey（用户这次没碰密钥）。
+    await openCustomized(lane, card)
+    await lane.type(baseUrlInputOf(card), 'https://moved.example.test/v1')
+    await act(async () => {
+      saveButtonOf(card).click()
+    })
+    await settleAll()
+
+    const firstPosts = lane.postCalls()
+    assert.equal(firstPosts.length, 1, `「保存」应当恰好写 1 次，实际 ${firstPosts.length}`)
+    assert.match(firstPosts[0].url, /\/api\/providers\/ofox\/credentials$/)
+    const sentBaseUrl = JSON.parse(String(firstPosts[0].body))
+    assert.equal(sentBaseUrl.baseUrl, 'https://moved.example.test/v1', '改动过的 Base URL 必须发出去')
+    assert.equal('apiKey' in sentBaseUrl, false, '没改密钥时不得带 apiKey 字段')
+    assert.ok(lane.text().includes('已保存'), '保存成功应给出提示')
+
+    // 反过来：只改密钥 → 不得带 baseUrl。
+    await openVendorCard(lane, card)
+    await lane.type(keyInputOf(card), SECRET)
+    await act(async () => {
+      saveButtonOf(card).click()
+    })
+    await settleAll()
+
+    const posts = lane.postCalls()
+    assert.equal(posts.length, 2, `第二次保存也应当恰好 1 次，实际共 ${posts.length}`)
+    const sentKey = JSON.parse(String(posts[1].body))
+    assert.equal(sentKey.apiKey, SECRET, '改动过的密钥必须发出去')
+    assert.equal('baseUrl' in sentKey, false, '没改 Base URL 时不得带 baseUrl 字段')
+  })
+
+  it('A4 「Gemini 原生 Base URL」按厂商条件渲染：agnes 那张没有它，ofox 那张有且值正确', async () => {
+    /*
+     * 判据（Lead 2026-10-12 修正）：这一项**按厂商条件渲染** —— `provider.geminiNativeBaseUrl`
+     * 非空才在「自定义设置」里出现。全平台删除会让 ofox 的原生端点从界面上再也改不了
+     * （只能手改 config.json），那是能力净损失；要的是"agnes 那张卡干净"。
+     * 所以两侧都断言，比"整页一刀切不存在"更有鉴别力。
+     */
+    const OFOX_NATIVE = 'https://api.ofox.io/gemini/v1beta'
+    const lane = await createLane({
+      respond: () =>
+        jsonResponse(
+          providersPayload({
+            providers: [
+              providerView({ geminiNativeBaseUrl: OFOX_NATIVE }),
+              providerView({ id: 'agnes', label: 'Agnes AI', dialect: 'agnes', models: ['a-1'] }),
+            ],
+          }),
+        ),
+    })
+    await lane.render()
+
+    const [ofox, agnes] = vendorCards(lane)
+    assert.ok(ofox && agnes, '夹具给了两家厂商，必须有两张卡片')
+
+    // ① ofox（夹具里 geminiNativeBaseUrl 非空）→ 该项存在，且值是夹具里那个 URL。
+    await openVendorCard(lane, ofox)
+    await openCustomized(lane, ofox)
+    const native = ofox.querySelector('#pxm-provider-native-url')
+    assert.ok(native, 'geminiNativeBaseUrl 非空时，卡片里必须有 #pxm-provider-native-url')
+    assert.equal(native.value, OFOX_NATIVE, '该输入框必须回显配置里的 geminiNativeBaseUrl')
+
+    // ② agnes（夹具里 geminiNativeBaseUrl 为空）→ 这张卡上根本没有它，也没有那行文案。
+    await openVendorCard(lane, agnes)
+    await openCustomized(lane, agnes)
+    assert.equal(
+      agnes.querySelector('#pxm-provider-native-url'),
+      null,
+      'geminiNativeBaseUrl 为空时，这张卡不得出现 #pxm-provider-native-url',
+    )
+    assert.equal(
+      (agnes.textContent ?? '').includes('Gemini 原生'),
+      false,
+      'geminiNativeBaseUrl 为空时，这张卡的文本不得出现「Gemini 原生」',
+    )
+    assert.equal(editorOf(ofox), null, '展开 agnes 时 ofox 必须收起')
+  })
+
+  it('A5 「自定义设置」= 可展开的 details：初始无 open，点 summary 后为真，Base URL 在它内部', async () => {
+    const lane = await createLane()
+    await lane.render()
+    const card = await openVendorCard(lane, firstCard(lane))
+
+    const details = customizedOf(card)
+    assert.ok(details, '编辑器里必须有 details[data-pxm-vendor-customized]')
+    assert.equal(details.open, false, '「自定义设置」初始必须是收起的（不带 open）')
+
+    const summary = customizedSummaryOf(card)
+    assert.ok(summary, '「自定义设置」必须有 summary（点它开合）')
+    assert.ok(
+      (summary.textContent ?? '').includes('自定义设置'),
+      `summary 文案应为「自定义设置」，实际「${String(summary.textContent)}」`,
+    )
+
+    const baseUrl = baseUrlInputOf(card)
+    assert.ok(baseUrl, 'Base URL 输入框必须存在')
+    assert.equal(details.contains(baseUrl), true, 'Base URL 必须落在 details 的内容区里')
+
+    await act(async () => {
+      summary.click()
+    })
+    await settleAll()
+    assert.equal(details.open, true, '点 summary 后 details.open 必须为真')
+  })
+
+  it('A6 既有行为不丢：展开后「拉取模型」发 refresh-models、「测试连接」发 /test、列表条目数 == 夹具', async () => {
+    const PULLED = ['model-a', 'model-b', 'model-c']
+    let models = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const target = String(url)
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /refresh-models$/.test(target)) {
+          models = PULLED
+          return jsonResponse({ ok: true, models, count: models.length, provider: providerView({ models }) })
+        }
+        if (method === 'POST' && /\/test$/.test(target)) {
+          return jsonResponse({ ok: true, latencyMs: 7, modelCount: models.length })
+        }
+        return jsonResponse(providersPayload({ providers: [providerView({ models })] }))
+      },
+    })
+    await lane.render()
+    // 结构变了：这三样都在编辑器里，必须先点「编辑」。
+    const card = await openVendorCard(lane, firstCard(lane))
+
+    const fetchButton = card.querySelector('[data-pxm-role="fetch-models"]')
+    const testButton = card.querySelector('[data-pxm-role="test-connection"]')
+    assert.ok(fetchButton, '卡片上必须有「拉取模型」按钮')
+    assert.ok(testButton, '卡片上必须有「测试连接」按钮')
+    assert.equal(fetchButton.disabled, false, '「拉取模型」默认必须可点')
+    assert.equal(testButton.disabled, false, '「测试连接」默认必须可点')
+
+    await act(async () => {
+      fetchButton.click()
+    })
+    await settleAll()
+
+    const posts = lane.postCalls()
+    assert.equal(posts.length, 1, `点「拉取模型」应恰好发 1 次 POST，实际 ${posts.length}`)
+    assert.match(posts[0].url, /refresh-models$/)
+    assert.equal(String(posts[0].body), '{}', '拉取是纯读：body 必须是 {}')
+    assert.equal(
+      card.querySelectorAll('[data-pxm-model-row]').length,
+      PULLED.length,
+      `模型列表条目数必须等于夹具给的 ${PULLED.length}`,
+    )
+
+    await act(async () => {
+      testButton.click()
+    })
+    await settleAll()
+    const after = lane.postCalls()
+    assert.equal(after.length, 2, `点「测试连接」应再发 1 次 POST，实际 ${after.length}`)
+    assert.match(after[1].url, /\/test$/)
+    assert.ok(lane.text().includes('连接正常'), '测试连接成功后应显示结果')
+  })
+})
+
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
 
 /**
@@ -755,6 +1135,8 @@ async function createPullLane(options = {}) {
     },
   })
   await lane.render()
+  // 结构变了：模型区在编辑器里，「拉取模型」要先点「编辑」才存在。
+  await openVendorCard(lane, firstCard(lane))
   await lane.click('拉取模型')
   return lane
 }
@@ -941,6 +1323,7 @@ describe('jsdom lane：模型选择面板', () => {
       },
     })
     await lane.render()
+    await openVendorCard(lane, firstCard(lane))
     await lane.click('拉取模型')
     await lane.click(checkboxFor(lane, 'openai/gpt-image-1'))
 
@@ -963,8 +1346,12 @@ describe('jsdom lane：模型选择面板', () => {
   })
 
   it('卸载后落地的响应不再有副作用：不重取 api/providers、不抛异常、不刷警告', async () => {
-    // 直接挂 `ProviderCard`（而不是整个设置页），这样 `reload` 是可数的 spy：
-    // 卸载后如果还跑 `props.reload()`，就等于对已卸载的父组件 setState。
+    /*
+     * 结构变了（2026-10-12）：卡片里的模型区在**编辑器内部**，而且「编辑」开合由
+     * `ProvidersSection` 持有，直接挂 `ProviderCard` 再点「编辑」已经不再等价于用户路径。
+     * 所以改成挂**整个 section**，把"卸载后还去重取 api/providers"这件事按
+     * **fetch 次数**数出来（比 spy 更贴近真实副作用：重取就是一次网络请求）。
+     */
     const warnings = []
     const savedConsoleError = console.error
     console.error = (...args) => {
@@ -987,9 +1374,15 @@ describe('jsdom lane：模型选择面板', () => {
             }),
           )
       })
+      let providerGets = 0
       const fetchImpl = (input, init) => {
         const method = String(init?.method ?? 'GET').toUpperCase()
-        if (method === 'POST' && /refresh-models$/.test(String(input))) {
+        const target = String(input)
+        if (method === 'GET' && /\/api\/providers$/.test(target)) {
+          providerGets += 1
+          return Promise.resolve(jsonResponse(providersPayload()))
+        }
+        if (method === 'POST' && /refresh-models$/.test(target)) {
           return Promise.resolve(pending)
         }
         return Promise.resolve(jsonResponse(providersPayload()))
@@ -1004,20 +1397,21 @@ describe('jsdom lane：模型选择面板', () => {
         throw new Error('未预期的 require("' + String(name) + '")')
       })
 
-      let reloads = 0
       const container = win.document.createElement('div')
       win.document.body.appendChild(container)
       root = createRoot(container)
       await act(async () => {
-        root.render(
-          h(exported.__test__.ProviderCard, {
-            provider: providerView(),
-            index: 0,
-            reload: () => {
-              reloads += 1
-            },
-          }),
-        )
+        root.render(h(exported.__test__.ProvidersSection, {}))
+      })
+      await settleAll()
+
+      // 先展开编辑器，再点「拉取模型」（结构变了：模型区在编辑器里）。
+      const card = container.querySelector('[data-pxm-vendor-card]')
+      assert.ok(card, '必须渲染出厂商卡片')
+      const editButton = card.querySelector('[data-pxm-vendor-edit]')
+      assert.ok(editButton, '卡片上必须有「编辑」按钮')
+      await act(async () => {
+        editButton.click()
       })
       await settleAll()
 
@@ -1034,14 +1428,14 @@ describe('jsdom lane：模型选择面板', () => {
         root.unmount()
       })
       root = null
-      const settled = reloads
+      const settledGets = providerGets
 
       await act(async () => {
         release()
       })
       await settleAll()
 
-      assert.equal(reloads, settled, '卸载后不得再触发重取（那是往已卸载组件 setState）')
+      assert.equal(providerGets, settledGets, '卸载后不得再重取 api/providers（那是往已卸载组件 setState）')
       assert.deepEqual(warnings, [], '卸载后不应有 setState / act 警告')
     } finally {
       if (root !== null) {

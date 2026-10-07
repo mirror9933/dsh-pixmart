@@ -118,8 +118,16 @@ const DARK = {
   '--dsw-alias-bg-overlay': '#61666b',
   '--dsw-alias-border-l1': '#ffffff0f',
   '--dsw-alias-border-l2': '#ffffff1f',
+  '--dsw-alias-border-l3': '#ffffff29',
   '--dsw-alias-border-l4': '#fff3',
   '--dsw-alias-brand-primary': '#f9fafb',
+  /*
+   * 官方主按钮（「保存」）的两枚。`button-primary-fill` 是 `brand-primary` 的别名，
+   * 所以深色下随它变成 `#f9fafb`；前景色官方是 `bluish-1000` = `#0f1115`
+   * —— 两枚一起换才说明"按钮随主题走"，只换 fill 会留下看不清的浅字。
+   */
+  '--dsw-alias-button-primary-fill': '#f9fafb',
+  '--dsw-alias-label-primary-foreground': '#0f1115',
   '--dsw-alias-label-primary': '#f9fafb',
   '--dsw-alias-label-secondary': '#cfd3d6',
   '--dsw-alias-label-tertiary': '#adb2b8',
@@ -1027,6 +1035,15 @@ if (launched.browser === null) {
       const { page, context, problems } = await openThemedLane({ mountSlot: 'settings.section' })
       try {
         await page.waitForSelector('.pxm-settings [data-pxm-role="select"]', { timeout: 15000 })
+        /*
+         * 2026-10-12 结构变化（**只做结构性适配，期望值一个都不动**）：
+         * 厂商卡片默认收起，`#pxm-provider-base-url` / `#pxm-provider-api-key` 只在点
+         * 「编辑」展开后才渲染；Base URL 还住在「自定义设置」折叠区里，所以再点开它。
+         * 两个 id 已冻结为不变，这里仍然按原 id 取（不写容错选择器）。
+         */
+        await page.click('[data-pxm-vendor-edit]')
+        await page.waitForSelector('[data-pxm-editor]', { timeout: 10000 })
+        await page.click('[data-pxm-vendor-customized] summary')
 
         /**
          * 三类控件的选择器 + 它们在源码里挂的那个**内联样式键**。
