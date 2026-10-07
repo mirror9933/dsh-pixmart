@@ -3,6 +3,18 @@
 本文件记录本项目的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-10-12
+
+### Added
+
+- 设置页底部加 GitHub 主页链接（`@mirror9933`）。
+- `test/version.test.mjs`：三处版本号（`package.json` / `src/version.ts` / `client/client.js`）必须一致的机器检查。
+
+### Fixed
+
+- 版本号只在 `package.json` 改过，另两处仍留 0.0.1，导致设置页头部显示旧版本；现三处对齐，并由断言防再次漂移。
+- README 安装口径改为主推「包名 / Release `.tgz`」，明确 GitHub 仓库地址**不推荐**（实测被 pnpm 11 构建闸门拦下）；
+  并再删掉「待办 / 已知限制 / 发布」三节。
 ## [0.1.0] - 2026-10-07
 
 **首个正式发布的版本**：已发布到 npm —— `dsh-pixmart@0.1.0`（103 files / 1.2 MB unpacked）；
@@ -48,4 +60,5 @@
 开发期的内部版本，`private: true`，**未发布**；仅通过本地路径安装验证功能（主链路、厂商适配、作品库、
 四套测试 lane）。打包步骤当时尚未收尾，因此不做分发。
 
+[0.1.1]: https://www.npmjs.com/package/dsh-pixmart/v/0.1.1
 [0.1.0]: https://www.npmjs.com/package/dsh-pixmart/v/0.1.0

@@ -1,6 +1,6 @@
 {
   "name": "dsh-pixmart",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 电商生图插件：主图 / 详情图 / 广告图生成，风格复刻，作品库与生图实时预览",
   "type": "module",
   "license": "MIT",

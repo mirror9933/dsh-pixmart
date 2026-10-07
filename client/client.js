@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const PLUGIN = 'dsh-pixmart'
-    const VERSION = '0.1.0'
+    const VERSION = '0.1.1'
     /**
      * 两处插槽的显示名 —— **刻意不同**（用户要求，task-22）：
      * - `settings.section`（设置面板左导航）用产品名 `PixMart`；
