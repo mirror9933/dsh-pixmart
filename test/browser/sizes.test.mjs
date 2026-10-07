@@ -591,8 +591,23 @@ if (launched.browser === null) {
           'shell 骨架必须发布官方 --dsw-radius-md 的取值（否则圆角断言是空转）',
         )
 
-        for (const role of ['textInput', 'passwordInput', 'select']) {
-          const measured = roles[role]
+        /*
+         * ⚠️ task-17 结构性适配（**不是放宽**）：设置页里现在**多了一枚** `input[type="text"]`
+         * —— 「每次张数」那枚可手动输入的步进器值（task-17 加的，`type=text` +
+         * `inputMode=numeric`），它在 DOM 里比要量的 Base URL 输入框更靠前，于是
+         * `settingsSlots` 的"第一个 text input"会命中它（实测量到 22px 的步进器）。
+         *
+         * 所以 `textInput` 这一枚改为**按 id 精确定位**官方同语义的 Base URL 输入框
+         * （`#pxm-provider-base-url`，展开厂商编辑器后就在页面里）；期望值一个字没改，
+         * 仍然是 `._3nPmjq_input` 的 32px / `0 10px` / 14px / `bg-layer-1` / `border-l4`。
+         * 其余两个角色（`passwordInput` / `select`）仍走共用探针。
+         */
+        const baseUrlInput = await probeArgs(page, 'boxMetrics', ['#pxm-provider-base-url'])
+        for (const [role, measured] of [
+          ['textInput', baseUrlInput],
+          ['passwordInput', roles.passwordInput],
+          ['select', roles.select],
+        ]) {
           assert.ok(measured !== null && measured !== undefined, '设置页必须有 ' + role)
           const expected = fieldExpectation(role)
           const bad = sizeDiff(measured, expected, role)

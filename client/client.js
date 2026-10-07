@@ -3101,6 +3101,16 @@ window.__ModuleLoader__.load({
           const goUp = capDown < capUp
           const cap = clamp(goUp ? capUp : capDown, px(S.menuMinHeightPx), contentMax)
           const left = Math.max(margin, Math.min(rect.left, viewportWidth - rect.width - margin))
+          /*
+           * 弹层**可以比触发器宽**（task-17）：`position: fixed` 之后没有祖先裁切问题，
+           * 所以宽度取 `max(触发器宽, 内容宽)` 再夹进视口。
+           *
+           * 三个约束分别落在内联样式上（浏览器算出来的就是那个式子）：
+           *   `width: max-content`（内容宽） / `minWidth: 触发器宽` / `maxWidth: 右侧可用空间`。
+           * 触发器贴近视口右边时 `maxWidth` 会退化回触发器宽 —— 那时长标签**换行**显示，
+           * 仍然不会被省略号截断（见选项行标签的样式）。
+           */
+          const maxWidth = Math.max(rect.width, viewportWidth - left - margin)
           setPlace({
             /**
              * 用**两条边**定位，而不是"算好高度 + top = triggerTop − 4 − maxHeight"。
@@ -3119,6 +3129,7 @@ window.__ModuleLoader__.load({
               : rect.bottom + menuGap,
             left: left,
             width: rect.width,
+            maxWidth: maxWidth,
             maxHeight: cap,
           })
         }
@@ -3360,7 +3371,27 @@ window.__ModuleLoader__.load({
           },
           h(
             'span',
-            { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+            {
+              'data-pxm-option-label': '1',
+              /*
+               * **完整显示、不省略号**（task-17）。以前这里是
+               * `overflow:hidden;text-overflow:ellipsis;white-space:nowrap` —— 模型 id 恰恰
+               * 只差后缀（`microsoft/mai-image-2.5` / `-flash` / `-pro`、
+               * `google/gemini-3.1-flash-image` vs `-lite-image`），截断之后**用户分不清
+               * 要选哪一个**，会真的选错模型。
+               *
+               * `whiteSpace:normal` 允许换行、`overflowWrap:'anywhere'` 让"没有空格的长 id"
+               * 也能在任意字符处断行（模型 id 全是这种），行高随内容自然增长
+               * （选项行只有 `minHeight`、没有固定高度）。
+               * 宽度一侧由弹层给（`width:max-content` + 视口夹取，见 `place`）。
+               */
+              style: {
+                flex: '1 1 auto',
+                minWidth: 0,
+                whiteSpace: 'normal',
+                overflowWrap: 'anywhere',
+              },
+            },
             String(option.label ?? option.value ?? ''),
           ),
           String(option.value) === String(value)
@@ -3401,9 +3432,20 @@ window.__ModuleLoader__.load({
               ? { bottom: String(place.anchor) + 'px' }
               : { top: String(place.anchor) + 'px' }),
             left: String(place.left) + 'px',
-            // 宽度跟触发器一致；`maxWidth` 再挡一层（面板比视口还宽时不让它溢出右边）。
-            width: String(place.width) + 'px',
-            maxWidth: String(place.width) + 'px',
+            /*
+             * 宽度 = `max(触发器宽, 内容宽)`，并夹进视口（task-17）。
+             *
+             * 以前是 `width: place.width` + `maxWidth: place.width`（**跟触发器同宽**），
+             * 于是长模型 id 只能在窄列里被省略号截断 —— 而模型 id 恰恰只差后缀，
+             * 用户分不清就选错。现在：
+             *   `max-content` 让弹层按**内容**撑开（比触发器宽也没关系，它是 fixed 的）；
+             *   `minWidth` 保证短内容也不比触发器窄（视觉上仍"贴着"那个字段）；
+             *   `maxWidth` 是右侧可用空间（`place.maxWidth`），贴右边时自动夹住，
+             *   此时长标签改为**换行**（见选项行标签的样式），绝不截断。
+             */
+            width: 'max-content',
+            minWidth: String(place.width) + 'px',
+            maxWidth: String(place.maxWidth) + 'px',
             zIndex: 100,
             boxSizing: 'border-box',
             display: 'flex',
@@ -3646,9 +3688,35 @@ window.__ModuleLoader__.load({
       const max = isNumber(props.max) ? props.max : 4
       const value = isNumber(props.value) ? props.value : min
       const disabled = props.disabled === true
+      /**
+       * **手动输入的草稿**（task-17）：`null` = 没在编辑（显示 `props.value`）。
+       *
+       * 为什么要草稿：用户敲 "abc" / "1.5" / "-1" 的过程中输入框里必须显示他敲的东西
+       * （否则连打字都打不出来），所以"显示值"不能直接等于受控的 `props.value`；
+       * 只有**提交**（Enter / 失焦）时才判定并写回状态。
+       */
+      const [draft, setDraft] = React.useState(null)
       const step = (delta) => {
         if (disabled) return
         const next = Math.min(max, Math.max(min, value + delta))
+        if (next === value) return
+        if (typeof props.onChange === 'function') props.onChange(next)
+      }
+      /**
+       * 提交草稿（Enter / 失焦都走它）：
+       *   - **只认非负整数**（`/^\d+$/`）—— `abc` / `1.5` / `-1` / 空串一律**拒绝**，
+       *     状态一个字节都不写，输入框回到当前值；
+       *   - 合法整数**夹在 [min, max]**（`9` → `4`、`0` → `1`）；
+       *   - 与当前值相同就不重复 `onChange`。
+       *
+       * 无论走哪条分支都 `setDraft(null)`：显示值立刻回到"受控的真值"，脏值不可能留在框里。
+       */
+      const commit = () => {
+        if (draft === null) return
+        const raw = draft.trim()
+        setDraft(null)
+        if (!/^\d+$/.test(raw)) return
+        const next = Math.min(max, Math.max(min, Number(raw)))
         if (next === value) return
         if (typeof props.onChange === 'function') props.onChange(next)
       }
@@ -3689,19 +3757,44 @@ window.__ModuleLoader__.load({
           },
         },
         h(
-          'span',
+          'input',
           {
+            // 值本身**可手动输入**（task-17）：`+/-` 之外还能键入数字、Enter / 失焦提交。
+            // 锚点沿用既有 `data-pxm-stepper-value`（读值的人从 `textContent` 改成读 `.value`）。
             'data-pxm-stepper-value': '1',
+            type: 'text',
+            // 移动端弹数字键盘（`type=text` 是为了让"非数字拒绝"这条路径真的可测）。
+            inputMode: 'numeric',
+            autoComplete: 'off',
+            spellCheck: false,
+            disabled: disabled,
+            ...(isString(props.valueLabel) ? { 'aria-label': props.valueLabel } : {}),
+            value: draft === null ? String(value) : draft,
+            onChange: (event) => setDraft(event.target.value),
+            onBlur: commit,
+            onKeyDown: (event) => {
+              if (isObject(event) && event.key === 'Enter') {
+                // Enter = 提交（并阻止可能的表单默认行为）。
+                event.preventDefault()
+                commit()
+              }
+            },
             style: {
               textAlign: 'center',
               fontVariantNumeric: 'tabular-nums',
+              width: S.stepperValueMinWidth,
               minWidth: S.stepperValueMinWidth,
+              // 与原来的 `span` 视觉一致：无边框、透明底、同一档字号与行高。
+              padding: 0,
+              border: 'none',
+              background: 'transparent',
+              font: 'inherit',
               color: T.label,
               fontSize: S.stepperFontSize,
               lineHeight: S.stepperLineHeight,
+              cursor: disabled ? 'default' : 'text',
             },
           },
-          String(value),
         ),
         props.unit === undefined || props.unit === null
           ? null
@@ -5232,6 +5325,8 @@ window.__ModuleLoader__.load({
               disabled: save.busy,
               increaseLabel: '增加每次张数',
               decreaseLabel: '减少每次张数',
+              // 输入框的无障碍名：直接用这一行的标签（不新造文案）。
+              valueLabel: '每次张数',
               onChange: (next) => setN(String(next)),
             }),
           ),

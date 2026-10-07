@@ -199,6 +199,14 @@ async function createLane(options = {}) {
   })
   const bag = exported.__test__ ?? {}
   assert.equal(typeof bag.ProvidersSection, 'function', 'client.js 必须导出 __test__.ProvidersSection')
+  /*
+   * 挂哪个组件：默认 `ProvidersSection`（绝大多数用例）。
+   * task-17 起可以指定 `mount` —— 张数步进器住在 `DefaultsCard` 里，而 `DefaultsCard`
+   * 只吃 props（不自己取数），所以直接挂它比"从设置页里翻到那一行"更聚焦。
+   */
+  const mountName = typeof options.mount === 'string' ? options.mount : 'ProvidersSection'
+  const Component = bag[mountName]
+  assert.equal(typeof Component, 'function', 'client.js 必须导出 __test__.' + mountName)
 
   const container = win.document.createElement('div')
   win.document.body.appendChild(container)
@@ -244,7 +252,7 @@ async function createLane(options = {}) {
 
     async render() {
       await act(async () => {
-        root.render(h(bag.ProvidersSection, {}))
+        root.render(h(Component, options.props ?? {}))
       })
       await settle()
       await settle()
@@ -273,8 +281,15 @@ async function createLane(options = {}) {
     },
 
     async blur(element) {
+      assert.ok(element, '要失焦的元素必须存在')
       await act(async () => {
-        element.dispatchEvent(new win.Event('blur', { bubbles: true }))
+        /*
+         * 两种"失焦"都要发：`blur`（原生，不冒泡）与 `focusout`（React 的 `onBlur`
+         * **实际监听的是它**）。jsdom 不会因为"元素失焦"自动派发任何一个，只发 `blur`
+         * 的话组件里的 `onBlur` 收不到（task-17 的张数输入框实测踩到过这一点）。
+         */
+        element.dispatchEvent(new win.Event('blur', { bubbles: false }))
+        element.dispatchEvent(new win.Event('focusout', { bubbles: true }))
       })
       await settle()
       await settle()
@@ -2237,6 +2252,172 @@ describe('jsdom lane：探测行忙碌文案只给在跑的那一枚（task-12�
       '测试连接 | 拉取模型',
       '两次都返回后，两枚都必须回到原文案',
     )
+  })
+})
+
+// ── task-17：张数步进器可以**手动输入** ───────────────────────────────────────
+//
+// 用户要求：`+/-` 之外还能直接键入数字。规则（都在下面断言里）：
+//   - 合法数字 + Enter / 失焦 → 提交并夹在 [1, 4]（`9` → 4、`0` → 1）；
+//   - 非数字（`abc` / `1.5` / `-1` / 空）→ **拒绝**，一个字节都不写进 state，框里回到当前值；
+//   - `+/-` 与既有 `data-pxm-stepper-*` 钩子的行为**不变**。
+//
+// 判据怎么才算"真的没写进 state"：`DefaultsCard` 的 `nValid` 决定两件事 ——
+// 「保存默认值」是否可点、以及 POST body 里**有没有 `n`**。所以断言用
+// "按钮可点 + body 里 `n` 恰为旧值"来表示"state 干净"，比只看输入框显示更硬。
+
+const STEPPER_PROVIDERS = [
+  { id: 'ofox', label: 'Ofox', models: ['m-1', 'm-2'], allowedSizes: ['1:1', '3:4'] },
+]
+
+/** 直接挂 `DefaultsCard`（它只吃 props、不自己取数）—— 张数那一行就在里面。 */
+function defaultsLane(options = {}) {
+  return createLane({
+    mount: 'DefaultsCard',
+    ...options,
+    props: {
+      providers: STEPPER_PROVIDERS,
+      defaults: { provider: 'ofox', model: '', size: '1:1', n: 1 },
+      reload: () => {},
+      ...(options.props ?? {}),
+    },
+  })
+}
+
+/** 张数输入框（锚点沿用既有的 `data-pxm-stepper-value`）。 */
+const stepperInput = (lane) => lane.container.querySelector('[data-pxm-stepper-value]')
+/** 当前显示值（现在是 `<input>`，所以读 `.value` 而不是 `textContent`）。 */
+const stepperText = (lane) => {
+  const el = stepperInput(lane)
+  return el === null ? null : String(el.value)
+}
+const stepperButton = (lane, which) =>
+  lane.container.querySelector('[data-pxm-stepper-' + which + ']')
+const saveDefaults = (lane) => lane.button('保存默认值')
+
+/** 在输入框里按一个键（jsdom 不会自己派发，只能手工造事件）。 */
+async function pressKey(lane, el, key) {
+  await act(async () => {
+    el.dispatchEvent(
+      new lane.window.KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true }),
+    )
+  })
+  await settleAll()
+}
+
+/** 点「保存默认值」并把 `POST api/defaults` 的 body 交出来。 */
+async function postDefaults(lane) {
+  await lane.click(saveDefaults(lane))
+  const posts = lane.postCalls().filter((call) => /\/api\/defaults$/.test(call.url))
+  assert.ok(posts.length > 0, '必须发出过 POST api/defaults')
+  return JSON.parse(String(posts[posts.length - 1].body))
+}
+
+/** 探测响应：`api/defaults` 回 `{ok,defaults}`（宿主契约），其余照常。 */
+const defaultsResponder = () => (url, init) => {
+  const method = String(init?.method ?? 'GET').toUpperCase()
+  if (method === 'POST' && /\/api\/defaults$/.test(String(url))) {
+    return jsonResponse({ ok: true, defaults: { provider: 'ofox', model: '', size: '1:1', n: 1 } })
+  }
+  return jsonResponse(providersPayload())
+}
+
+describe('jsdom lane：张数步进器的手动输入（task-17）', () => {
+  it('D1 合法数字 + Enter：写进 state（保存 body 的 n 恰为该值）', async () => {
+    const lane = await defaultsLane({ respond: defaultsResponder() })
+    await lane.render()
+
+    const input = stepperInput(lane)
+    assert.ok(input, '「每次张数」那一行必须有 [data-pxm-stepper-value]')
+    assert.equal(input.tagName, 'INPUT', '值必须是可输入的 <input>（不只是展示）')
+    assert.equal(input.getAttribute('inputmode'), 'numeric', '必须声明 inputMode="numeric"')
+    assert.equal(input.getAttribute('aria-label'), '每次张数', '输入框要有无障碍名（沿用行标签）')
+    assert.equal(input.value, '1', '夹具默认 n=1')
+
+    await lane.type(input, '3')
+    await pressKey(lane, input, 'Enter')
+    assert.equal(stepperText(lane), '3', 'Enter 后输入框必须显示提交的值')
+    assert.equal(saveDefaults(lane).disabled, false, 'n=3 合法 → 「保存默认值」可点')
+    const body = await postDefaults(lane)
+    assert.equal(body.n, 3, 'POST body 里的 n 必须是用户键入的 3（证明真的进了 state）')
+  })
+
+  it('D2 超上限 / 零值都夹进 [1,4]：9 → 4、0 → 1', async () => {
+    const lane = await defaultsLane({ respond: defaultsResponder() })
+    await lane.render()
+
+    await lane.type(stepperInput(lane), '9')
+    await pressKey(lane, stepperInput(lane), 'Enter')
+    assert.equal(stepperText(lane), '4', '9 必须夹到上界 4')
+    assert.equal(
+      stepperButton(lane, 'up').disabled,
+      true,
+      '夹到 4 之后上箭头必须禁用（值真的到了上界）',
+    )
+
+    await lane.type(stepperInput(lane), '0')
+    await pressKey(lane, stepperInput(lane), 'Enter')
+    assert.equal(stepperText(lane), '1', '0 必须夹到下界 1')
+    assert.equal(
+      stepperButton(lane, 'down').disabled,
+      true,
+      '夹到 1 之后下箭头必须禁用',
+    )
+  })
+
+  it('D3 非数字（abc / 1.5 / -1 / 空）一律拒绝：框里回到当前值，state 不被污染', async () => {
+    const lane = await defaultsLane({ respond: defaultsResponder() })
+    await lane.render()
+
+    for (const dirty of ['abc', '1.5', '-1', '']) {
+      // 先把 state 抬到 2，这样"回到当前值"与"回到 1"可区分。
+      await lane.click(stepperButton(lane, 'up'))
+      assert.equal(stepperText(lane), '2', '前置：state 是 2')
+
+      await lane.type(stepperInput(lane), dirty)
+      assert.equal(stepperText(lane), dirty, '打字过程中框里必须显示用户敲的内容')
+      await pressKey(lane, stepperInput(lane), 'Enter')
+      assert.equal(
+        stepperText(lane),
+        '2',
+        '非数字 ' + JSON.stringify(dirty) + ' 必须被拒绝并回到当前值',
+      )
+      assert.equal(
+        saveDefaults(lane).disabled,
+        false,
+        '脏值不得进入 state（否则 nValid=false，保存按钮会被禁用）',
+      )
+      const body = await postDefaults(lane)
+      assert.equal(body.n, 2, 'body 里的 n 仍必须是上一个合法值 2（脏值没有写进 state）')
+
+      // 收回 1，进入下一轮。
+      await lane.click(stepperButton(lane, 'down'))
+      assert.equal(stepperText(lane), '1')
+    }
+  })
+
+  it('D4 失焦提交：键入后点别处（blur）也写进 state；既有 +/- 不回归', async () => {
+    const lane = await defaultsLane({ respond: defaultsResponder() })
+    await lane.render()
+
+    await lane.type(stepperInput(lane), '2')
+    await lane.blur(stepperInput(lane))
+    assert.equal(stepperText(lane), '2', '失焦必须提交')
+    let body = await postDefaults(lane)
+    assert.equal(body.n, 2, '失焦提交的值必须进 state')
+
+    // `+/-` 不回归：2 → 3；边界仍是 1–4。
+    await lane.click(stepperButton(lane, 'up'))
+    assert.equal(stepperText(lane), '3', '上箭头仍然 +1')
+    await lane.click(stepperButton(lane, 'down'))
+    assert.equal(stepperText(lane), '2', '下箭头仍然 -1')
+    body = await postDefaults(lane)
+    assert.equal(body.n, 2, '+- 的结果同样写进 state')
+    // 手动输入一个越界值再按 +/-，箭头仍按**夹取后**的真值走。
+    await lane.type(stepperInput(lane), '9')
+    await pressKey(lane, stepperInput(lane), 'Enter')
+    assert.equal(stepperText(lane), '4')
+    assert.equal(stepperButton(lane, 'up').disabled, true, '到上界后 + 禁用（行为不变）')
   })
 })
 

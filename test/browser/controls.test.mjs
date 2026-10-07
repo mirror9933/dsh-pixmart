@@ -116,6 +116,23 @@ if (launched.browser !== null) {
   /** 在某个元素上按一次键。 */
   const press = (page, selector, key) => probeArgs(page, 'pressKey', [selector, key])
 
+  /**
+   * 张数步进器的**当前值**。
+   *
+   * task-17 起这个值是可输入的 `<input>`，所以读 `.value`；同时兼容曾经的 `<span>`
+   * 形态（读 `textContent`）—— 两种都认，**断言本身没变**（仍然断"值等于几"）。
+   *
+   * 为什么不直接用 `stepperFacts.value`：那个共用探针（`lane.js`）仍然按
+   * `textContent` 读，而 `lane.js` 不在本任务写域。这里自带读法，不去依赖那个字段。
+   */
+  const readStepperValue = (page) =>
+    page.evaluate(() => {
+      const el = document.querySelector('[data-pxm-stepper-value]')
+      if (el === null) return null
+      const raw = el.value !== undefined && el.value !== null ? el.value : el.textContent
+      return String(raw ?? '').trim()
+    })
+
   /** 开一个真页面：真 HTTP 源 + 真 shell 骨架 + 原产物 client.js。 */
   async function openLane(options = {}) {
     const context = await browser.newContext({
@@ -235,7 +252,7 @@ if (launched.browser !== null) {
         assert.ok(initial !== null, '「每次张数」那一行必须有步进器')
         assert.equal(initial.upChevron, true, '上箭头必须是一枚 chevron（内联 SVG）')
         assert.equal(initial.downChevron, true, '下箭头必须是一枚 chevron（内联 SVG）')
-        assert.equal(initial.value, '1', '夹具默认 n=1')
+        assert.equal(await readStepperValue(page), '1', '夹具默认 n=1')
         assert.equal(initial.unit, '张', '步进器右侧要有单位后缀')
 
         // 两枚箭头都在容器内、且上下排列（上箭头的 top 必须小于下箭头）。
@@ -253,24 +270,29 @@ if (launched.browser !== null) {
         assert.equal(initial.downDisabled, true, 'n=1 时下箭头必须禁用（1–4 下界）')
         await page.click('[data-pxm-stepper-up]')
         let now = await probe(page, 'stepperFacts', '每次张数')
-        assert.equal(now.value, '2', '点上箭头必须 +1')
+        assert.equal(await readStepperValue(page), '2', '点上箭头必须 +1')
 
         await page.click('[data-pxm-stepper-down]')
         now = await probe(page, 'stepperFacts', '每次张数')
-        assert.equal(now.value, '1', '点下箭头必须 -1')
+        assert.equal(await readStepperValue(page), '1', '点下箭头必须 -1')
 
         // 边界 4：连点到上界，之后上箭头禁用、值不变。
         for (let i = 0; i < 3; i += 1) {
           await page.click('[data-pxm-stepper-up]')
           await page.waitForFunction(
-            (want) =>
-              document.querySelector('[data-pxm-stepper-value]')?.textContent?.trim() === String(want),
+            (want) => {
+              const el = document.querySelector('[data-pxm-stepper-value]')
+              if (el === null) return false
+              // 值是 `<input>` 时读 `.value`（task-17），旧 `<span>` 形态读 `textContent`。
+              const raw = el.value !== undefined && el.value !== null ? el.value : el.textContent
+              return String(raw ?? '').trim() === String(want)
+            },
             2 + i,
             { timeout: 5000 },
           )
         }
         now = await probe(page, 'stepperFacts', '每次张数')
-        assert.equal(now.value, '4', '连点必须停在上界 4')
+        assert.equal(await readStepperValue(page), '4', '连点必须停在上界 4')
         assert.equal(now.upDisabled, true, 'n=4 时上箭头必须禁用（1–4 上界）')
         assert.equal(now.downDisabled, false, 'n=4 时下箭头必须可用')
         assert.deepEqual(problems, [])
@@ -906,11 +928,23 @@ if (launched.browser !== null) {
           '弹层高度不得超过 min(可用空间 ' + String(cap) + 'px, 官方上限 320px)：' +
             JSON.stringify(long.listRect),
         )
-        // 宽度跟着触发器（不是固定 360px 的 Menu 上限，也不是整页宽）。
+        /*
+         * 宽度 = **max(触发器宽, 内容宽)**，并夹在视口内（task-17 改的契约）。
+         *
+         * 旧契约是"与触发器同宽"，那会让长模型 id 在窄列里被省略号截断 —— 而模型 id
+         * 恰恰只差后缀（`microsoft/mai-image-2.5` / `-flash` / `-pro`），截断之后用户
+         * 分不清要选哪一个（用户报的 bug）。现在弹层可以比触发器宽（它是 `position: fixed`
+         * 的，没有祖先裁切问题），只有视口右边界能夹住它；被夹住时长标签**换行**显示。
+         */
         assert.ok(
-          Math.abs(long.listRect.width - long.triggerRect.width) <= 1,
-          '弹层宽度必须跟触发器一致：' +
+          long.listRect.width >= long.triggerRect.width - 1,
+          '弹层宽度不得小于触发器（max(触发器宽, 内容宽)）：' +
             JSON.stringify({ list: long.listRect, trigger: long.triggerRect }),
+        )
+        assert.ok(
+          long.listRect.right <= viewport.width - 8 + 1 && long.listRect.left >= 8 - 1,
+          '弹层必须夹在视口内（左右各留 8px 安全边距）：' +
+            JSON.stringify({ list: long.listRect, viewport }),
         )
         // 内容比上限长 ⇒ 内层必须真的可滚，且滚动区不越出弹层。
         assert.equal(long.scrollOverflowY, 'auto', '长列表的内层必须可滚')
@@ -955,6 +989,149 @@ if (launched.browser !== null) {
         assert.deepEqual(problems, [])
       } finally {
         await context.close()
+      }
+    })
+
+    /**
+     * task-17（用户报的 bug，带截图）：**模型下拉的选项行被省略号截断**。
+     *
+     * 这不是美观问题：模型 id 恰恰只差后缀（`microsoft/mai-image-2.5` / `-flash` / `-pro`、
+     * `google/gemini-3.1-flash-image` vs `-lite-image`），截断后用户**分不清要选哪一个**。
+     *
+     * 判据全落在可测事实上（不锚类名）：
+     *   - 每条选项的标签文本 = **完整**的模型 id（不是被截断的前缀）；
+     *   - 最长的那一条：`scrollWidth <= clientWidth + 1`（没有横向溢出 ⇒ 没被截断）；
+     *   - 计算样式 `textOverflow !== 'ellipsis'`、`whiteSpace === 'normal'`、
+     *     `overflowWrap === 'anywhere'`（长 id 能在任意字符处断行）；
+     *   - 弹层**不窄于**触发器，且完整落在视口内（左右各 8px 安全边距）；
+     *   - **窄视口（420px）下同样成立** —— 那时弹层被右侧空间夹住，标签改为**换行**。
+     */
+    it('4.8 模型下拉：最长的选项也完整显示（不省略号截断），窄视口下同样', async () => {
+      // 用户截图里那三个"只差后缀"的 id + gemini 的一对：任何一条被截断都分不清。
+      const SUFFIX_MODELS = [
+        'microsoft/mai-image-2.5',
+        'microsoft/mai-image-2.5-flash',
+        'microsoft/mai-image-2.5-pro',
+        'google/gemini-3.1-flash-image',
+        'google/gemini-3.1-lite-image',
+      ]
+      const suffixFixture = () => ({
+        providers: {
+          ...providersFixture,
+          defaults: { provider: 'ofox', model: SUFFIX_MODELS[0], size: '1:1', n: 1 },
+          providers: [{ ...providersFixture.providers[0], models: SUFFIX_MODELS }],
+        },
+        projects: [],
+      })
+
+      /** 选项行标签的事实：文本 / 溢出 / 换行属性。 */
+      const labelFacts = (page) =>
+        page.evaluate(() => {
+          const list = document.querySelector('[data-pxm-select-list]')
+          if (list === null) return null
+          return Array.prototype.map.call(list.querySelectorAll('[data-pxm-option]'), (row) => {
+            const label = row.querySelector('[data-pxm-option-label]')
+            const cs = label === null ? null : window.getComputedStyle(label)
+            return {
+              value: row.getAttribute('data-pxm-option'),
+              text: label === null ? null : (label.textContent || ''),
+              clientWidth: label === null ? null : label.clientWidth,
+              scrollWidth: label === null ? null : label.scrollWidth,
+              textOverflow: cs === null ? null : cs.textOverflow,
+              whiteSpace: cs === null ? null : cs.whiteSpace,
+              overflowWrap: cs === null ? null : cs.overflowWrap,
+              rowHeight: row.getBoundingClientRect().height,
+            }
+          })
+        })
+
+      /** 一处视口下的全部判据；返回最长的那一条的事实。 */
+      const checkAll = async (page, where) => {
+        const facts = await labelFacts(page)
+        assert.ok(facts !== null && facts.length > 0, where + '：必须有选项行')
+        const byValue = new Map(facts.map((f) => [String(f.value), f]))
+        for (const model of SUFFIX_MODELS) {
+          const f = byValue.get(model)
+          assert.ok(f !== undefined, where + '：必须列出 ' + model)
+          assert.equal(f.text.trim(), model, where + '：选项标签必须是**完整**的 id（' + model + '）')
+          assert.notEqual(
+            f.textOverflow,
+            'ellipsis',
+            where + '：选项标签不得用省略号截断（' + model + '）',
+          )
+          assert.equal(f.whiteSpace, 'normal', where + '：选项标签必须允许换行（' + model + '）')
+          assert.equal(
+            f.overflowWrap,
+            'anywhere',
+            where + '：没有空格的长 id 必须能在任意字符处断行（' + model + '）',
+          )
+          assert.ok(
+            f.scrollWidth <= f.clientWidth + 1,
+            where + '：' + model + ' 的标签不得横向溢出：' + JSON.stringify(f),
+          )
+        }
+        // "最长的那一条没被截断"——最直接的判据。
+        const longest = facts.reduce((a, b) => (String(b.text).length > String(a.text).length ? b : a))
+        assert.ok(
+          longest.scrollWidth <= longest.clientWidth + 1,
+          where + '：最长的选项（' + longest.text + '）不得被截断：' + JSON.stringify(longest),
+        )
+        // 只看后缀分不清的那几个，在**渲染出来的文本**上必须互不相同。
+        const rendered = SUFFIX_MODELS.map((name) => String(byValue.get(name).text).trim())
+        assert.equal(
+          new Set(rendered).size,
+          SUFFIX_MODELS.length,
+          where + '：只差后缀的 id 必须可区分，实测 ' + JSON.stringify(rendered),
+        )
+        return longest
+      }
+
+      // ── 宽视口（默认 1280）：完整显示 + 弹层不窄于触发器 + 夹在视口内。
+      const wide = await openLane({ fixture: suffixFixture })
+      try {
+        assert.equal(await openModel(wide.page), true, '必须能打开「模型」下拉')
+        const facts = await probe(wide.page, 'selectFacts', '模型')
+        const viewport = await probe(wide.page, 'viewportRect')
+        await checkAll(wide.page, '宽视口(1280)')
+        assert.ok(
+          facts.listRect.width >= facts.triggerRect.width - 1,
+          '弹层宽度不得小于触发器（max(触发器宽, 内容宽)）：' +
+            JSON.stringify({ list: facts.listRect, trigger: facts.triggerRect }),
+        )
+        /*
+         * 而且**真的按内容撑开**了：这些 id（最长 30 字符）比触发器宽，所以弹层必须比
+         * 触发器宽 —— 这才叫 `max(触发器宽, 内容宽)`，而不是"永远跟触发器一样宽"。
+         * （窄视口下会被右侧空间夹回去，那一半由标签换行来承担。）
+         */
+        assert.ok(
+          facts.listRect.width > facts.triggerRect.width + 1,
+          '长 id 时弹层必须按内容撑开（max(触发器宽, 内容宽)）：' +
+            JSON.stringify({ list: facts.listRect, trigger: facts.triggerRect }),
+        )
+        assert.ok(
+          facts.listRect.right <= viewport.width - 8 + 1 && facts.listRect.left >= 8 - 1,
+          '弹层必须夹在视口内（左右各 8px）：' + JSON.stringify({ list: facts.listRect, viewport }),
+        )
+        assert.deepEqual(wide.problems, [])
+      } finally {
+        await wide.context.close()
+      }
+
+      // ── 窄视口（420）：弹层被右侧空间夹住 → 标签**换行**，仍然不许截断。
+      const narrow = await openLane({ fixture: suffixFixture, width: 420, height: 720 })
+      try {
+        assert.equal(await openModel(narrow.page), true, '窄视口下也必须能打开「模型」下拉')
+        const facts = await probe(narrow.page, 'selectFacts', '模型')
+        const viewport = await probe(narrow.page, 'viewportRect')
+        const longest = await checkAll(narrow.page, '窄视口(420)')
+        assert.ok(
+          facts.listRect.right <= viewport.width - 8 + 1 && facts.listRect.left >= 8 - 1,
+          '窄视口下弹层仍必须夹在视口内：' + JSON.stringify({ list: facts.listRect, viewport }),
+        )
+        assert.ok(longest.clientWidth > 0, '选项标签必须真的占位（不能是 0 宽的空盒）')
+        assert.deepEqual(narrow.problems, [])
+      } finally {
+        await narrow.context.close()
       }
     })
 
