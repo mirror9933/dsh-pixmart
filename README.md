@@ -5,9 +5,11 @@
 
 > **当前状态（请先读这段）**
 >
-> - **尚未发布到 registry**，`package.json` 里 `private: true`。所以只能用**本地路径 / git 地址**安装（见下方「安装」）。
-> - 功能阶段：**P0–P3 已完成，P4（打包与分发）未完成**——README / 打包步骤 / 上架还没收尾。
-> - 版本：`0.0.1`。测试：`pnpm test`（321 项）与 `pnpm test:browser`（18 项）全绿。
+> - **尚未发布到 registry**，`package.json` 里仍是 `private: true`。所以只能用**本地路径 / git 地址**安装（见下方「安装」）。
+> - 功能阶段：**P0–P3 已完成**；P4 的**打包步骤已做完** —— `NOTICE` 已补、`exports["./client"]` 已切到 `dist/client.js`、
+>   `dist/` 的构建与陈旧性守卫都在（见「[打包与发布](#打包与发布)」）。**剩下的只有"发布与验收"**：
+>   去掉 `private`、补 `LICENSE`、定版本号，以及在全新 `DSH_HOME` 上跑一遍从零安装（方案里的 A8）。
+> - 版本：`0.0.1`。测试：跑 `pnpm verify`（数字随测试增删变化，**别照抄**；最近一次实测计数写在「[开发与验证](#开发与验证)」）。
 > - 没做的功能写在「[已知限制](#已知限制)」里，别当成已有能力。
 
 ---
@@ -85,7 +87,16 @@ dsh plugin --profile px add <git-url>
 dsh --profile px --dump-config
 ```
 
-装完**重启宿主**（host 代码改动必须重启才生效，见「[常见问题](#常见问题)」）。
+装完**重启宿主**。改动的生效分级（和「[常见问题](#常见问题)」里同一套规则）：
+
+| 你改了什么 | 怎么生效 |
+|---|---|
+| host 半（`src/` → `lib/`） | **重启宿主** |
+| client 半（`client/client.js` → `dist/client.js`） | 重新构建（`pnpm build:client`）+ **刷新页面**即可 |
+| `package.json` / `exports` / `dsh.client` / profile bundles | **必须重启宿主** |
+
+> **注意 `dist/` 不入库**：`exports["./client"]` 现在指向 `dist/client.js`，所以从 git 装一份之后
+> **第一次用之前要先 `pnpm build:client`**（详见「[打包与发布](#打包与发布)」）。
 
 > **待验证**：上面这三条命令来自技术方案 §11.2 的既有记录，**没有在全新 `DSH_HOME` 上跑过一遍完整的从零安装**（那是 P4 的验收项 A8，尚未执行）。
 > 另外 `dsh.cmd` 的退出码**恒为 1**（Electron-as-Node 启动方式所致）——**不要用退出码判断成功**，看输出里的 `Done in …`。
@@ -125,7 +136,9 @@ dsh --profile px --dump-config
 厂商列表由配置里的 `providers` 驱动，**出厂是空的**（安装后一家都没有，由用户自己加）；
 所有厂商都在设置页点 **「添加模型提供商」**从**内置目录（20 家）**里挑，也可以走「自定义模型 API」
 自填端点（目录出处见 [docs/contract-notes.md](./docs/contract-notes.md) §31）。
-卡片行尾的「删除」是两步确认；**删掉就不会在重启后被补回来**（删除会记账，见 §33）。
+卡片行尾的「删除」是两步确认；**删掉就不会在重启后被补回来**——**出厂不带厂商**，所以
+`load()` 不会给任何配置补人（`removedProviders` 那套墓碑记账是为"将来可能的出厂预设"保留的机制，
+正常流程用不到；见 §33）。
 
 下表是**我们真机验证过**的两家，也是目录里最稳的选择（其余厂商的「生图能力」标注见目录数据）：
 
@@ -235,6 +248,19 @@ A：**不会，也不该期待。** 余额不足时工具返回专用错误码 `
 **Q：装完发现工具没出现？**
 A：先在对话里调一次 `pixmart_ping`——它无副作用，能确认「插件已加载 + 工具注册链路可用」，并列出宿主当前暴露的服务。
 
+**Q：生图时报「还没有配置任何厂商：打开「设置 → PixMart → 厂商」，点「添加模型提供商」选一家并填入 API Key」？**
+A：这不是故障，而是**出厂不带厂商**的预期首启状态（契约笔记 §33）。按提示去 设置 → PixMart 加一家并填 Key
+（也可以先设环境变量，如 `OFOX_API_KEY`）再重试即可。
+这句话是**统一的可操作指引**，`pixmart_check_size` / `pixmart_generate` / `pixmart_edit` / `pixmart_batch`
+四处失败点在"一家都没配"时返回的是同一句；如果已经配了厂商、只是 **id 写错**，文案会不一样——
+它会列出「已配置：a, b」帮你对拼写。别把后者也当成"没配厂商"。
+
+**Q：出的图尺寸对不对？为什么报表里的尺寸和我看到的预览不一样？**
+A：**核对尺寸要看原件，不要看对话里的附件预览**（契约笔记 §36）。预览可能被宿主缩放，
+而账本（`project.json` / `usage.jsonl`）记的是**厂商真实回传的像素**。要核对就打开数据目录里的原图，
+或用作品库的查看器。agnes 尤其注意：它的尺寸是「**档位 + 比例**」，档位由**精确像素**决定
+（`2048x2048` → 2K + 1:1）；只给比例时用默认档位 1K。
+
 ---
 
 ## 已知限制
@@ -245,9 +271,11 @@ A：先在对话里调一次 `pixmart_ping`——它无副作用，能确认「�
 - **「重新生成」已取消**：作品库里没有这个入口（原先设计过，已砍掉）。
 - **提示词片段是英文**：目标模型（Gemini / gpt-image 系）对英文指令的遵循度更稳；界面标签是中文。
 - **macOS 未验证**：目前只在 Windows 上实际跑过。
-- **未上架社区市场**，也**未发布到 registry**。
-- **打包（P4）未完成**：`exports["./client"]` 仍指向源码 `client/client.js`（不是打包产物），
-  git 分发形态、从零安装全链路验证（A8）都还没做。
+- **未上架社区市场**，也**未发布到 registry**（`private: true`）。
+- **打包步骤已完成，但"发布形态"还没验收**：`exports["./client"]` 已切到 `dist/client.js`、`NOTICE` 已补；
+  剩下的是**发布前待办**（去掉 `private`、补 `LICENSE`、定版本号），以及**从零安装全链路（方案里的 A8）尚未执行**
+  —— `dist/` 不入库，所以新装/干净 checkout 之后**必须先 `pnpm build:client`**，这一步只有 `pnpm test` 的
+  `pretest` / 发布的 `prepack` 会自动做。见「[打包与发布](#打包与发布)」。
 - **部分验证没做**：真实批量生图的端到端链路要花钱，尚未执行（mock 层已过）。
 - **白底图可能"不够纯"，需要后处理**：提示词里已明确要求"绝对纯白背景"与"四边留白均匀"，
   但厂商模型**没能可靠交付**这两点。实测（2026-10-06）Agent 为此现场写了脚本：
@@ -257,19 +285,37 @@ A：先在对话里调一次 `pixmart_ping`——它无副作用，能确认「�
 
 ---
 
-## 开发者
+## 开发与验证
 
 host 半是 TypeScript（`src/`，**运行时零 `@deepseek-ai` 依赖**），client 半是手写的
 `client/client.js`（`window.__ModuleLoader__` 包装，没有打包器、没有 JSX）。
 
 ```sh
 pnpm install
-pnpm typecheck        # host + client 两个 program
+pnpm typecheck        # host + client 两个 TS program
 pnpm build            # host tsc → lib/
 pnpm build:client     # 打包步骤：剥离 client bundle 的 __test__ → dist/client.js
-pnpm test             # node:test（含 jsdom lane），466 项（其中 agnes 25 项）
-pnpm test:browser     # 真实排版引擎 lane（Playwright + 系统 Edge/Chrome），66 项
-pnpm verify           # 上面几条串起来
+pnpm test             # 宿主 lane：node:test（含 jsdom 子 lane）
+pnpm test:browser     # 浏览器 lane：真实排版引擎（Playwright + 系统 Edge/Chrome）
+pnpm verify           # typecheck + build + test + test:browser 串起来跑
+```
+
+**`pnpm verify` 覆盖什么**：`pnpm typecheck` → `pnpm build` → 宿主 lane（`node --test test/*.test.mjs`，
+含 jsdom）→ 浏览器 lane（`node --test test/browser/*.test.mjs`）。**任何一项红就是没通过**；
+浏览器 lane 需要系统已装 Edge / Chrome（不自动下载，见「常见问题」）。
+测试计数会随测试增删变化，**以 verify 的实测输出为准**：最近一次为宿主 lane 478 项、
+浏览器 lane 69 项，全绿。
+
+**浏览器 lane 的变异纪律（`tools/lane-mutations.mjs`）**：lane 的断言必须能被证明**不是空跑**。
+这个脚本把 `client/client.js` 里的实现按清单**故意改坏**（只写进 `os.tmpdir()` 的副本，仓库文件
+一个字节都不动：开头结尾各算一次 sha256 比对），再让 lane 加载那份坏产物，**要求对应用例真的变红**。
+三条纪律：① 每处 `find` 必须**恰好命中一次**（0 次=实现漂移了，多次=改错地方了，都当场报错退出）；
+② 该红的没红 → 脚本**非零码退出**并逐条列出实际失败的用例名；③ 跑完丢弃临时产物。
+**新增或改动 lane 断言时，请顺手给它配一条变异**，否则无法区分"断言有效"和"断言没跑"。
+
+```sh
+node tools/lane-mutations.mjs            # 跑全部
+node tools/lane-mutations.mjs M3 M4      # 只跑指定 id（前缀匹配）
 ```
 
 **客户端配色：只走 DSH 官方主题 token，不要写死颜色。**
@@ -290,24 +336,106 @@ pnpm verify           # 上面几条串起来
 只有 `test/browser/sizes.test.mjs` 会变红提醒；作品库网格等**无官方对应物**的控件不强行对齐。
 详见 [docs/contract-notes.md](./docs/contract-notes.md) §20。
 
-**文档**：
+---
 
-- [docs/dsh-pixmart-技术方案.md](./docs/dsh-pixmart-技术方案.md) —— 技术方案（架构、契约、阶段、验证矩阵、打包与分发 §11.5）
-- [docs/contract-notes.md](./docs/contract-notes.md) —— P0 实测契约结论，**与方案冲突以它为准**
-- [docs/作品库优化方案.md](./docs/作品库优化方案.md) —— 作品库后续优化（**待审核，未开工**）
-- [docs/a2-acceptance.md](./docs/a2-acceptance.md) —— A2（真实生图落盘）验收记录
+## 目录结构
 
-**打包注意**：`exports["./client"]` **仍然指向源码** `client/client.js`（没切到 `dist/client.js`）。
-原因：开发期 profile 是指向本仓库的 symlink，而 `client.js` 还在频繁改；切早了刷新页面看到的是过期产物。
-**切换 exports 到 `dist/client.js` 是 P4 打包的最后一步，等停止迭代后再做**（见方案 §11.5 / §12.2）。
-`dist/` 不入库，`pnpm test` 的 `pretest` 与发布时的 `prepack` 会自动产出它；忘了重新构建会被
-`test/strip-test-hooks.test.mjs` 的陈旧性守卫抓住。
+```
+dsh-pixmart/
+├── src/                 # host 半（TypeScript；**运行时零 `@deepseek-ai` 依赖**）
+│   ├── index.ts         # 插件入口：注册工具 / 路由 / guidance / 只读接口
+│   ├── config.ts        # 配置类型、出厂默认（**0 家厂商**）、容错解析
+│   ├── catalog.ts       # 厂商目录（设置页「添加模型提供商」的数据源）
+│   ├── routes.ts        # 设置页与作品库用的 HTTP 路由（只接受 GET / POST）
+│   ├── sizes.ts         # 尺寸能力表（agnes 的档位与精确像素清单在这里）
+│   ├── guidance.ts      # 给模型的系统提示段（计费纪律、省钱顺序）
+│   ├── prompts/         # 24 个提示词模块（纯数据）+ 拼装器
+│   ├── tools/           # 8 个 `pixmart_*` 工具的实现与共用运行时
+│   ├── vendor/          # 厂商适配器（OpenAI 兼容 / gemini-native / 各方言）
+│   ├── store/           # 配置 / 项目 / 运行 / 历史 的落盘（原子写 + 按路径互斥）
+│   └── log/usage.ts     # usage.jsonl 追加式账本
+├── client/              # client 半：手写 `client.js`（`window.__ModuleLoader__` 包装，无打包器、无 JSX）
+│   └── client.js        #   **带 `__test__` 测试钩子**（测试从这里取组件；打包时被剥离）
+├── dist/                # client 打包产物（剥离后的 client.js）—— **不入库**，见「打包与发布」
+├── lib/                 # host 构建产物（`pnpm build` 的 tsc 输出）—— **不入库**
+├── test/                # 宿主 lane：`node:test`（含 jsdom 子 lane）
+│   └── browser/         # 浏览器 lane：真实排版引擎（Playwright + 系统 Edge/Chrome）
+├── tools/               # 开发脚本：`strip-test-hooks.mjs`（打包剥离）、`lane-mutations.mjs`（变异验证）等
+├── docs/                # 契约笔记 / 技术方案 / 验收记录 / 提案（见「文档索引」）
+├── .probe/              # 只读取证素材（被 docs 按 `文件:行号` 引用）；`.gitignore` 忽略，**不要删**
+├── pixmart-in/ · pixmart-out/   # 会话工作区里的进 / 出目录（`.gitignore` 忽略，见「产物在哪」）
+├── cordis.patch.yml     # cordis 配置补丁（对应 `package.json` 的 `dsh.bundle.patch`）
+└── package.json · tsconfig.json · .gitignore · README.md · NOTICE
+```
+
+---
+
+## 打包与发布
+
+**一句话现状**：打包**步骤**已经做完（`NOTICE` 已补、`exports["./client"]` 已切到 `dist/client.js`），
+**发布**还没做（`private: true`、没有 `LICENSE`、版本仍是 `0.0.1`）。
+
+### 包里的东西（`package.json` 的 `files`）
+
+| 条目 | 是什么 | 怎么产生 |
+|---|---|---|
+| `lib` | host 半（`main` / `types` 都指向这里） | `pnpm build` = `tsc -p tsconfig.json` |
+| `dist` | client 半（**已剥离**测试钩子） | `pnpm build:client` = `node tools/strip-test-hooks.mjs` |
+| `client` | client 半**源码**（带 `__test__` 测试钩子） | 手写、入库；运行时不被引用，留着是为了让测试与变异能取组件 |
+| `cordis.patch.yml` | cordis 配置补丁 | 手写、入库 |
+| `README.md` / `NOTICE` | 文档 + 原创范围与第三方出处声明 | 手写、入库 |
+
+两个入口：`exports["."]` → `./lib/index.js`（host 半），`exports["./client"]` → `./dist/client.js`（client 半）。
+
+### 为什么要"构建"两步
+
+- **host 半**有 `tsc`：`src/` → `lib/`；
+- **client 半**没有打包器（手写 JS），"构建"指的是**剥离测试钩子**：`client/client.js` 里带着
+  `const __test__ = {…}`（五套 `node:test` + 浏览器 lane 都靠它取组件），
+  `pnpm build:client` 把它剥掉后写出 `dist/client.js`（`node --check` 通过、导出契约不变）。
+  **源码保留钩子、打包时产出剥离版**——直接删源码会一次性打断所有测试，也就无法验证"剥离"本身。
+
+### `dist/` 为什么**不入库**
+
+产物可再生、源码才是真相（完整理由写在 `.gitignore` 的 `/dist/` 一节）。代价是：
+**干净 checkout 或新装一份之后，第一次使用之前必须 `pnpm build:client`**，否则
+`exports["./client"]` 指向的文件根本不存在。`pnpm test` 的 `pretest` 与发布时的 `prepack`
+都会自动产出它；忘了重建会被 `test/strip-test-hooks.test.mjs` 的**陈旧性守卫**抓住
+（dist 缺失 → 带可读原因跳过；dist 与当前 `client/client.js` 剥出来的字节不一致 → **直接失败**，
+并提示跑 `pnpm build:client`）。
+
+### 发布前待办（**都还没做**）
+
+1. **去掉 `package.json` 的 `private: true`** —— npm 会拒绝发布 `private` 包；现在留着它是"明确不想误发"的护栏；
+2. **补 `LICENSE` 文件** —— 现在只有 `package.json` 的 `"license": "MIT"` 与 [NOTICE](./NOTICE)，
+   `files` 里也没有 `LICENSE`；NOTICE 已把它写成显式待办；
+3. **定版本号**（现在 `0.0.1`）并补 `CHANGELOG`（暂无）；
+4. **从零安装全链路（技术方案里的 A8）**：在全新 `DSH_HOME` 上跑 `dsh plugin add` → 构建 →
+   设置页加厂商 → 真实生图 —— **尚未执行**；
+5. 可选：把 `client`（源码，含测试钩子）从 `files` 里去掉，运行时只认 `dist`，包体更小。
+
+---
+
+## 文档索引
+
+| 文档 | 是什么 |
+|---|---|
+| [docs/contract-notes.md](./docs/contract-notes.md) | **契约笔记**：§1–§41 —— 全部决策与真机证据（多数条目带复现方式）。**与其它文档冲突时以它为准**。 |
+| [docs/dsh-pixmart-技术方案.md](./docs/dsh-pixmart-技术方案.md) | 技术方案：架构、契约、阶段划分、验证矩阵、打包与分发（§11.5 / §12.2） |
+| [docs/a2-acceptance.md](./docs/a2-acceptance.md) | A2（真实生图落盘）验收记录 |
+| [docs/提示词工程优化提案.md](./docs/提示词工程优化提案.md) | 提示词工程的后续优化提案（**待审核，未开工**） |
+| [docs/并发与大批量出图方案.md](./docs/并发与大批量出图方案.md) | 并发与大批量出图的方案（**待审核，未开工**） |
+| [docs/作品库优化方案.md](./docs/作品库优化方案.md) | 作品库后续优化（**待审核，未开工**） |
+| [docs/蓝屏排查记录.md](./docs/蓝屏排查记录.md) | 开发机蓝屏的排查记录（与插件无直接关系，但排障时别重走一遍） |
 
 ---
 
 ## 许可
 
-MIT。提示词与实现均为本仓库原创；组织结构参考了 `pixmart-ai`（MIT）的模块化思路，详见方案 §15。
+MIT（见 `package.json` 的 `"license"`）。提示词与实现均为本仓库原创；组织结构参考了
+`pixmart-ai`（MIT）的「模块 → 片段」思路与供应商目录的**事实性转录**，**不含其任何代码或文本**
+——完整声明见 [NOTICE](./NOTICE)，依据见技术方案 §15。
+**本仓库目前没有独立的 `LICENSE` 文件**（发布前必须补，见「[打包与发布](#打包与发布)」）。
 
 ## 待办（尚未实现，已记录待补）
 
@@ -331,3 +459,13 @@ MIT。提示词与实现均为本仓库原创；组织结构参考了 `pixmart-a
 实际每项各用自己的模块默认（contract-notes §41：16:9 / 3:4 / 3:4）。
 **数据层是对的**（`project.json` 与 `usage.jsonl` 都逐项记录了正确尺寸），**只有那一行摘要会误导**。
 建议：省略 `size` 时显示「各模块默认」，或逐项列出。
+
+### 提案文档（已记录，未排期）
+
+两份写好的提案都还**没有开工**，开工前先过一遍评审：
+
+- [docs/提示词工程优化提案.md](./docs/提示词工程优化提案.md) —— 提示词工程（模块片段、变量、负向提示）的优化方向；
+- [docs/并发与大批量出图方案.md](./docs/并发与大批量出图方案.md) —— 并发上限与大批量出图（超出 20 项、并发调度）的方案。
+
+另有作品库方向的 [docs/作品库优化方案.md](./docs/作品库优化方案.md)（同样是待审核状态）。
+**注意**：上述提案里的数字/接口若与 [docs/contract-notes.md](./docs/contract-notes.md) 冲突，以契约笔记为准。

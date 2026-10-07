@@ -1,26 +1,37 @@
+# node_modules/ —— 依赖目录，不入库（由 pnpm-lock.yaml 还原）。
 node_modules/
+
+# lib/ —— host 半的构建产物（`pnpm build` = `tsc -p tsconfig.json` 的输出）。
+# 源码在 src/，产物可再生，因此不入库。
 lib/
-.probe/
+
+# tsc 的增量构建信息 —— 本机缓存，换台机器就用不上。
 *.tsbuildinfo
 
-# dist/ 是**打包产物**（`pnpm build:client` 剥离 client bundle 的 __test__ 测试钩子后
-# 写出的 dist/client.js），不是源码 —— 因此不入库。
+# .probe/ —— Agent 的**只读取证**素材（参考项目源码副本、官方包片段等），
+# 被 docs/contract-notes.md 大量按 `文件:行号` 引用，属于**证据**而非产物：
+# 除一次性草稿外不要删。已经清理掉的是 `.probe/commit-msg-*.txt`
+# （提交信息草稿，内容已进 git 历史）。
+.probe/
+
+# dist/ —— client 半的**打包产物**：`pnpm build:client` 把 client/client.js 里的
+# `__test__` 测试钩子剥离后写出 dist/client.js。源码在 client/，产物可再生 ⇒ 不入库。
 #
-# 不担心"忘了构建"就发出旧产物：test/strip-test-hooks.test.mjs 有陈旧性守卫，
-# dist 缺失时会带可读原因跳过，dist 存在但与当前 client/client.js 不一致时会直接失败
-# 并提示跑 `pnpm build:client`；`pnpm test` 的 pretest 与发布时的 prepack 都会自动产出。
+# ⚠️ 正因为不入库，dist/ **必须先构建**：package.json 的 exports["./client"] 现在指向
+# ./dist/client.js。干净 checkout 或新装一份之后，第一次使用前要跑 `pnpm build:client`
+# （`pnpm test` 的 pretest 与发布时的 prepack 都会自动产出它）。
 #
-# 注意：exports["./client"] **仍然指向 ./client/client.js**，没有切到 dist/。
-# 切换 exports 是 P4 打包的最后一步，等停止迭代后再做（技术方案 §11.5 / §12.2）。
+# 不担心"忘了构建"就发出旧产物：test/strip-test-hooks.test.mjs 有陈旧性守卫 ——
+# dist 缺失时带可读原因跳过，dist 存在但与当前 client/client.js 不一致时直接失败
+# 并提示跑 `pnpm build:client`。
 /dist/
 
 # 会话在工作区里留下的产物目录 —— 不是插件的一部分。
-# 来源：agent 用 pwsh 把参考图/成品拷进当前工作区（见 outputDir 功能，
-# 配好「产物保存路径」后就不必再拷了）。
-# 用前导斜杠锚定到仓库根，避免误伤将来可能出现的嵌套同名目录（如测试夹具）。
-/refs/
-/output/
-
+#
+# 历史：早先 Agent 用 pwsh 把参考图 / 成品拷到工作区根下的 `refs/` 与 `output/`
+# （后来有了「作品库导出路径」，不再需要手拷）。这两个目录**已经不再出现**，
+# 条目随之删除，以免"忽略一堆不存在的东西"掩盖真正的落点。现在是下面两条。
+#
 # 插件自动落到**会话工作区**内的产物副本（`<工作区>/pixmart-out/<项目 id>/`）。
 # 存在的理由：DSH 官方内嵌写法 `![说明](<路径>)` 只渲染工作区之内的路径，而插件产物
 # 原本落在数据目录（工作区之外）。用户当前的工作区就是这个仓库，因此必须忽略，
@@ -32,3 +43,15 @@ lib/
 # （实测它会往里放参考图和 check_white.py / clean_white.py 之类的临时脚本）。
 # 约定已写进系统提示（src/guidance.ts）；前导斜杠同样锚定仓库根。
 /pixmart-in/
+
+# 覆盖率报告目录 —— 当前**还没接**覆盖率工具（没有 c8 / nyc，也没跑
+# `node --test --experimental-test-coverage`）。提前留这一条，是为了将来加上工具时
+# 不至于把仓库弄脏；真接上之后，请把这里改成该工具的真实输出目录。
+coverage/
+
+# 编辑器 / 操作系统垃圾文件：macOS 的 .DS_Store、Windows 的 Thumbs.db。
+.DS_Store
+Thumbs.db
+
+# 运行期日志（本地排查留下的文件，不属于源码）。
+*.log
