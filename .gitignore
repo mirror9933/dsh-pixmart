@@ -69,3 +69,7 @@ Thumbs.db
 
 # 运行期日志（本地排查留下的文件，不属于源码）。
 *.log
+
+# npm 凭据文件 —— 万一有人用 `npm config set --location=project`（会在仓库根写 .npmrc，
+# 里面是**明文 token**），默认位置是用户级 ~/.npmrc（不进仓库），这条只是兜底：绝不能提交。
+.npmrc
