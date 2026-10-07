@@ -6,9 +6,9 @@
 > **当前状态（请先读这段）**
 >
 > - **尚未发布到 registry**，`package.json` 里仍是 `private: true`。所以只能用**本地路径 / git 地址**安装（见下方「安装」）。
-> - 功能阶段：**P0–P3 已完成**；P4 的**打包步骤已做完** —— `NOTICE` 已补、`exports["./client"]` 已切到 `dist/client.js`、
->   `dist/` 的构建与陈旧性守卫都在（见「[打包与发布](#打包与发布)」）。**剩下的只有"发布与验收"**：
->   去掉 `private`、补 `LICENSE`、定版本号，以及在全新 `DSH_HOME` 上跑一遍从零安装（方案里的 A8）。
+> - 功能阶段：**P0–P3 已完成**；P4 的**打包步骤已做完** —— `NOTICE` 与 `LICENSE` 已补、`exports["./client"]` 已切到
+>   `dist/client.js`、`files` 已收敛到真正要发布的东西、`dist/` 的构建与陈旧性守卫都在（见「[打包与发布](#打包与发布)」）。
+>   **剩下的只有"发布与验收"**：去掉 `private`、定版本号，以及在全新 `DSH_HOME` 上跑一遍从零安装（方案里的 A8）。
 > - 版本：`0.0.1`。测试：跑 `pnpm verify`（数字随测试增删变化，**别照抄**；最近一次实测计数写在「[开发与验证](#开发与验证)」）。
 > - 没做的功能写在「[已知限制](#已知限制)」里，别当成已有能力。
 
@@ -272,8 +272,8 @@ A：**核对尺寸要看原件，不要看对话里的附件预览**（契约笔
 - **提示词片段是英文**：目标模型（Gemini / gpt-image 系）对英文指令的遵循度更稳；界面标签是中文。
 - **macOS 未验证**：目前只在 Windows 上实际跑过。
 - **未上架社区市场**，也**未发布到 registry**（`private: true`）。
-- **打包步骤已完成，但"发布形态"还没验收**：`exports["./client"]` 已切到 `dist/client.js`、`NOTICE` 已补；
-  剩下的是**发布前待办**（去掉 `private`、补 `LICENSE`、定版本号），以及**从零安装全链路（方案里的 A8）尚未执行**
+- **打包步骤已完成，但"发布形态"还没验收**：`exports["./client"]` 已切到 `dist/client.js`，`NOTICE` 与 `LICENSE` 已补；
+  剩下的是**发布前待办**（去掉 `private`、定版本号），以及**从零安装全链路（方案里的 A8）尚未执行**
   —— `dist/` 不入库，所以新装/干净 checkout 之后**必须先 `pnpm build:client`**，这一步只有 `pnpm test` 的
   `pretest` / 发布的 `prepack` 会自动做。见「[打包与发布](#打包与发布)」。
 - **部分验证没做**：真实批量生图的端到端链路要花钱，尚未执行（mock 层已过）。
@@ -361,19 +361,19 @@ dsh-pixmart/
 ├── test/                # 宿主 lane：`node:test`（含 jsdom 子 lane）
 │   └── browser/         # 浏览器 lane：真实排版引擎（Playwright + 系统 Edge/Chrome）
 ├── tools/               # 开发脚本：`strip-test-hooks.mjs`（打包剥离）、`lane-mutations.mjs`（变异验证）等
-├── docs/                # 契约笔记 / 技术方案 / 验收记录 / 提案（见「文档索引」）
+├── docs/                # 契约笔记 / 技术方案 / 验收记录 / 提案（**不上传仓库**，见「文档索引」）
 ├── .probe/              # 只读取证素材（被 docs 按 `文件:行号` 引用）；`.gitignore` 忽略，**不要删**
 ├── pixmart-in/ · pixmart-out/   # 会话工作区里的进 / 出目录（`.gitignore` 忽略，见「产物在哪」）
 ├── cordis.patch.yml     # cordis 配置补丁（对应 `package.json` 的 `dsh.bundle.patch`）
-└── package.json · tsconfig.json · .gitignore · README.md · NOTICE
+└── package.json · tsconfig.json · .gitignore · README.md · NOTICE · LICENSE
 ```
 
 ---
 
 ## 打包与发布
 
-**一句话现状**：打包**步骤**已经做完（`NOTICE` 已补、`exports["./client"]` 已切到 `dist/client.js`），
-**发布**还没做（`private: true`、没有 `LICENSE`、版本仍是 `0.0.1`）。
+**一句话现状**：打包**步骤**已经做完（`NOTICE` 与 `LICENSE` 已补、`exports["./client"]` 已切到 `dist/client.js`、
+`files` 已收敛到真正要发布的东西），**发布**还没做（`private: true`、版本仍是 `0.0.1`）。
 
 ### 包里的东西（`package.json` 的 `files`）
 
@@ -381,9 +381,12 @@ dsh-pixmart/
 |---|---|---|
 | `lib` | host 半（`main` / `types` 都指向这里） | `pnpm build` = `tsc -p tsconfig.json` |
 | `dist` | client 半（**已剥离**测试钩子） | `pnpm build:client` = `node tools/strip-test-hooks.mjs` |
-| `client` | client 半**源码**（带 `__test__` 测试钩子） | 手写、入库；运行时不被引用，留着是为了让测试与变异能取组件 |
 | `cordis.patch.yml` | cordis 配置补丁 | 手写、入库 |
-| `README.md` / `NOTICE` | 文档 + 原创范围与第三方出处声明 | 手写、入库 |
+| `LICENSE` | MIT 许可**全文** | 手写、入库 |
+| `README.md` / `NOTICE` | 文档 + 原创范围声明 | 手写、入库 |
+
+> **`client` 已从 `files` 里移除**（本轮）：运行时只认 `dist/`，而 `client/client.js` 是**带 `__test__`
+> 测试钩子的源码**，对使用者没用（约 400 KB）。**源码仍在仓库里**（构建与测试都要用它），只是**不进包**。
 
 两个入口：`exports["."]` → `./lib/index.js`（host 半），`exports["./client"]` → `./dist/client.js`（client 半）。
 
@@ -404,19 +407,36 @@ dsh-pixmart/
 （dist 缺失 → 带可读原因跳过；dist 与当前 `client/client.js` 剥出来的字节不一致 → **直接失败**，
 并提示跑 `pnpm build:client`）。
 
-### 发布前待办（**都还没做**）
+### ⚠️ 改了 client 之后必须重新构建（`exports` 指向 `dist/` 的代价）
+
+`exports["./client"]` 现在指向 `dist/client.js`，所以**改了 `client/client.js` 之后一定要跑
+`pnpm build:client`**，刷新页面才会看到新字节；否则加载的是 `dist/` 里的**旧副本**——页面不会报错，
+只是"看不到效果"。陈旧性守卫（`test/strip-test-hooks.test.mjs`）**只在跑测试时报警**，
+"改完只刷新页面看效果"这条路不会拦你。
+
+联调期若嫌这道步骤麻烦：**临时**把 `package.json` 的 `exports["./client"]` 改回 `./client/client.js`
+（改 `package.json` 要**重启宿主**才生效），收尾时再切回 `dist/client.js` 并重建。
+**别把这次临时回退留在要发布的版本里。**
+
+### 发布前待办
 
 1. **去掉 `package.json` 的 `private: true`** —— npm 会拒绝发布 `private` 包；现在留着它是"明确不想误发"的护栏；
-2. **补 `LICENSE` 文件** —— 现在只有 `package.json` 的 `"license": "MIT"` 与 [NOTICE](./NOTICE)，
-   `files` 里也没有 `LICENSE`；NOTICE 已把它写成显式待办；
-3. **定版本号**（现在 `0.0.1`）并补 `CHANGELOG`（暂无）；
-4. **从零安装全链路（技术方案里的 A8）**：在全新 `DSH_HOME` 上跑 `dsh plugin add` → 构建 →
-   设置页加厂商 → 真实生图 —— **尚未执行**；
-5. 可选：把 `client`（源码，含测试钩子）从 `files` 里去掉，运行时只认 `dist`，包体更小。
+2. **定版本号**（现在 `0.0.1`）并补 `CHANGELOG`（暂无）；
+3. **从零安装全链路（技术方案里的 A8）**：在全新 `DSH_HOME` 上跑 `dsh plugin add` → 构建 →
+   设置页加厂商 → 真实生图 —— **尚未执行**。
+
+本轮已经收尾、**不再留在待办里**的两项：
+
+- ~~补 `LICENSE`~~ —— **已补**：标准 MIT 全文见仓根 [LICENSE](./LICENSE)，`files` 里已列出；
+- ~~把 `client` 从 `files` 里去掉~~ —— **已移除**（见上面 `files` 表下的说明：源码仍在仓库里，只是不进包）。
 
 ---
 
 ## 文档索引
+
+> ⚠️ **本仓库不发布 `docs/`**（见 [.gitignore](./.gitignore) 的 `/docs/` 一节）：这些文档只存在于**本地工作副本**，
+> 所以下面的相对链接**只在本地可用**，在仓库远端页面上会 404。代价是它们**没有版本历史**、
+> **误删即永久丢失**（git 恢复不了）——请自行备份。
 
 | 文档 | 是什么 |
 |---|---|
@@ -432,10 +452,10 @@ dsh-pixmart/
 
 ## 许可
 
-MIT（见 `package.json` 的 `"license"`）。提示词与实现均为本仓库原创；组织结构参考了
-`pixmart-ai`（MIT）的「模块 → 片段」思路与供应商目录的**事实性转录**，**不含其任何代码或文本**
-——完整声明见 [NOTICE](./NOTICE)，依据见技术方案 §15。
-**本仓库目前没有独立的 `LICENSE` 文件**（发布前必须补，见「[打包与发布](#打包与发布)」）。
+**MIT**。完整许可文本见仓根 [LICENSE](./LICENSE)，与 `package.json` 的 `"license": "MIT"` 字段一致。
+
+代码与提示词实现**均为本仓库原创** —— 包括 `src/prompts/modules.ts` 里 **24 个提示词模块的全部片段文本**；
+没有复制任何外部项目的代码、提示词或文案。声明见 [NOTICE](./NOTICE)。
 
 ## 待办（尚未实现，已记录待补）
 

@@ -162,8 +162,7 @@ export function defaultOfoxProvider(): ProviderConfig {
  *   - `response_format` 与参考图都必须嵌在 `extra_body` 内。
  *   - baseUrl **默认用国内站 `api.agnes-ai.cn/v1`**（2026-10-12 按实际部署改）：
  *     国际站文档给的是 `apihub.agnes-ai.com/v1`，但**两站密钥不通用**——国内站密钥打到
- *     国际站会 401 Invalid token（已实测）。国内站入口取证自参考项目 pixmart-ai 的
- *     `src/renderer/src/types/model.ts:144` 的 defaultBaseUrl。
+ *     国际站会 401 Invalid token（已实测）。国内站端点按录入时的公开来源核对（见 §25）。
  *     用国际站密钥的人，在设置页把 baseUrl 改成 `https://apihub.agnes-ai.com/v1` 即可。
  *     （冲突未解决，见 §25.2 第 1 条）。
  */

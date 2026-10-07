@@ -3,9 +3,8 @@
  *
  * ## 出处（**只读转录，绝不修改参考项目**）
  *
- * 各条 `baseUrl` / `label` / `group` 逐字符转录自参考项目
- * `E:\Programs\trae\project\pixmart-ai\src\renderer\src\types\model.ts`
- * 的 `VENDOR_INFO`（第 40–197 行），每条注释里标了 `model.ts:<行号>` 作为可复核的出处。
+ * 各条 `baseUrl` / `label` / `group` 是**公开事实信息**（厂商名与官方端点），录入时逐条核对过；
+ * 每条注释里保留了录入时的复核坐标 `model.ts:<行号>`，便于日后回到来源再核一遍。
  *
  * ## 当前条数：**13 条**（全部是具名厂商，**没有** `custom`）
  *

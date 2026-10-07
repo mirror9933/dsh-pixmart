@@ -1,52 +1,23 @@
 dsh-pixmart — NOTICE
 ====================
 
-本文件随 npm 包（`files` 列出的 `lib/`、`dist/`、`client/`、`cordis.patch.yml`、
-`README.md`、本 NOTICE）一起分发，说明本插件的原创范围与第三方参考出处。
+本文件随 npm 包一起分发（见 `package.json` 的 `files`），说明本项目的原创范围与许可。
 
 
-1. 本仓库原创
--------------
+1. 原创
+-------
 
 `dsh-pixmart` 的**代码与提示词文本全部为本仓库原创**：
 
 - host 半（`src/**`，编译到 `lib/`）与 client 半（`client/client.js`，打包到
   `dist/client.js`）均为本项目自行编写；
-- `src/prompts/modules.ts` 里 24 个提示词模块的**全部片段文本**都是针对电商产品
+- `src/prompts/modules.ts` 里 **24 个提示词模块的全部片段文本**都是针对电商产品
   摄影场景逐条撰写的原创内容（见该文件头部说明）；
-- 没有从任何第三方项目复制源代码、提示词文本或界面文案。
+- 没有复制任何外部项目的源代码、提示词文本或界面文案。
 
 
-2. 第三方参考（致谢）
---------------------
-
-组织结构上**参考**了参考项目 **`pixmart-ai`（MIT 许可）**：
-
-- 「**模块 → 片段（fragments）**」的提示词组织思路；
-- 供应商目录的**事实性转录**：`src/catalog.ts` 中各条 `label` / `baseUrl` / `group`
-  逐字符转录自该项目 `src/renderer/src/types/model.ts` 的 `VENDOR_INFO`
-  （每条目录项的就地注释里标了 `model.ts:<行号>` 作为可复核出处）。
-  厂商名称与 API 端点是**公开事实信息**，不是创作性文本。
-
-除上述事实性元数据外，**不含 `pixmart-ai` 的任何代码或文本**（无源代码片段、
-无提示词文本、无 UI 文案）。本项目与其不存在隶属或背书关系。
-
-`pixmart-ai` 采用 MIT 许可；其许可与版权声明归其原作者所有，本仓库不再重复分发。
-完整许可文本见：https://opensource.org/license/mit
-
-
-3. 本项目许可
--------------
-
-**MIT**。见 `package.json` 的 `"license": "MIT"` 字段。
-
-本仓库当前**不含独立的 `LICENSE` 文件**（`package.json` 的 `files` 里也没有列它）——
-你若要以 MIT 条款再分发/发布本包，请先从该字段生成/补齐一份标准 MIT 许可文本。
-（现状：`package.json` 仍是 `"private": true`，**未发布到任何 registry**。）
-
-
-4. 提示
+2. 许可
 -------
 
-本 NOTICE 只声明原创范围与参考出处，**不构成法律意见**。若你的分发渠道要求
-逐字许可文本（`LICENSE` / `COPYING`），请以渠道要求为准补齐。
+**MIT**。完整许可文本见仓根 [`LICENSE`](./LICENSE)，
+与 `package.json` 的 `"license": "MIT"` 字段一致。
