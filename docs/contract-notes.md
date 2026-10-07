@@ -3168,3 +3168,20 @@ label==value〔夹具 `allowedSizes:['1:1']` 证明"配置说了不算"〕、`4:
 **窄视口下也成立**；jsdom 补张数手动输入四类用例 + `+/-` 不回归。既有断言一条没删弱。
 
 （本轮**预先批准了 `test/browser/sizes.test.mjs` 与 `controls.test.mjs` 的写域**给该队友，因为"是否被截断"只能在真浏览器里量。）
+
+### 35.11 修共用 harness 的两处（Lead 收尾）
+
+子智能体在 task-17 里报了两处**不在它写域**的 harness 问题，均已修：
+
+1. **`tools/lane-mutations.mjs` 的 `M42-select-list-clipped` 第 3 处变异锚点失效** —— 它锚在
+   task-17 刚替换掉的那三行宽度声明上。改成锚新实现（`width: 'max-content'` + `minWidth` + `maxWidth`）。
+   ⚠️ **踩过一个坑**：我第一次把一行注释也写进 `find`，结果**仍 0 命中** —— 因为 `find` 必须
+   **逐字等于目标文件的内容**，而那行注释只存在于变异脚本、不存在于 `client.js`。教训：变异锚点要么
+   只放真实存在的行，要么把注释放在 `find` 之外。
+   修好后自证：`node tools/lane-mutations.mjs M42` ✔，且**被 4.5 / 4.6 / 4.8 三条同时抓住**
+   （4.8 正是本轮新增的"最长选项不截断"）—— 新断言**不是空跑**。
+2. **`test/browser/lane.js` 的 `stepperFacts.value` 用 `textContent` 读** —— task-17 之后"每次张数"
+   是 `<input>`，`textContent` 恒为空串（探针会静默返回 `''`）。改成优先读 `.value`、`<span>` 形态仍走
+   `textContent`。（该队友在自己的 lane 里已用本地助手绕开，所以此前不红 —— 但那正是"共享探针悄悄失真"。）
+
+两处都是**共用 harness**，属 Lead 写域；`pnpm verify` 全绿（宿主 466 + 浏览器 67）。

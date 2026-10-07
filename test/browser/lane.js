@@ -554,7 +554,8 @@
     var down = stepper.querySelector('[data-pxm-stepper-down]')
     return {
       stepperRect: rectOf(stepper),
-      value: value === null ? null : (value.textContent || '').trim(),
+      // task-17 起第「每次张数」的值是 <input>：它没有 textContent，必须优先读 .value；<span> 形态（其它调用点）仍走 textContent。
+      value: value === null ? null : String((value.value !== undefined ? value.value : value.textContent) || '').trim(),
       valueRect: value === null ? null : rectOf(value),
       unit: unit === null ? null : (unit.textContent || '').trim(),
       upRect: up === null ? null : rectOf(up),

@@ -986,9 +986,9 @@ const MUTATIONS = [
       {
         // 宽度也别再跟触发器夹取（旧形态是 `minWidth:100%` + `maxWidth: menuMaxWidth`）。
         find: [
-          '            // 宽度跟触发器一致；`maxWidth` 再挡一层（面板比视口还宽时不让它溢出右边）。',
-          "            width: String(place.width) + 'px',",
-          "            maxWidth: String(place.width) + 'px',",
+          "            width: 'max-content',",
+          "            minWidth: String(place.width) + 'px',",
+          "            maxWidth: String(place.maxWidth) + 'px',",
         ].join('\n'),
         replace: [
           '            // 旧形态：跟触发器对齐 + 官方 Menu 的宽度上限。',
