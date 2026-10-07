@@ -2,7 +2,8 @@
  * Agnes AI 厂商（`dialect: 'agnes'`）的**离线**契约测试。
  *
  * 硬前提：**我们没有 Agnes 的 API Key**。所以这里能验、也只验四件不需要网络与凭据的事——
- *   1. **预设**：出厂配置里有 agnes、字段齐全、`apiKey` 为空、`defaults.provider` 仍是 ofox；
+ *   1. **预设**：出厂清单为空（`defaultConfig().providers === []`、`defaults` 为空串），
+ *      而内置默认 `defaultAgnesProvider()` 仍导出且字段齐全、`apiKey` 为空；
  *   2. **请求构造**：端点 / 鉴权头 / `extra_body.response_format` / `extra_body.image` /
  *      「档位 + 比例」的尺寸（对着取证到的形状断言，不是对着我们的实现断言）；
  *   3. **响应解析**：URL 与 Base64 两种形状都能取出图片字节与尺寸；
@@ -132,22 +133,28 @@ function request(overrides = {}) {
 // ── 1. 预设 ──────────────────────────────────────────────────────────────────
 
 describe('Agnes 厂商预设', () => {
-  it('出厂配置里有 agnes，且 defaults.provider 仍是 ofox', () => {
+  it('出厂配置不带任何厂商（defaults 为空串）；agnes 的内置默认字段齐全', () => {
     const config = defaultConfig()
     const ids = config.providers.map((provider) => provider.id)
 
-    assert.deepEqual(ids, ['ofox', 'agnes'])
-    assert.equal(config.defaults.provider, 'ofox', '默认厂商不许被改成 agnes')
-    assert.equal(config.defaults.model, defaultOfoxProvider().models[0])
+    // 用户决策：安装后不预设厂商，全部由用户从「添加模型提供商」里挑。
+    assert.deepEqual(ids, [], '出厂清单为空，不得再自动带上 ofox / agnes')
+    assert.equal(config.defaults.provider, '', '出厂没有默认厂商（空串 = 尚未选择）')
+    assert.equal(config.defaults.model, '', '出厂没有默认模型')
+    assert.equal(config.defaults.size, '1:1')
+    assert.equal(config.defaults.n, 1)
 
-    const agnesProvider = config.providers.find((provider) => provider.id === 'agnes')
-    assert.ok(agnesProvider, '出厂配置里必须有 agnes')
+    // `defaultAgnesProvider()` 仍然导出并保持取证到的字段（目录/夹具/将来重新放出厂预设都用它）
+    const agnesProvider = defaultAgnesProvider()
+    assert.ok(agnesProvider, '内置默认必须仍然可导出')
+    assert.equal(agnesProvider.id, 'agnes')
+    assert.equal(agnesProvider.label, 'Agnes AI')
     assert.equal(agnesProvider.dialect, 'agnes')
     assert.equal(agnesProvider.apiMode, 'images-generations')
     assert.equal(agnesProvider.group, 'official')
     assert.equal(agnesProvider.baseUrl, 'https://api.agnes-ai.cn/v1')
     assert.equal(agnesProvider.geminiNativeBaseUrl, '', 'agnes 没有 Gemini 原生端点')
-    assert.equal(agnesProvider.apiKey, '', '出厂不带密钥')
+    assert.equal(agnesProvider.apiKey, '', '内置默认不带密钥')
     assert.equal(agnesProvider.apiKeyEnv, 'AGNES_API_KEY')
     assert.ok(agnesProvider.models.length > 0)
     assert.ok(agnesProvider.allowedSizes.length > 0)

@@ -18,8 +18,8 @@
  *   9. `POST /providers`（新增：目录 `catalogId` / 自定义 `custom` 二选一 + 可选
  *      `baseUrl` 覆盖 + 可选 `apiKey`）与 `POST /providers/<id>/delete`（移除）：
  *      落盘 / 409 / 400 / 404、默认厂商被删后的改写、
- *      **删掉出厂预设 ofox 后重新 `load()` 不会把它补回来**（`removedProviders`
- *      生效，即 docs/contract-notes.md §26.4 老限制的回归断言）、删到一个不剩不崩。
+ *      **删掉 ofox 后重新 `load()` 不会把它补回来**（出厂清单为空 ⇒ `load()` 不补任何人；
+ *      删除也因此不再留下墓碑）、删到一个不剩不崩、墓碑被重新添加时摘掉。
  *
  * **零真实网络**：探测用的 `fetch` 全部是本地 stub（见 `stubFetch`），
  * 且每个用例后还原 `globalThis.fetch`。假 runtime 沿用 `historical.test.mjs` 的写法，
@@ -33,7 +33,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { ConfigStore } from '../lib/store/config-store.js'
-import { defaultConfig } from '../lib/config.js'
+import { defaultAgnesProvider } from '../lib/config.js'
 import { createRuntime } from '../lib/tools/runtime.js'
 import { registerRoutes } from '../lib/routes.js'
 
@@ -87,8 +87,17 @@ function makeFakeRuntime(configStore) {
   }
 }
 
-/** 造一份落盘配置并返回 store（先 save 再 load，确保 store 里就是这份配置）。 */
-function makeStore(providerOverrides = {}) {
+/**
+ * 造一份落盘配置并返回 store（先 save 再 load，确保 store 里就是这份配置）。
+ *
+ * 夹具种**两家**：ofox（本文件的被测对象，字段可用 `providerOverrides` 改）与
+ * 内置默认的 `defaultAgnesProvider()`。**不再依赖出厂预设**：`defaultConfig().providers`
+ * 现在是空数组，`load()` 不会给任何配置补人——想要配置里有什么，就必须自己写进文件。
+ *
+ * @param providerOverrides - 覆盖 ofox 的字段。
+ * @param extra - 覆盖/追加顶层字段（如 `providers` / `removedProviders`），最后展开。
+ */
+function makeStore(providerOverrides = {}, extra = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'pixmart-api-'))
   const config = {
     version: 1,
@@ -110,11 +119,13 @@ function makeStore(providerOverrides = {}) {
         timeoutMs: 5_000,
         ...providerOverrides,
       },
+      defaultAgnesProvider(),
     ],
     defaults: { provider: 'ofox', model: '', size: '1:1', n: 1 },
     limits: { maxConcurrency: 2, maxBatchItems: 20, maxRetries: 1, retentionDays: 0 },
     promptOverrides: {},
     attachmentInConversation: true,
+    ...extra,
   }
   // 先写 config.json、再 load 进 store：这条路径与生产完全一致
   // （读盘 → parseConfig），也避免为了"让内存副本是这份配置"而 await 一个 mutex。
@@ -1100,8 +1111,8 @@ describe('写路由的方法与请求体约束', () => {
 //
 // 目录数据本身由 `test/catalog.test.mjs` 钉住；这里钉的是**路由契约**：
 // `GET /providers` 的 catalog 视图、`POST /providers` 新增、`POST /providers/<id>/delete` 移除。
-// 夹具注意：`makeStore()` 只种了 ofox，而 `ConfigStore.load()` 会把出厂预设 agnes 补进来，
-// 所以每个用例开始时配置里的厂商是 `['ofox', 'agnes']`。
+// 夹具注意：`makeStore()` 直接种下 ofox + agnes 两家（**不再靠出厂预设补齐**——
+// 出厂清单现在是空的，`load()` 一个厂商都不会补），所以每个用例开始时是 `['ofox', 'agnes']`。
 
 describe('GET /pixmart/api/providers：只读厂商目录 catalog', () => {
   it('catalog 20 条，added 按当前配置算（ofox / agnes 已添加）', async () => {
@@ -1233,7 +1244,7 @@ describe('POST /pixmart/api/providers（从目录新增）', () => {
     try {
       const webServer = makeFakeWebServer()
       const runtime = makeFakeRuntime(store)
-      // 夹具盘上只有 ofox（agnes 是 load() 在**内存**里补的，还没落盘）：
+      // 夹具盘上就是 ofox + agnes（两家都写在文件里，不再靠 load() 补）：
       // 被拒的写必须**一个字节都不落**，所以这里拿字节快照比。
       const before = readFileSync(join(dir, 'config.json'), 'utf8')
 
@@ -1260,7 +1271,7 @@ describe('POST /pixmart/api/providers（从目录新增）', () => {
       assert.equal(onDisk.providers.filter((provider) => provider.id === 'ofox').length, 1)
       assert.deepEqual(
         onDisk.providers.map((provider) => provider.id),
-        ['ofox'],
+        ['ofox', 'agnes'],
       )
       assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
     } finally {
@@ -1712,14 +1723,22 @@ describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
     }
   })
 
-  it('⑩ 自定义 id 撞上被删过的出厂预设：墓碑一样被摘掉（与模式 A 共用同一段逻辑）', async () => {
-    const { dir, store } = makeStore()
+  it('⑩ 自定义 id 撞上墓碑（removedProviders 里的 id）：新建同名 id 后墓碑被摘掉（与模式 A 共用同一段逻辑）', async () => {
+    // 出厂清单为空，删除路由不再产生墓碑（没有出厂预设可记），所以这里**直接种一份墓碑**
+    // 来验路由里"摘墓碑"的那段逻辑：它仍然活着（老安装升级上来时磁盘上可能就有这种记录）。
+    const { dir, store } = makeStore(
+      {},
+      {
+        providers: [defaultAgnesProvider()],
+        removedProviders: ['ofox'],
+        defaults: { provider: 'agnes', model: '', size: '1:1', n: 1 },
+      },
+    )
     try {
       const webServer = makeFakeWebServer()
       const runtime = makeFakeRuntime(store)
 
-      await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
-      assert.deepEqual(store.get().removedProviders, ['ofox'])
+      assert.deepEqual(store.get().removedProviders, ['ofox'], '夹具应带一份墓碑')
 
       const created = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
         body: {
@@ -1815,7 +1834,7 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
       const removed = await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
 
       assert.equal(removed.status, 200)
-      const agnesPreset = defaultConfig().providers.find((provider) => provider.id === 'agnes')
+      const agnesPreset = defaultAgnesProvider()
       assert.equal(removed.json.defaults.provider, 'agnes', '默认厂商应变成剩余里的第一个')
       assert.equal(
         removed.json.defaults.model,
@@ -1837,7 +1856,7 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
     }
   })
 
-  it('删掉出厂预设 ofox → 重新 load 不会把它补回来（contract-notes §26.4 老限制回归）', async () => {
+  it('删掉 ofox → 重新 load 不会把它补回来（出厂清单为空，load 不补任何人）', async () => {
     const { dir, store } = makeStore()
     try {
       const webServer = makeFakeWebServer()
@@ -1852,19 +1871,17 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
         onDisk.providers.map((provider) => provider.id),
         ['agnes'],
       )
-      assert.ok(
-        onDisk.removedProviders.includes('ofox'),
-        '出厂预设被删必须记账，否则下次 load 会复活',
-      )
+      // 出厂清单为空 ⇒ 删除路由没有"出厂预设 id"可记，墓碑就是空的（记账逻辑保留但不触发）
+      assert.deepEqual(onDisk.removedProviders, [])
 
       // 关键：**重新 load** —— 这就是下次启动走的路径
       const reloaded = await reloadStore(dir)
       assert.deepEqual(
         reloaded.get().providers.map((provider) => provider.id),
         ['agnes'],
-        'ofox 不得被 applyFactoryPresets 复活',
+        'ofox 不得被补回来（出厂清单为空，load 不补任何人）',
       )
-      assert.deepEqual(reloaded.get().removedProviders, ['ofox'])
+      assert.deepEqual(reloaded.get().removedProviders, [])
 
       // 而且不再出现"已从出厂预设补入厂商"的告警（没有补，就不该报）
       const fresh = new ConfigStore(dir)
@@ -1901,9 +1918,10 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
       const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
       assert.deepEqual(onDisk.providers, [])
       assert.equal(onDisk.defaults.provider, '')
-      assert.deepEqual([...onDisk.removedProviders].sort(), ['agnes', 'ofox'])
+      // 出厂清单为空 ⇒ 两次删除都没有墓碑可记
+      assert.deepEqual(onDisk.removedProviders, [])
 
-      // 重新 load：不崩、也一家都不补回来（两家都是出厂预设且都记了账）
+      // 重新 load：不崩、也一家都不补回来（出厂清单为空，load 不补任何人）
       const reloaded = await reloadStore(dir)
       assert.deepEqual(reloaded.get().providers, [])
       assert.equal(reloaded.get().defaults.provider, '')
@@ -1937,14 +1955,15 @@ describe('POST /pixmart/api/providers/<id>/delete（移除）', () => {
     }
   })
 
-  it('删过一个被删过的出厂预设后，再从目录添加它能恢复（removedProviders 被摘掉）', async () => {
+  it('删掉 ofox 后还能从目录再加回来（removedProviders 里也没有它）', async () => {
     const { dir, store } = makeStore()
     try {
       const webServer = makeFakeWebServer()
       const runtime = makeFakeRuntime(store)
 
       await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
-      assert.deepEqual(store.get().removedProviders, ['ofox'])
+      // 出厂清单为空：删除不留墓碑（记账逻辑保留但不触发）
+      assert.deepEqual(store.get().removedProviders, [])
 
       const readded = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
         body: { catalogId: 'ofox' },

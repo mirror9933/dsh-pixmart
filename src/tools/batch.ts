@@ -12,7 +12,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { findProvider, resolveApiKey } from '../config.js'
+import { findProvider, providerNotFoundMessage, resolveApiKey } from '../config.js'
 import { buildPrompt } from '../prompts/build.js'
 import { getModule } from '../prompts/modules.js'
 import { checkSize } from '../sizes.js'
@@ -199,7 +199,10 @@ export function createBatchTool(runtime: ToolRuntime): ToolDefinitionLike {
         }
 
         const provider = findProvider(config, pickString(args, 'provider'))
-        if (provider === undefined) return failure('config', '找不到厂商')
+        // 一家都没配（首次使用最常见）→ 统一的可操作指引；有厂商但 id 不存在 → 信息型文案。
+        if (provider === undefined) {
+          return failure('config', providerNotFoundMessage(config, pickString(args, 'provider')))
+        }
         const model = pickString(args, 'model') ?? config.defaults.model ?? provider.models[0] ?? ''
         if (model === '') return failure('config', '没有可用模型')
 

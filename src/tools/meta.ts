@@ -4,7 +4,7 @@
  * 它们共同构成"先看后花钱"的护栏：Agent 可以在真正调用厂商之前看清配置、
  * 校验尺寸、并把最终提示词原样打出来。
  */
-import { findProvider, toProviderView, type PixmartConfig } from '../config.js'
+import { findProvider, providerNotFoundMessage, toProviderView, type PixmartConfig } from '../config.js'
 import { catalogView } from '../catalog.js'
 import { MODULES, getModule } from '../prompts/modules.js'
 import { buildPrompt } from '../prompts/build.js'
@@ -60,8 +60,8 @@ function resolveTarget(
 ): { ok: true; provider: ReturnType<typeof findProvider>; model: string; apiMode: ApiMode } | { ok: false; message: string } {
   const provider = findProvider(config, providerId)
   if (provider === undefined) {
-    const known = config.providers.map((item) => item.id).join(', ')
-    return { ok: false, message: `找不到厂商 "${providerId ?? config.defaults.provider}"；已配置：${known || '（无）'}` }
+    // 一家都没配（首次使用最常见）→ 统一的可操作指引；有厂商但 id 不存在 → 信息型文案。
+    return { ok: false, message: providerNotFoundMessage(config, providerId) }
   }
   const resolvedModel = model ?? config.defaults.model ?? provider.models[0] ?? ''
   if (resolvedModel === '') return { ok: false, message: `厂商「${provider.label}」没有可用模型，请先在设置页配置` }
@@ -307,7 +307,12 @@ export function createMetaTools(runtime: ToolRuntime): ToolDefinitionLike[] {
         )
         if (!target.ok) return failure('config', target.message)
         const provider = target.provider
-        if (provider === undefined) return failure('config', '厂商解析失败')
+        // 兜底分支：`resolveTarget` 返回 ok 时 provider 一定存在。真走到这里说明配置
+        // 在两步之间变了（或有人改了 resolveTarget 的契约）——给可操作指引而不是
+        // "厂商解析失败"这种没有下一步的句子。
+        if (provider === undefined) {
+          return failure('config', providerNotFoundMessage(config, pickString(args, 'provider')))
+        }
 
         const result = checkSize({ model: target.model, size, apiMode: target.apiMode, provider })
         const base = {

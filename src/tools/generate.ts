@@ -9,7 +9,13 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
-import { findProvider, resolveApiKey, type ApiMode, type PixmartConfig } from '../config.js'
+import {
+  findProvider,
+  providerNotFoundMessage,
+  resolveApiKey,
+  type ApiMode,
+  type PixmartConfig,
+} from '../config.js'
 import { buildPrompt } from '../prompts/build.js'
 import { getModule } from '../prompts/modules.js'
 import { checkSize } from '../sizes.js'
@@ -64,8 +70,8 @@ function resolveTarget(
 ): { ok: true; providerId: string; model: string; apiMode: ApiMode } | { ok: false; message: string } {
   const provider = findProvider(config, providerId)
   if (provider === undefined) {
-    const known = config.providers.map((item) => item.id).join(', ')
-    return { ok: false, message: `找不到厂商 "${providerId ?? config.defaults.provider}"；已配置：${known || '（无）'}` }
+    // 一家都没配（首次使用最常见）→ 统一的可操作指引；有厂商但 id 不存在 → 信息型文案。
+    return { ok: false, message: providerNotFoundMessage(config, providerId) }
   }
   const resolvedModel = model ?? config.defaults.model ?? provider.models[0] ?? ''
   if (resolvedModel === '') return { ok: false, message: `厂商「${provider.label}」没有可用模型` }
@@ -192,7 +198,11 @@ async function runGeneration(
   const target = resolveTarget(config, input.providerId, input.model)
   if (!target.ok) return failure('config', target.message)
   const provider = findProvider(config, target.providerId)
-  if (provider === undefined) return failure('config', `找不到厂商 ${target.providerId}`)
+  // 兜底：`resolveTarget` 已经保证找得到（providers 非空），真走到这里就给同一套文案，
+  // 不让"找不到厂商 <id>"这种没有下一步的句子漏出去。
+  if (provider === undefined) {
+    return failure('config', providerNotFoundMessage(config, target.providerId))
+  }
 
   const sizeResult = checkSize({ model: target.model, size, apiMode: target.apiMode, provider })
   if (!sizeResult.supported) {

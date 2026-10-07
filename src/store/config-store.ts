@@ -56,20 +56,20 @@ export class ConfigStore {
   /**
    * 读取落盘配置；缺失或损坏都返回可用配置而不是抛错。
    *
-   * **读盘的最后一步是出厂预设补齐**（`applyFactoryPresets`）：`parseConfig` 以文件为准，
-   * 于是代码里后加的厂商（实测是 agnes）对已有安装**永远不可见**——文件建于旧版本，
-   * 里面根本没有那个 id。所以这里补入文件里没有的出厂预设，并把 id 记进 `warnings`
-   * （既有告警通道 → `configWarnings()` → 设置页与 `pixmart_providers`），**不静默**。
+   * 读盘的最后一步仍走 `applyFactoryPresets`（出厂预设补齐机制**保留**），但
+   * **出厂清单当前为空**（`defaultConfig().providers === []`，厂商全部由用户从
+   * 「添加模型提供商」里加），所以这一步是 no-op：`load()` **不会**自动补入任何厂商，
+   * 也不会产生"已从出厂预设补入厂商"的告警。将来若重新放出厂预设，这段逻辑原样生效。
    *
-   * 三条边界（都有测试钉着，见 test/factory-presets.test.mjs）：
+   * 四条边界（都有测试钉着，见 test/factory-presets.test.mjs 与
+   * test/config-empty-factory.test.mjs）：
+   *   - **不补人**：空文件 / 只有 1 家 / 用户删光了，`load()` 后厂商集合与文件一致；
    *   - 已存在的厂商**一个字段都不覆盖**（用户填的 baseUrl / apiKey / models 逐字节不变）；
-   *   - `defaults` / `limits` 完全以文件为准（尤其 `defaults.provider`，不会被工厂值改掉）；
+   *   - `defaults` / `limits` 完全以文件为准（尤其 `defaults.provider`，含空串 = 尚未选择）；
    *   - **只改内存、不碰磁盘**：补齐不做任何写盘，文件只在用户显式保存时才落盘。
    *
-   * **2026-10-12 更新**：上一条的代价（"在文件里删掉某厂商，下次 load 会被补回来"）**已经修掉**——
-   * 配置里新增了 `removedProviders`（删除厂商时的墓碑），`applyFactoryPresets` 会跳过其中的 id，
-   * 设置页也有了「添加 / 移除厂商」的写路径（docs/contract-notes.md §31）。所以现在的语义是：
-   * **出厂预设只在"从未被删过"时补齐**。
+   * `removedProviders`（删除厂商时的墓碑）与删除路由的记账逻辑也一并保留：当前没有
+   * 出厂预设可记，所以正常流程不会用到它，`[]` 是常态（见 `PixmartConfig.removedProviders`）。
    *
    * 幂等：每次 load 都从文件重新解析再补，所以连续两次 load 的厂商集合完全一致。
    * 缺失/损坏分支**不需要**补齐：那两条路径本来就返回 `defaultConfig()`。

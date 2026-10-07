@@ -82,9 +82,14 @@ export interface PixmartConfig {
   /**
    * **用户显式删掉的出厂预设 id**（`POST /providers/<id>/delete` 写，见 `src/routes.ts`）。
    *
-   * `applyFactoryPresets` 每次 `load()` 都会把出厂预设里缺的厂商补回来；没有这份清单，
-   * 用户删掉的 ofox/agnes 下次启动就会"复活"（旧限制见 docs/contract-notes.md §26.4）。
-   * 有它之后：补入前先跳过这里列出的 id —— 删除是**持久**的。
+   * 机制（**保留**，为将来可能的出厂预设）：`applyFactoryPresets` 每次 `load()` 会把出厂
+   * 预设里缺的厂商补回来；这份清单里的 id 会被跳过，删除才是**持久**的（它当初修掉的
+   * 是 docs/contract-notes.md §26.4 那条老限制："删了的厂商下次启动又回来"）。
+   *
+   * **当前出厂清单为空**（`defaultConfig().providers === []`，厂商全部由用户从目录添加），
+   * 于是没有任何 id 会落进这份清单——正常流程根本用不到它，`[]` 就是常态；
+   * 只有将来重新放出厂预设时它才真正起作用。字段与删除路由里的记账逻辑因此**不删**：
+   * 删掉它等于把那条路事先堵死，将来要恢复就得同时改两处。
    *
    * 只记**出厂预设**的 id（用户自己添加的厂商删掉就是删掉，不需要记账）；
    * 用户从目录重新添加同一 id 时，路由会把它从这份清单里移除（不阻挡重新添加）。
@@ -190,21 +195,28 @@ export function defaultAgnesProvider(): ProviderConfig {
 }
 
 /**
- * 出厂配置：一个未填密钥的 Ofox，方便用户直接进设置页填。
+ * 出厂配置：**一个厂商都不带**（用户决策：安装后由用户自己从「添加模型提供商」里挑）。
  *
- * `providers` 是**出厂预设清单**：这里每加一个厂商，`applyFactoryPresets` 就会在
- * 下一次 `ConfigStore.load()` 时把它补进已有配置（见该函数）。
+ * `providers: []`、`defaults.provider === ''`、`defaults.model === ''`。空串的语义是
+ * **"还没有选"**，不是"某家厂商"——`findProvider()` 因此返回 `undefined`，工具会给出
+ * 可操作指引（`NO_PROVIDER_GUIDANCE` / `providerNotFoundMessage()`），而不是猜一家。
+ *
+ * `defaultOfoxProvider()` / `defaultAgnesProvider()` **仍然保留并导出**：它们是内置
+ * 默认值的单一来源（测试夹具、`sizes.ts` 的能力表、将来重新放出厂预设都拿它们当输入），
+ * 只是不再自动出现在出厂配置里。
+ *
+ * `providers` 同时是 `applyFactoryPresets` 的**出厂预设清单**：现在为空 ⇒ 该函数是
+ * no-op（见该函数）。将来若要"出厂就带某家"，往这里加即可，机制原样可用。
  */
 export function defaultConfig(): PixmartConfig {
-  const provider = defaultOfoxProvider()
   return {
     version: CONFIG_VERSION,
-    providers: [provider, defaultAgnesProvider()],
-    // 出厂配置里没有"被用户删掉"的厂商——这份清单只由删除路由写入。
+    providers: [],
+    // 出厂配置里没有"被用户删掉"的厂商——这份清单只由删除路由写入（且当前无出厂预设可记）。
     removedProviders: [],
     defaults: {
-      provider: provider.id,
-      model: provider.models[0] ?? '',
+      provider: '',
+      model: '',
       size: '1:1',
       n: 1,
     },
@@ -224,28 +236,32 @@ export interface FactoryPresetMerge {
 }
 
 /**
- * 把出厂预设里**文件里没有的**厂商补进配置（设计缺口修复，2026-10-12）。
+ * 把出厂预设里**文件里没有的**厂商补进配置（机制保留；当前出厂清单为空 ⇒ no-op）。
  *
- * 为什么需要它：`parseConfig` 以文件为准，于是**新增的厂商预设对已有安装永远不可见**——
+ * 历史缺口：`parseConfig` 以文件为准，于是**新增的厂商预设对已有安装永远不可见**——
  * 实测就是这样，用户磁盘上的 `config.json` 建于只有 ofox 的年代，代码里后加的 agnes
- * 因此一直没出现在设置页。这不是 agnes 的特例，以后每加一个厂商都会重现。
+ * 因此一直没出现在设置页。这个函数就是为那条路写的。
+ *
+ * **现状（用户决策）**：`defaultConfig().providers` 是**空数组**，出厂预设一家都没有，
+ * 于是 `factory.providers` 为空 ⇒ `missing` 恒为空 ⇒ 本函数**不补任何人**，原样返回
+ * 入参（`added: []`）。机制保留是为了将来若再决定"出厂带某家"时只改 `defaultConfig()`
+ * 一处就能重新生效，不必把这套"只追加/不覆盖/跳过墓碑/不写盘"的性质重写一遍。
  *
  * 规则（顺序即优先级）：
  *   1. **文件为准**：已存在的 id 一个字段都不碰——用户填的 baseUrl / apiKey / models
  *      必须逐字节保持原样，哪怕它和出厂预设已经不一样（那正是用户自己的选择）；
  *   2. **只追加缺的**：`factory.providers` 里文件没有的 id 追加到**末尾**，用出厂预设、
  *      `apiKey` 为空（"尚未配置"状态）。追加在末尾，文件里的厂商顺序与 `providers[0]` 不变；
- *   3. **跳过用户删掉的**：`config.removedProviders` 里的 id 即使文件里没有也**不补**。
- *      这一条修掉了"删了的厂商下次 load 又回来"的老限制（旧限制见
- *      docs/contract-notes.md §26.4）：删除由 `POST /providers/<id>/delete` 写进
- *      `removedProviders`，从此补齐**不再**把它复活；
+ *   3. **跳过用户删掉的**：`config.removedProviders` 里的 id 即使文件里没有也**不补**
+ *      （墓碑机制，见 `PixmartConfig.removedProviders` 的说明）。当前出厂清单为空，
+ *      这一条同样不会生效，但逻辑照旧保留；
  *   4. **defaults / limits / 其它字段完全不动**：它们来自文件，包括 `defaults.provider`。
- *      补齐厂商**不会**顺带改默认厂商——用户原来用 ofox，就还是 ofox；
+ *      补齐厂商**不会**顺带改默认厂商——用户原来用某家，就还是那家；
  *   5. **不改写磁盘**：本函数是纯函数，`ConfigStore.load()` 只在内存里用它；文件只会在
  *      用户后续显式保存（设置页）时才落盘。
  *
  * @param config - 已解析的落盘配置（用户为准）。
- * @param factory - 出厂预设，默认 `defaultConfig()`。
+ * @param factory - 出厂预设，默认 `defaultConfig()`（当前是空清单）。
  */
 export function applyFactoryPresets(
   config: PixmartConfig,
@@ -268,6 +284,9 @@ export function applyFactoryPresets(
 /**
  * 补齐告警文案。`load()` 把它塞进既有的 `warnings` 通道（`configWarnings()` →
  * `GET api/providers` 与 `pixmart_providers` 工具都会显示），**不静默**补厂商。
+ *
+ * 注意：当前出厂清单为空 ⇒ `applyFactoryPresets` 恒返回 `added: []` ⇒ 这段话在正常
+ * 流程里不会出现。函数与调用点保留，是给"将来重新放出厂预设"用的，不是死代码清理对象。
  */
 export function factoryPresetWarning(added: readonly string[]): string {
   return `已从出厂预设补入厂商：${added.join('、')}（尚未配置密钥）`
@@ -525,10 +544,10 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
   let providers: ProviderConfig[] = []
   if (providersRaw === undefined) {
     providers = [...fallback.providers]
-    warnings.push('providers 缺失，沿用出厂厂商')
+    warnings.push('providers 缺失，沿用默认配置的厂商')
   } else if (!Array.isArray(providersRaw)) {
     providers = [...fallback.providers]
-    warnings.push('providers 不是数组，沿用出厂厂商')
+    warnings.push('providers 不是数组，沿用默认配置的厂商')
   } else {
     providers = providersRaw
       .map((item, index) => parseProvider(item, index, warnings))
@@ -555,7 +574,13 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
       ? providerId
       : (firstProvider?.id ?? '')
   if (providerId !== '' && !providerIds.includes(providerId)) {
-    warnings.push(`defaults.provider "${providerId}" 不存在，已改用 "${resolvedProvider}"`)
+    // 两种情形分开说：一家都没配（首次使用）→ 只能清空；有厂商但 id 写错 → 落到第一家。
+    // 两种都**不编造**厂商：`resolvedProvider` 只会是 "" 或文件里真实存在的 id。
+    warnings.push(
+      resolvedProvider === ''
+        ? `defaults.provider "${providerId}" 不存在（当前没有任何已配置厂商），已清空`
+        : `defaults.provider "${providerId}" 不存在，已改用 "${resolvedProvider}"`,
+    )
   }
 
   const model = pickString(defaultsRaw, 'model', '', warnings, 'defaults').trim()
@@ -595,6 +620,35 @@ export function parseConfig(raw: unknown, fallback: PixmartConfig = defaultConfi
     },
     warnings,
   }
+}
+
+/**
+ * 「一个厂商都没配」时的**唯一**可操作指引。
+ *
+ * 出厂清单为空，所以这是首次使用最常撞上的失败路径：文案必须说清**去哪、做什么**。
+ * 只说"厂商解析失败"等于把人留在原地——用户看不到工具实现，也无从知道下一步。
+ *
+ * 四个失败点统一用它：`pixmart_check_size`（meta.ts）、`pixmart_generate` /
+ * `pixmart_edit`（generate.ts）、`pixmart_batch`（batch.ts）。
+ */
+export const NO_PROVIDER_GUIDANCE =
+  '还没有配置任何厂商：打开「设置 → PixMart → 厂商」，点「添加模型提供商」选一家并填入 API Key'
+
+/**
+ * 「找不到厂商」的统一失败文案，分两种情形：
+ *   - **一家都没配**（`providers` 为空）→ `NO_PROVIDER_GUIDANCE`（可操作指引）；
+ *   - **有厂商、但请求的 id 不存在** → 信息型文案，附上已配置的 id（排查拼写错误用）。
+ *
+ * 两种都**不猜**厂商：不会退回"第一家"或出厂预设（出厂清单本就是空的）。
+ *
+ * @param config - 当前配置。
+ * @param id - 请求的厂商 id；省略用 `config.defaults.provider`（可能是空串 = 尚未选择）。
+ */
+export function providerNotFoundMessage(config: PixmartConfig, id?: string): string {
+  if (config.providers.length === 0) return NO_PROVIDER_GUIDANCE
+  const wanted = (id ?? config.defaults.provider).trim()
+  const known = config.providers.map((provider) => provider.id).join(', ')
+  return `找不到厂商 "${wanted}"；已配置：${known}`
 }
 
 /** 按 id 取厂商；`id` 为空时取默认厂商。 */

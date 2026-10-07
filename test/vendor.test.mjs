@@ -25,7 +25,7 @@ import { join } from 'node:path'
 
 import { generateImages, resolvePlan, sniffImageMediaType } from '../lib/vendor/openai-compat.js'
 import { checkSize } from '../lib/sizes.js'
-import { parseConfig, defaultConfig, defaultOfoxProvider, resolveApiKey } from '../lib/config.js'
+import { parseConfig, defaultOfoxProvider, resolveApiKey } from '../lib/config.js'
 import { buildPrompt, substituteVars } from '../lib/prompts/build.js'
 import { getModule, MODULES } from '../lib/prompts/modules.js'
 import { ProjectStore } from '../lib/store/project-store.js'
@@ -268,6 +268,7 @@ describe('配置容错', () => {
     })
     assert.ok(result.warnings.length > 0)
     assert.equal(result.config.providers.length, 1) // 重复 id 去重
+    // 纠正只看**文件里**的厂商：出厂清单为空也照样纠正到文件里的第一家（不编造厂商）
     assert.equal(result.config.defaults.provider, 'ofox') // 不存在的默认厂商被纠正
     assert.equal(result.config.defaults.n, 1)
     assert.equal(result.config.limits.maxConcurrency, 2)
@@ -366,7 +367,8 @@ describe('项目库与图片元信息', () => {
       assert.ok(recovered.warnings.length > 0)
       assert.ok(recovered.quarantined)
       assert.ok(existsSync(recovered.quarantined))
-      assert.equal(recovered.config.providers.length, defaultConfig().providers.length)
+      // 损坏恢复走的是出厂配置：现在是 0 家（原先这里与 `defaultConfig()` 比，语义上是恒真）
+      assert.equal(recovered.config.providers.length, 0, '恢复后的出厂配置不带任何厂商')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
