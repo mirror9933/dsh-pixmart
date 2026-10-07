@@ -113,3 +113,8 @@ gh release create v<版本> dsh-pixmart-<版本>.tgz --title v<版本>    # 别�
 ## 许可
 
 MIT，见 [LICENSE](./LICENSE)；原创范围声明见 [NOTICE](./NOTICE)。
+
+---
+
+项目主页：https://github.com/mirror9933/dsh-pixmart
+
