@@ -1075,48 +1075,93 @@ const MUTATIONS = [
     ],
   },
   {
-    id: 'M46-catalog-grid-one-column',
+    id: 'M46-add-card-editor-surface',
     /**
-     * 「添加模型配置」目录弹窗的网格退回**单列**。
+     * 「添加模型提供商」add-card 里**复用的编辑器**被挂上自己的表面底色 ——
+     * 也就是官方 `.addCard .editor{background:0 0;padding:0}`
+     * （`.probe/models-css-pretty.txt:44`）明确要消掉的那一层。
      *
-     * 参考实现写的是 `grid-template-columns:repeat(auto-fill,minmax(280px,1fr))`
-     * （`pixmart-ai/src/renderer/src/pages/Settings.tsx:969`）——**自适应列数**：
-     * 截图里那 3 列是"面板 ~960px + 每列最小 280px"算出来的，窗口变宽会自动加列。
-     * 把它写死成 `repeat(1, …)`，卡片就变成一列长条：视觉上不再是"厂商网格"，
-     * 而"列数由宽度决定"这条性质也没了。
+     * 病态：add-card 自己已经是 `bg-module-platform`，编辑器再挂同一层，视觉上就是
+     * "卡里套卡"的两层底（用户第一时间会当成渲染 bug）。
      *
-     * 期望由 `vendors.test.mjs` 的 **3.7** 抓住：那一条既断 `gridTemplateColumns`
-     * 解析出 3 条轨道 / 每条 ≥280px，又断等效几何（前三张卡同一行、第 4 张换行）。
+     * 期望由 `vendors.test.mjs` 的 **3.7** 抓住：那一条遍历
+     * `[data-pxm-add-card] [data-pxm-editor]`，要求它**声明值里没有 background**，
+     * 且计算底色不得等于 add-card 的底色。
      */
-    bug: '目录弹窗的网格从 `repeat(auto-fill, minmax(280px,1fr))` 退回单列（`repeat(1, …)`）—— 自适应列数丢失',
+    bug: 'add-card 里的编辑器挂回自己的底色 `bg-module-platform`（"卡中卡"两层底），官方 `.addCard .editor{background:0 0}` 被破坏',
     expect: ['3.7 点虚线按钮'],
     edits: [
       {
-        // 锚点 = 目录网格那一行（含 `S.catalogGridMin`，与文件里另外两处
-        // `repeat(auto-fill, minmax(120px/180px,1fr))` 区分得开）。
-        find: "                    gridTemplateColumns: 'repeat(auto-fill, minmax(' + S.catalogGridMin + ', 1fr))',",
-        replace: "                    gridTemplateColumns: 'repeat(1, minmax(' + S.catalogGridMin + ', 1fr))',",
+        // 锚点 = add-card 里编辑器外层（`[data-pxm-add-editor]`）那份 style 的开头。
+        // 该组合（类名 + data-pxm-add-editor + style gap）全文件唯一。
+        find: [
+          "            'data-pxm-add-editor': '1',",
+          "            className: 'pxm-add-editor',",
+          '            style: {',
+          '              display:',
+        ].join('\n'),
+        replace: [
+          "            'data-pxm-add-editor': '1',",
+          "            className: 'pxm-add-editor',",
+          '            style: {',
+          '              background: T.bgModulePlatform,',
+          '              display:',
+        ].join('\n'),
       },
     ],
   },
   {
-    id: 'M47-remove-one-step',
+    id: 'M47-add-on-select-posts',
     /**
-     * 「移除厂商」的**两步确认**退回一步直发。
+     * 「添加模型提供商」的**保存**被短路：在下拉里**选中一家就立刻**发
+     * `POST api/providers`，把"编辑器里填密钥 → 点保存"这一步整个跳过。
      *
-     * 正确形态：第一次点只把文案换成「确认移除」（一个请求都不发），第二次点才
+     * 病态有两层：
+     *   1. 用户只是想看看这一家的编辑器（选一下），请求已经发出去了 —— 配好一家厂商
+     *      这种**有副作用**的动作不该发生在"浏览"上；
+     *   2. 编辑器（API 密钥 / API 地址）形同虚设，用户填的值永远没机会进 body。
+     *
+     * 正确形态是：`onChange` 只换草稿（`props.onPick`），`POST` 只在「保存」那一下发生
+     * （官方同样如此：选中只 `setEditing`，`.probe/models-client.js:2292-2297`）。
+     *
+     * 期望由 `vendors.test.mjs` 的 **3.7b** 抓住：那一条选一家厂商后先断"零 POST"，
+     * 再点保存断"恰好 1 次、body 恰为 {catalogId, apiKey}"。
+     */
+    bug: '选中厂商就立刻发 POST api/providers（跳过编辑器与「保存」，浏览即写）',
+    expect: ['3.7b 页内 add-card'],
+    edits: [
+      {
+        // 锚点 = 那个 `<select>` 的 onChange（`props.onPick` 只在这里被调用，唯一）。
+        find: "                  onChange: (event) => props.onPick(String(event.target.value)),",
+        replace: [
+          '                  onChange: (event) => {',
+          '                    const id = String(event.target.value)',
+          '                    props.onPick(id)',
+          "                    apiPost('api/providers', { catalogId: id })",
+          '                  },',
+        ].join('\n'),
+      },
+    ],
+  },
+  {
+    id: 'M48-remove-one-step',
+    /**
+     * 「删除厂商」的**两步确认**退回一步直发。
+     *
+     * 正确形态：第一次点只把文案换成「确认删除」（一个请求都不发），第二次点才
      * `POST api/providers/<id>/delete`。把 `if (!confirmRemove) { … return }` 那段删掉，
      * 第一次点就会**立刻删掉一家厂商** —— 误点一下就没有第二次机会了。
+     * 行尾那一枚的文案逐字用官方 `remove` = 「删除」（`.probe/models-client.js:2967`）。
      *
      * 期望由 `vendors.test.mjs` 的 **3.8** 抓住（真浏览器行为：第一次点零请求、
      * 第二次点恰好 1 次 POST）—— 这一条**不能**只靠 jsdom lane，因为
      * `tools/lane-mutations.mjs` 只跑 `test/browser/*`。
      */
-    bug: '「移除厂商」的两步确认退回一步直发（第一次点就发 POST …/delete，误点即删）',
-    expect: ['3.8 「移除」两步确认'],
+    bug: '「删除厂商」的两步确认退回一步直发（第一次点就发 POST …/delete，误点即删）',
+    expect: ['3.8 「删除」两步确认'],
     edits: [
       {
-        // 锚点 = 「移除」按钮 onClick 里的两段式分支（`confirmRemove` 只在这里被置真，
+        // 锚点 = 「删除」按钮 onClick 里的两段式分支（`confirmRemove` 只在这里被置真，
         // 全文件唯一）。
         find: [
           '                  if (!confirmRemove) {',

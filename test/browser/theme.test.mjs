@@ -128,6 +128,8 @@ const DARK = {
    */
   '--dsw-alias-button-primary-fill': '#f9fafb',
   '--dsw-alias-label-primary-foreground': '#0f1115',
+  /* 官方 SegmentedControl 的**轨道底色**（浅 `#2631480f` / 深 `#ffffff14`）。 */
+  '--dsw-alias-interactive-bg-hover': '#ffffff14',
   '--dsw-alias-label-primary': '#f9fafb',
   '--dsw-alias-label-secondary': '#cfd3d6',
   '--dsw-alias-label-tertiary': '#adb2b8',

@@ -64,6 +64,30 @@
  *     height:36px;padding:0 14px;14px/22px}` ← 「保存」
  *   - `:39` `._3nPmjq_addButton{border:1px dashed var(--dsw-alias-border-l3);
  *     border-radius:var(--dsw-radius-lg);min-width:180px;height:44px}`
+ *
+ * ## 2026-10-12（第二次）：虚线按钮改成**页内展开 add-card**，`3.7` / `3.7b` 重写
+ *
+ * 用户反馈"厂商 UI 与 DSH 官方不一致"：上一版把添加流程做成了**弹窗 + 卡片网格**
+ * （参考实现那一套），而官方 `settings-models` 是**页内 add-card**。本次按官方返工，
+ * 旧弹窗的锚点（`data-pxm-catalog*`）与 3.7 的网格 / 卡片几何断言**整条删除**，
+ * 换成官方的 add-card 取值，全部出自 `.probe/models-css-pretty.txt`：
+ *   - `:37-39` `_addBlock{gap:12px}` / `_addActions{display:flex}` / `_addButton{…}`
+ *   - `:40-41` `_addModes{flex-direction:column;align-items:flex-start;gap:8px}` /
+ *     `_addPanel{flex-direction:column;gap:14px}`（`:42` 的 `[hidden]{display:none}` 一起钉）
+ *   - `:43` `_addCard{border-radius:var(--dsw-radius-lg);
+ *     background:var(--dsw-alias-bg-module-platform);gap:14px;padding:14px 16px}`
+ *   - `:44` `_addCard ._editor{background:0 0;padding:0}` ← **"卡中卡"的反向判据**
+ *   - `:35` `_advancedHint{color:label-tertiary;font-size:12px;line-height:18px}`（两段 hint）
+ *   - `:73-74` / `:78` `_input`（32px / `0 10px` / 14px-22px / `bg-layer-1` /
+ *     `border-l4`）+ `select._input{max-width:240px}` + `_selectInput`
+ *   - 分段控件来自 `dsh-client-ui-primitives/lib/SegmentedControl.module.css`：
+ *     `.control{inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;padding:4px;
+ *     border-radius:var(--dsw-radius-md);background:var(--dsw-alias-interactive-bg-hover)}`
+ *     / `.indicator{…background:var(--dsw-alias-bg-layer-1)}` / `.tab{height:28px;padding:0 16px;
+ *     font-size:13px;line-height:20px;font-weight:500}`
+ *
+ * 反向变异 `M46-add-card-editor-surface`（编辑器挂回第二层底）与
+ * `M47-add-on-select-posts`（选中即发请求）分别由 **3.7** / **3.7b** 抓住（跑 `tools/lane-mutations.mjs` 自证）。
  */
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -1452,14 +1476,25 @@ if (launched.browser === null) {
     })
 
     /**
-     * 「添加模型配置」弹窗的**事实**（几何 / 网格 / 配色），判断全在下面的用例里。
+     * 分段控件滑块的位移表达式。官方原文是
+     * `transform:translateX(calc(var(--dsh-segment-index) * (100% + 2px)))`；
+     * Chromium 会把内联 `calc()` **归一化**后序列化（下标 0 → `translateX(calc(0% + 0px))`、
+     * 下标 1 → `translateX(calc(100% + 2px))`），逐字比原文会把"写对了"判成失败。
+     * 这两个**等价式**仍然钉住"位移由下标与 gap 2px 算出来"这条事实。
+     */
+    function segmentShift(index) {
+      return index === 0 ? 'translateX(calc(0% + 0px))' : 'translateX(calc(100% + 2px))'
+    }
+
+    /**
+     * 「添加模型提供商」**页内 add-card** 的**事实**（几何 / 配色），判断全在下面的用例里。
      *
      * 为什么就地 `page.evaluate` 而**不**加 `lane.js` 的探针：`lane.js` 是共用 harness、
-     * 不在本次写域内，而且这张弹窗只有本文件消费；`boxMetrics` 也不交
-     * `grid-template-columns`（本用例的核心几何之一）。
+     * 不在本次写域内，而且这张卡只有本文件消费；`boxMetrics` 也不交
+     * `--dsh-segment-*` 那两个自定义属性（本用例的核心几何之一）。
      * 一次取完所有量，避免多次往返（这台机器近期反复蓝屏，命令越少越好）。
      */
-    async function catalogFacts(page) {
+    async function addFacts(page) {
       return page.evaluate(() => {
         const dump = (el) => {
           if (el === null || el === undefined) return null
@@ -1467,310 +1502,399 @@ if (launched.browser === null) {
           const r = el.getBoundingClientRect()
           return {
             tag: el.tagName,
-            text: (el.textContent || '').trim().slice(0, 40),
+            // 200：官方几条文案本身就 50+ 字符（`addCustomHint` 56），截短了断言就没意义。
+            text: (el.textContent || '').trim().slice(0, 200),
             disabled: el.disabled === true,
+            hidden: el.hidden === true,
+            role: el.getAttribute('role'),
+            ariaLabel: el.getAttribute('aria-label'),
+            selected: el.getAttribute('aria-selected'),
             rect: { width: r.width, height: r.height, top: r.top, left: r.left },
             display: cs.display,
             flexDirection: cs.flexDirection,
             alignItems: cs.alignItems,
             justifyContent: cs.justifyContent,
-            position: cs.position,
-            zIndex: cs.zIndex,
             gap: cs.gap,
             columnGap: cs.columnGap,
-            gridTemplateColumns: cs.gridTemplateColumns,
+            gridAutoFlow: cs.gridAutoFlow,
+            gridAutoColumns: cs.gridAutoColumns,
             paddingTop: cs.paddingTop,
             paddingRight: cs.paddingRight,
             paddingBottom: cs.paddingBottom,
             paddingLeft: cs.paddingLeft,
-            marginTop: cs.marginTop,
-            marginLeft: cs.marginLeft,
             fontSize: cs.fontSize,
             lineHeight: cs.lineHeight,
             fontWeight: cs.fontWeight,
             color: cs.color,
             backgroundColor: cs.backgroundColor,
             borderRadius: cs.borderRadius,
+            borderTopStyle: cs.borderTopStyle,
             borderTopWidth: cs.borderTopWidth,
             borderTopColor: cs.borderTopColor,
-            whiteSpace: cs.whiteSpace,
-            overflow: cs.overflow,
-            textOverflow: cs.textOverflow,
-            maxWidth: cs.maxWidth,
-            overflowY: cs.overflowY,
-            opacity: cs.opacity,
-            cursor: cs.cursor,
             width: cs.width,
+            maxWidth: cs.maxWidth,
             height: cs.height,
-            scrollHeight: el.scrollHeight,
-            clientHeight: el.clientHeight,
-            role: el.getAttribute('role'),
-            ariaLabel: el.getAttribute('aria-label'),
-            state: el.getAttribute('data-pxm-state'),
-            /** 声明值：0.5px 发丝线在 Chromium 计算样式里被量化成 1px，只能读声明值。 */
+            overflowY: cs.overflowY,
+            /** 声明值：0.5px 发丝线在 Chromium 计算样式里被量化成 1px，只能读声明值 */
             declaredBorder: el.style.getPropertyValue('border'),
-            declaredBorderTop: el.style.getPropertyValue('border-top'),
-            declaredBorderTopWidth: el.style.getPropertyValue('border-top-width'),
+            /*
+             * 另外两类**只能读声明值**的：`calc()` 在计算样式里已被解析成 px
+             * （滑块宽度 / 高度），而 `display:inline-grid` 计算值会退化成 `grid`。
+             * 官方原文写的就是 calc 与 inline-grid，所以断言必须打在声明值上。
+             */
+            declaredDisplay: el.style.display,
+            declaredWidth: el.style.width,
+            declaredHeight: el.style.height,
+            declaredLineHeight: el.style.lineHeight,
+            declaredTransform: el.style.transform,
+            /** 声明值里的底色：官方 `.addCard .editor{background:0 0}` 要求它**空**。 */
+            declaredBackground: el.style.background,
           }
         }
-        const dialog = document.querySelector('[data-pxm-catalog]')
-        const overlay = document.querySelector('[data-pxm-catalog-overlay]')
-        const grid = document.querySelector('[data-pxm-catalog-grid]')
-        const cards = grid === null ? [] : Array.prototype.slice.call(grid.querySelectorAll('[data-pxm-catalog-card]'))
-        const cardOf = (id) =>
-          document.querySelector('[data-pxm-catalog-card][data-pxm-catalog-id="' + id + '"]')
-        const openai = cardOf('openai')
-        const google = cardOf('google')
-        const anthropic = cardOf('anthropic')
+        /* 两个自定义属性（官方靠它们**算**滑块，不量 DOM）只能这样读出来。 */
+        const custom = (el) => {
+          if (el === null) return null
+          const cs = window.getComputedStyle(el)
+          return {
+            count: cs.getPropertyValue('--dsh-segment-count').trim(),
+            index: cs.getPropertyValue('--dsh-segment-index').trim(),
+          }
+        }
+        const card = document.querySelector('[data-pxm-add-card]')
+        const seg = document.querySelector('[data-pxm-segmented]')
+        const indicator = document.querySelector('[data-pxm-segmented-indicator]')
+        const select = document.querySelector('[data-pxm-add-provider]')
+        const catalogPanel = document.querySelector('[data-pxm-add-panel="catalog"]')
+        const customPanel = document.querySelector('[data-pxm-add-panel="custom"]')
         return {
-          dialog: dump(dialog),
-          overlay: dump(overlay),
-          title: dump(document.querySelector('[data-pxm-catalog-title]')),
-          steps: Array.prototype.map.call(
-            document.querySelectorAll('[data-pxm-catalog-step]'),
-            (node) => ({ ...dump(node), active: node.getAttribute('data-pxm-step-active') === '1' }),
+          addButtonGone: document.querySelector('[data-pxm-add-vendor]') === null,
+          hasDialog: document.querySelector('[role="dialog"]') !== null,
+          hasOverlay: document.querySelector('[data-pxm-catalog-overlay]') !== null,
+          modes: dump(document.querySelector('[data-pxm-add-modes]')),
+          hint: dump(document.querySelector('[data-pxm-add-hint]')),
+          card: dump(card),
+          cardGap: card === null ? null : window.getComputedStyle(card).gap,
+          panel: dump(catalogPanel),
+          panelCustom: dump(customPanel),
+          customHidden: customPanel === null ? null : customPanel.hidden === true,
+          seg: dump(seg),
+          segCustom: custom(seg),
+          segRadiusVar: seg === null ? null : seg.style.borderRadius,
+          indicator: dump(indicator),
+          tabs: Array.prototype.map.call(
+            document.querySelectorAll('[data-pxm-add-tab]'),
+            (node) => dump(node),
           ),
-          grid: dump(grid),
-          cardCount: cards.length,
-          /** 前四张卡的顶边：前 3 张同高 = 同一行（3 列），第 4 张落到第二行。 */
-          cardTops: cards.slice(0, 4).map((node) => Math.round(node.getBoundingClientRect().top)),
-          card: dump(openai),
-          cardLogo: dump(openai === null ? null : openai.querySelector('[data-pxm-catalog-logo]')),
-          cardText: dump(openai === null ? null : openai.querySelector('[data-pxm-catalog-text]')),
-          cardName: dump(openai === null ? null : openai.querySelector('[data-pxm-catalog-name]')),
-          cardSubtitle: dump(
-            openai === null ? null : openai.querySelector('[data-pxm-catalog-subtitle]'),
+          select: dump(select),
+          selectRadiusVar: select === null ? null : select.style.borderRadius,
+          selectOptions: select === null
+            ? []
+            : Array.prototype.map.call(select.options, (o) => o.value),
+          exhausted: document.querySelector('[data-pxm-add-exhausted]') !== null,
+          keyInput: dump(document.querySelector('#pxm-add-key')),
+          baseUrlInput: dump(document.querySelector('#pxm-add-base-url')),
+          customized: dump(document.querySelector('[data-pxm-add-customized]')),
+          customizedSummary: dump(document.querySelector('[data-pxm-add-customized-summary]')),
+          actions: dump(document.querySelector('[data-pxm-add-actions]')),
+          save: dump(document.querySelector('[data-pxm-add-save]')),
+          cancel: dump(document.querySelector('[data-pxm-add-cancel]')),
+          /*
+           * 「卡中卡」的反向判据：add-card 里**任何**编辑器（我们复用的那套编辑器锚点）
+           * 都不许再挂 own surface。官方 `._3nPmjq_addCard ._3nPmjq_editor
+           * {background:0 0;padding:0}`（`.probe/models-css-pretty.txt:44`）。
+           */
+          innerEditors: Array.prototype.map.call(
+            document.querySelectorAll('[data-pxm-add-card] [data-pxm-editor]'),
+            (node) => dump(node),
           ),
-          added: dump(google),
-          badge: dump(anthropic === null ? null : anthropic.querySelector('[data-pxm-catalog-badge]')),
-          close: dump(document.querySelector('[data-pxm-catalog-close]')),
         }
       })
     }
 
-    it('3.7 点虚线按钮 → 「添加模型配置」弹窗：面板 / 网格 / 卡片 = 参考实现取值（几何 + 配色）', async () => {
-      const { page, context, problems, calls } = await openVendorLane()
+    it('3.7 点虚线按钮 → **页内** add-card：面板 / 分段控件 / 原生 select / 编辑器无第二层底色（全部 = 官方取值）', async () => {
+      const { page, context, problems } = await openVendorLane()
       try {
-        // 先证明"它真的能点"：点下去弹窗就出来（形态那一条在 3.6）。
         assert.equal(
           (await refactorFacts(page)).addButton.disabled,
           false,
           '「添加模型提供商」必须可点',
         )
+        // 官方 `addOpen ? addCard : addButton`：点下去是**就地展开**，不是弹窗。
+        assert.equal(await page.$('[data-pxm-add-card]'), null, '默认态不该有 add-card')
         await page.click('[data-pxm-add-vendor]')
-        await page.waitForSelector('[data-pxm-catalog-card]', { timeout: 10000 })
+        await page.waitForSelector('[data-pxm-add-card]', { timeout: 10000 })
 
-        const f = await catalogFacts(page)
-        assert.ok(f.dialog !== null, '点虚线按钮必须出现弹窗（[data-pxm-catalog]）')
-        assert.equal(f.dialog.role, 'dialog', '弹窗必须是 role="dialog"')
-        assert.equal(f.dialog.ariaLabel, '添加模型配置', '弹窗的 aria-label 必须是「添加模型配置」')
-        assert.ok(
-          f.dialog.text.indexOf('添加模型配置') >= 0,
-          '弹窗标题文案必须是「添加模型配置」',
-        )
-        assert.equal(f.cardCount, CATALOG.length, `目录卡片数必须等于夹具的 ${CATALOG.length}`)
+        const f = await addFacts(page)
+        assert.ok(f.card !== null, '点虚线按钮必须出现页内 add-card（[data-pxm-add-card]）')
+        assert.equal(f.addButtonGone, true, '展开后虚线按钮必须从 DOM 里消失（官方是二选一渲染）')
+        assert.equal(f.hasDialog, false, 'add-card 不是对话框：不许有 role="dialog"')
+        assert.equal(f.hasOverlay, false, 'add-card 不是弹窗：不许有遮罩层')
+        assert.equal(f.panel.role, 'tabpanel', 'catalog 面板必须是 role="tabpanel"（官方 :2276）')
 
         const bad = []
         const eq = (where, got, want) => {
           if (got !== want) bad.push(where + '：实测 ' + String(got) + '，期望 ' + String(want))
         }
 
-        // ── 面板：参考实现 `border:1px solid;border-radius:var(--radius-lg);padding:20px`
-        eq('弹窗面板 paddingTop', f.dialog.paddingTop, '20px')
-        eq('弹窗面板 paddingRight', f.dialog.paddingRight, '20px')
-        eq('弹窗面板 paddingBottom', f.dialog.paddingBottom, '20px')
-        eq('弹窗面板 paddingLeft', f.dialog.paddingLeft, '20px')
-        eq('弹窗面板 maxWidth', f.dialog.maxWidth, '960px')
-        eq('弹窗面板 overflowY', f.dialog.overflowY, 'auto')
-        expectDeclaredBorder(
-          await probeArgs(page, 'boxMetrics', ['[data-pxm-catalog]']),
-          '1px',
-          '「添加模型配置」弹窗面板',
-        )
-        // 20 张卡不许把弹窗撑爆：面板必须有 80vh 的高度上限（下面压视口再证明它真的生效）。
-        const viewport = page.viewportSize()
-        if (!(f.dialog.rect.height <= viewport.height * 0.8 + 0.51)) {
-          bad.push(
-            '弹窗面板高度必须 ≤ 80vh：实测 ' +
-              String(Math.round(f.dialog.rect.height)) +
-              'px，视口 ' +
-              String(viewport.height) +
-              'px',
-          )
-        }
+        // ── addCard：官方 `._3nPmjq_addCard{border-radius:lg;background:bg-module-platform;
+        //    flex-direction:column;gap:14px;padding:14px 16px}`（:43）
+        eq('add-card paddingTop', f.card.paddingTop, '14px')
+        eq('add-card paddingRight', f.card.paddingRight, '16px')
+        eq('add-card paddingBottom', f.card.paddingBottom, '14px')
+        eq('add-card paddingLeft', f.card.paddingLeft, '16px')
+        eq('add-card gap', f.cardGap, '14px')
+        eq('add-card flexDirection', f.card.flexDirection, 'column')
 
-        // ── 标题：15px / 600
-        eq('标题 fontSize', f.title.fontSize, '15px')
-        eq('标题 fontWeight', f.title.fontWeight, '600')
-        // 步骤圆点：3 枚 8px 正圆，第一枚是"当前步"
-        eq('步骤圆点数量', String(f.steps.length), '3')
-        f.steps.forEach((dot, index) => {
-          eq('步骤圆点 ' + String(index + 1) + ' 宽', dot.width, '8px')
-          eq('步骤圆点 ' + String(index + 1) + ' 高', dot.height, '8px')
-          eq('步骤圆点 ' + String(index + 1) + ' 圆角', dot.borderRadius, '50%')
-        })
-        eq('第一枚圆点是当前步', String(f.steps[0].active), 'true')
-        eq('后两枚不是当前步', String(f.steps[1].active), 'false')
+        // ── addModes：官方 `{flex-direction:column;align-items:flex-start;gap:8px}`（:40）
+        eq('add-modes flexDirection', f.modes.flexDirection, 'column')
+        eq('add-modes alignItems', f.modes.alignItems, 'flex-start')
+        eq('add-modes gap', f.modes.gap, '8px')
 
-        // ── 网格：`repeat(auto-fill, minmax(280px,1fr))` + gap 12px（**不是**固定 3 列）
-        eq('网格 display', f.grid.display, 'grid')
-        eq('网格 columnGap', f.grid.columnGap, '12px')
-        const tracks = f.grid.gridTemplateColumns.split(' ').filter((part) => part !== '')
-        if (tracks.length !== 3) {
-          bad.push(
-            '960px 面板 + 每列最小 280px 必须正好排 3 列：实测 ' +
-              String(tracks.length) +
-              ' 列（' + f.grid.gridTemplateColumns + '）',
-          )
-        }
-        for (const track of tracks) {
-          if (!(Number.parseFloat(track) >= 280 - 0.51)) {
-            bad.push('每一列都不得小于 280px：实测 ' + track)
+        // ── hint：官方 `._advancedHint{color:label-tertiary;font-size:12px;line-height:18px}`（:35）
+        eq('hint 文案（catalog）', f.hint.text, '从内置目录中选择 OpenAI、Anthropic、Kimi 等提供商，填入其 API 密钥即可使用。')
+        eq('hint fontSize', f.hint.fontSize, '12px')
+        eq('hint lineHeight', f.hint.lineHeight, '18px')
+
+        // ── addPanel：官方 `{flex-direction:column;gap:14px}`（:41）+ `[hidden]{display:none}`（:42）
+        eq('catalog 面板 flexDirection', f.panel.flexDirection, 'column')
+        eq('catalog 面板 gap', f.panel.gap, '14px')
+        eq('catalog 面板 hidden=false', String(f.panel.hidden), 'false')
+        eq('catalog 面板 display', f.panel.display, 'flex')
+        eq('custom 面板 display:none（hidden 生效）', f.panelCustom.display, 'none')
+
+        // ── SegmentedControl（官方 `SegmentedControl.module.css`）：
+        //    轨道 `inline-grid` + `grid-auto-flow:column` + `grid-auto-columns:1fr` +
+        //    `gap:2px;padding:4px;border-radius:var(--dsw-radius-md)`
+        // `display:inline-grid` 的计算值在 Chromium 里退化成 `grid`（外层盒型不保留），
+        // 所以这条打**声明值**上（官方原文就是 `display:inline-grid`）。
+        eq('分段轨道 display', f.seg.declaredDisplay, 'inline-grid')
+        eq('分段轨道 gridAutoFlow', f.seg.gridAutoFlow, 'column')
+        eq('分段轨道 gridAutoColumns', f.seg.gridAutoColumns, '1fr')
+        eq('分段轨道 gap', f.seg.gap, '2px')
+        eq('分段轨道 paddingTop', f.seg.paddingTop, '4px')
+        eq('分段轨道 paddingLeft', f.seg.paddingLeft, '4px')
+        eq('tab 数量', String(f.tabs.length), '2')
+        eq('tab[0] 文案', f.tabs[0].text, '第三方模型提供商')
+        eq('tab[1] 文案', f.tabs[1].text, '自定义模型 API')
+        eq('tab[0] role', f.tabs[0].role, 'tab')
+        eq('tab[0] 选中态', f.tabs[0].selected, 'true')
+        eq('tab[1] 选中态', f.tabs[1].selected, 'false')
+        // `.tab{height:28px;padding:0 16px;font-size:13px;line-height:20px;font-weight:500}`
+        eq('tab 高度', f.tabs[0].height, '28px')
+        eq('tab paddingLeft', f.tabs[0].paddingLeft, '16px')
+        eq('tab fontSize', f.tabs[0].fontSize, '13px')
+        eq('tab lineHeight', f.tabs[0].lineHeight, '20px')
+        eq('tab fontWeight', f.tabs[0].fontWeight, '500')
+        // 滑块是**算**出来的：官方把段数 / 选中下标放在两个自定义属性上。
+        eq('--dsh-segment-count', f.segCustom.count, '2')
+        eq('--dsh-segment-index', f.segCustom.index, '0')
+        // 滑块几何是**算**出来的 `calc(...)`：计算样式里已被解析成 px，只能读声明值。
+        eq('滑块 height（声明值）', f.indicator.declaredHeight, 'calc(100% - 8px)')
+        /*
+         * 官方原文 `calc((100% - 8px - 2px * (var(--dsh-segment-count) - 1))
+         * / var(--dsh-segment-count))`，段数 = 2 时 Chromium 把它归一化并序列化成
+         * `calc(50% - 5px)`（= (100% - 8px - 2px)/2，同一个值）。逐字比原文会把
+         * "实现写对了"误判成失败，所以这条断言打在**归一化后的等价式**上：
+         * 它仍然钉住"宽度是由段数算出来的"（两段 = 半宽再减一格 gap）。
+         */
+        eq('滑块 width（声明值，归一化后）', f.indicator.declaredWidth, 'calc(50% - 5px)')
+        /*
+         * 位移：官方靠 `translateX(calc(var(--dsh-segment-index) * (100% + 2px)))`。
+         * Chromium 会把内联 `calc(...)` **归一化**后再序列化（下标 0 读回
+         * `translateX(calc(0% + 0px))` —— 0 × (100% + 2px) 就是这个值），所以这里比
+         * `segmentShift(0)` 这个**等价式**，而不是逐字比官方原文。
+         * 两种形态都收：计算值（有的实现会解析成 matrix）与内联声明值，但必须命中一个。
+         */
+        {
+          const want = segmentShift(0)
+          const computed = f.indicator.transform
+          const declared = f.indicator.declaredTransform
+          if (computed !== want && declared !== want) {
+            bad.push(
+              '滑块 transform：计算值实测 ' + String(computed) + '，声明值实测 ' +
+                String(declared) + '；期望 ' + want,
+            )
           }
         }
-        // 等效几何：前三张卡同一行、第四张落到第二行（列数是"算出来的"而不是写死的）
-        if (!(f.cardTops[0] === f.cardTops[1] && f.cardTops[1] === f.cardTops[2])) {
-          bad.push('前三张卡的顶边必须相同（同一行）：实测 ' + JSON.stringify(f.cardTops))
-        }
-        if (!(f.cardTops[3] > f.cardTops[0])) {
-          bad.push('第 4 张卡必须换行（否则就不是 3 列）：实测 ' + JSON.stringify(f.cardTops))
-        }
 
-        // ── 卡片：height 70px / border-radius 20px / 1px 声明描边
-        if (Math.abs(f.card.rect.height - 70) > 0.51) {
-          bad.push('卡片真实高度必须 70px：实测 ' + String(f.card.rect.height) + 'px')
-        }
-        expectDeclaredBorder(
-          await probeArgs(page, 'boxMetrics', ['[data-pxm-catalog-card]']),
-          '0.5px',
-          '目录卡片',
+        // ── 原生 `<select>`：官方 `._input{height:32px;padding:0 10px;font-size:14px;line-height:22px;
+        //    background:bg-layer-1;border:.5px solid border-l4;border-radius:var(--dsw-radius-md)}`
+        //    + `select._input{max-width:240px}`（:73-74）
+        assert.ok(f.select !== null, 'catalog 面板必须有原生 <select>（[data-pxm-add-provider]）')
+        eq('select 标签名', f.select.tag, 'SELECT')
+        eq('select 高度', f.select.height, '32px')
+        eq('select paddingLeft', f.select.paddingLeft, '10px')
+        eq('select fontSize', f.select.fontSize, '14px')
+        // 原生 `<select>` 在 Chromium 里计算 lineHeight 读回 `normal`（表单控件不继承
+        // 行高），所以这条打声明值（官方 `._3nPmjq_input{line-height:22px}`，:73）。
+        eq('select lineHeight（声明值）', f.select.declaredLineHeight, '22px')
+        eq('select maxWidth', f.select.maxWidth, '240px')
+        eq('select 声明圆角', f.selectRadiusVar, 'var(--dsw-radius-md)')
+
+        // ── 编辑器动作：官方 `._editorActions{justify-content:flex-end;gap:8px}`（:36）
+        eq('动作行 justifyContent', f.actions.justifyContent, 'flex-end')
+        eq('动作行 gap', f.actions.gap, '8px')
+        eq('「取消」disabled', String(f.cancel.disabled), 'false')
+        eq('「保存」disabled', String(f.save.disabled), 'false')
+        // 密钥框 = 官方 `._input`（同上），不是 34px 那档共享表单控件。
+        eq('密钥框 高度', f.keyInput.height, '32px')
+        eq('密钥框 fontSize', f.keyInput.fontSize, '14px')
+        eq('密钥框标签名', f.keyInput.tag, 'INPUT')
+
+        /*
+         * ── **卡中卡**的反向判据（正是官方 `.addCard .editor{background:0 0;padding:0}` 那条）：
+         *    add-card 自己已经是 `bg-module-platform`，如果里面再挂一层同色编辑器表面，
+         *    就变成"卡里套卡"的两层底。这里先要求复用的编辑器**真的在**（否则断言空转），
+         *    再要求它没有自己的底色。
+         */
+        assert.equal(
+          f.innerEditors.length,
+          1,
+          'add-card 里必须**复用**那一套编辑器（[data-pxm-add-card] [data-pxm-editor]）',
         )
-        eq('卡片 cursor', f.card.cursor, 'pointer')
-        eq('卡片 opacity', f.card.opacity, '1')
-        eq('text 区 marginLeft', f.cardText.marginLeft, '10px')
-
-        // ── logo 占位方块：48×48 / radius 12px / 首字符
-        eq('logo 宽', f.cardLogo.width, '48px')
-        eq('logo 高', f.cardLogo.height, '48px')
-        eq('logo marginLeft', f.cardLogo.marginLeft, '10px')
-        expectDeclaredBorder(
-          await probeArgs(page, 'boxMetrics', ['[data-pxm-catalog-logo]']),
-          '1px',
-          '卡片 logo 占位方块',
-        )
-        eq('logo 字号', f.cardLogo.fontSize, '14px')
-        eq('logo 字重', f.cardLogo.fontWeight, '700')
-        eq('logo 文案 = 厂商名首字符', f.cardLogo.text, 'O')
-
-        // ── 厂商名 / 副标题 / 角标
-        eq('厂商名字号', f.cardName.fontSize, '14px')
-        eq('厂商名字重', f.cardName.fontWeight, '700')
-        eq('厂商名不换行', f.cardName.whiteSpace, 'nowrap')
-        eq('厂商名溢出省略', f.cardName.textOverflow, 'ellipsis')
-        eq('副标题字号', f.cardSubtitle.fontSize, '11px')
-        eq('副标题 marginTop', f.cardSubtitle.marginTop, '2px')
-        eq('副标题文案（official）', f.cardSubtitle.text, '官方 API 接入')
-        eq('角标字号', f.badge.fontSize, '10px')
-        eq('角标字重', f.badge.fontWeight, '600')
-        eq('角标 paddingTop', f.badge.paddingTop, '2px')
-        eq('角标 paddingRight', f.badge.paddingRight, '8px')
-        eq('角标圆角', f.badge.borderRadius, '999px')
-        eq('角标文案（imageCapable=false）', f.badge.text, '未取证生图')
-
-        // ── 已添加：置灰 + 不可点 + 「已添加」
-        eq('已添加卡 state', f.added.state, 'added')
-        eq('已添加卡 disabled', String(f.added.disabled), 'true')
-        eq('已添加卡 opacity', f.added.opacity, '0.5')
-        eq('已添加卡 cursor', f.added.cursor, 'default')
-        if (f.added.text.indexOf('已添加') < 0) {
-          bad.push('已添加的卡片必须显示「已添加」：实测 ' + JSON.stringify(f.added.text))
+        for (const editor of f.innerEditors) {
+          if (editor.declaredBackground !== '') {
+            bad.push(
+              'add-card 里的编辑器声明了自己的底色 ' +
+                JSON.stringify(editor.declaredBackground) +
+                '：官方 `.addCard .editor{background:0 0;padding:0}`' +
+                '（.probe/models-css-pretty.txt:44），这正是"卡中卡"两层底',
+            )
+          }
+          if (editor.backgroundColor === f.card.backgroundColor) {
+            bad.push(
+              'add-card 里的编辑器出现了第二层同色底色（' +
+                editor.backgroundColor +
+                '）：官方 `.addCard .editor{background:0 0;padding:0}`（.probe/models-css-pretty.txt:44）',
+            )
+          }
         }
-        // ── 关闭按钮存在（点它 / Esc / 点遮罩三条路，行为在 jsdom lane；这里只钉它真画出来了）
-        assert.ok(f.close !== null, '弹窗必须有 [data-pxm-catalog-close]')
 
-        assert.deepEqual(bad, [], '「添加模型配置」弹窗与参考实现不一致：\n' + bad.join('\n'))
+        assert.deepEqual(bad, [], '「添加模型提供商」add-card 与官方取值不一致：\n' + bad.join('\n'))
 
-        // ── 配色：一律走官方 token 的解析值（弹窗面板 = bg-module-platform 那一层）
-        // 注意 `resolveColors` 的键必须是 **token 名本身**：`colorDiff` 就是按 token 名回查的。
+        // ── 配色 / 圆角：一律走官方 token 的**解析值**（不写死 hex）
         const colors = await resolveColors(page, [
-          { key: '--dsw-alias-bg-module-platform', token: '--dsw-alias-bg-module-platform', prop: 'backgroundColor' },
-          { key: '--dsw-alias-bg-layer-1', token: '--dsw-alias-bg-layer-1', prop: 'backgroundColor' },
-          { key: '--dsw-alias-bg-layer-2', token: '--dsw-alias-bg-layer-2', prop: 'backgroundColor' },
-          { key: '--dsw-alias-label-tertiary', token: '--dsw-alias-label-tertiary', prop: 'color' },
-          { key: '--dsw-alias-label-secondary', token: '--dsw-alias-label-secondary', prop: 'backgroundColor' },
-          { key: '--dsw-alias-border-l3', token: '--dsw-alias-border-l3', prop: 'backgroundColor' },
+          { key: 'bgModulePlatform', token: '--dsw-alias-bg-module-platform' },
+          { key: 'interactiveBgHover', token: '--dsw-alias-interactive-bg-hover' },
+          { key: 'bgLayer1', token: '--dsw-alias-bg-layer-1' },
+          { key: 'bgBase', token: '--dsw-alias-bg-base' },
+          { key: 'labelPrimary', token: '--dsw-alias-label-primary', prop: 'color' },
+          { key: 'labelSecondary', token: '--dsw-alias-label-secondary', prop: 'color' },
+          { key: 'borderL4', token: '--dsw-alias-border-l4', prop: 'borderTopColor' },
         ])
-        const radii = await resolveRadii(page, ['--dsw-radius-lg', '--dsw-radius-xl', '--dsw-radius-md'])
+        const radii = await resolveRadii(page, ['--dsw-radius-lg', '--dsw-radius-md', '--dsw-radius-sm'])
         const colorBad = []
+          .concat(colorDiff(f.card, 'backgroundColor', 'bgModulePlatform', colors, 'add-card 底色'))
           .concat(
-            colorDiff(f.dialog, 'backgroundColor', '--dsw-alias-bg-module-platform', colors, '弹窗面板'),
+            colorDiff(f.seg, 'backgroundColor', 'interactiveBgHover', colors, '分段控件轨道'),
           )
-          .concat(colorDiff(f.card, 'backgroundColor', '--dsw-alias-bg-layer-1', colors, '目录卡片'))
-          .concat(colorDiff(f.cardLogo, 'backgroundColor', '--dsw-alias-bg-layer-2', colors, 'logo 方块'))
-          .concat(
-            colorDiff(f.cardSubtitle, 'color', '--dsw-alias-label-tertiary', colors, '副标题'),
-          )
-          .concat(
-            colorDiff(f.steps[0], 'backgroundColor', '--dsw-alias-label-secondary', colors, '当前步圆点'),
-          )
-          .concat(
-            colorDiff(f.steps[1], 'backgroundColor', '--dsw-alias-border-l3', colors, '未到的圆点'),
-          )
-          .concat(radiusDiff(f.dialog, '--dsw-radius-lg', radii, '弹窗面板'))
-          .concat(radiusDiff(f.card, '--dsw-radius-xl', radii, '目录卡片'))
-          .concat(radiusDiff(f.cardLogo, '--dsw-radius-md', radii, 'logo 方块'))
-        assert.deepEqual(colorBad, [], '弹窗配色 / 圆角必须等于官方 token 的解析值：\n' + colorBad.join('\n'))
-
+          .concat(colorDiff(f.indicator, 'backgroundColor', 'bgLayer1', colors, '分段控件滑块'))
+          .concat(colorDiff(f.tabs[0], 'color', 'labelPrimary', colors, '选中的 tab 文字'))
+          .concat(colorDiff(f.tabs[1], 'color', 'labelSecondary', colors, '未选中的 tab 文字'))
+          .concat(colorDiff(f.select, 'backgroundColor', 'bgLayer1', colors, '原生 select 底色'))
+          .concat(colorDiff(f.select, 'borderTopColor', 'borderL4', colors, '原生 select 描边'))
+          .concat(radiusDiff(f.card, '--dsw-radius-lg', radii, 'add-card'))
+          .concat(radiusDiff(f.seg, '--dsw-radius-md', radii, '分段控件轨道'))
+          .concat(radiusDiff(f.indicator, '--dsw-radius-sm', radii, '分段控件滑块'))
+          .concat(radiusDiff(f.select, '--dsw-radius-md', radii, '原生 select'))
+        assert.deepEqual(colorBad, [], 'add-card 的配色 / 圆角必须等于官方 token 的解析值：\n' + colorBad.join('\n'))
         /*
-         * 成功路径（真浏览器）：点一张可用卡片 → `POST api/providers {catalogId}` →
-         * 弹窗关闭 + 设置页重取。这里额外看的是"关弹窗时组件卸载"不会冒 React 警告 ——
-         * 末尾的 `problems` 断言就是这一条的判据（它在 3.7 里也覆盖了添加路径）。
+         * 底色还要求**反向**成立：`bg-module-platform` 不能与 `bg-base` / `bg-layer-1`
+         * 被当成同一个值 —— 否则上面的相等断言会在"挂错层"时一起成立、缺陷被掩盖。
          */
-        await page.click('[data-pxm-catalog-id="openai"]')
-        await page.waitForSelector('[data-pxm-catalog]', { state: 'detached', timeout: 10000 })
-        const adds = (await calls()).filter(
-          (call) => call.method === 'POST' && /\/api\/providers$/.test(call.url),
-        )
-        assert.equal(adds.length, 1, '点一张可用卡片必须恰好发 1 次 POST api/providers，实际 ' + String(adds.length))
-        assert.equal(
-          JSON.parse(String(adds[0].body)).catalogId,
-          'openai',
-          'POST body 必须是 {catalogId}（字段名由 task-4 §1 冻结）',
-        )
+        for (const [key, label] of [['bgBase', 'bg-base'], ['bgLayer1', 'bg-layer-1']]) {
+          assert.notEqual(
+            f.card.backgroundColor,
+            colors[key],
+            'add-card 底色不得是 ' + label + '（官方 _addCard 是 bg-module-platform）',
+          )
+        }
 
-        // 再开一次给后面的"高度上限"与"Esc 关法"用。
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    it('3.7b 页内 add-card 的交互：切 tab 与选厂商都不发请求；保存恰好 1 次；「取消」零请求回到虚线按钮态', async () => {
+      const { page, context, problems, calls } = await openVendorLane()
+      try {
+        const providerPosts = async () =>
+          (await calls()).filter(
+            (call) => call.method === 'POST' && /\/api\/providers$/.test(call.url),
+          )
+
         await page.click('[data-pxm-add-vendor]')
-        await page.waitForSelector('[data-pxm-catalog]', { timeout: 5000 })
+        await page.waitForSelector('[data-pxm-add-card]', { timeout: 10000 })
 
-        /*
-         * 高度上限**真的会生效**：20 张卡在 900px 高的视口里自然高度 ≈640px（不到 80vh=720px，
-         * 所以那时不需要滚动）；把视口压到 500px 高，80vh=400px 的夹子必须启动，
-         * 面板改为内部滚动 —— 这才证明"卡片变多不会把弹窗溢出屏幕"，而不是只声明了一个上限。
-         */
-        await page.setViewportSize({ width: 1280, height: 500 })
-        const short = await catalogFacts(page)
-        assert.ok(
-          short.dialog.rect.height <= 500 * 0.8 + 0.51,
-          '视口 500px 高时面板高度必须 ≤ 80vh（400px），实测 ' +
-            String(Math.round(short.dialog.rect.height)) +
-            'px',
+        // 选一家厂商：**不发请求**（要等「保存」）—— 这条同时是反向变异 M47-add-on-select-posts 的判据。
+        await page.selectOption('[data-pxm-add-provider]', 'anthropic')
+        assert.deepEqual(await providerPosts(), [], '选中厂商不得发请求')
+
+        // 填密钥 → 点「保存」：**恰好一次** POST，body 恰为 {catalogId, apiKey}。
+        await page.fill('#pxm-add-key', 'sk-lane-secret')
+        await page.click('[data-pxm-add-save]')
+        await page.waitForFunction(
+          () =>
+            window.__pxmLane
+              .fetchCalls()
+              .some((call) => call.method === 'POST' && /\/api\/providers$/.test(call.url)),
+          undefined,
+          { timeout: 5000 },
         )
-        assert.ok(
-          short.dialog.scrollHeight > short.dialog.clientHeight,
-          '被 80vh 夹住后面板必须内部可滚：scrollHeight=' +
-            String(short.dialog.scrollHeight) +
-            ' clientHeight=' +
-            String(short.dialog.clientHeight),
+        const saved = await providerPosts()
+        assert.equal(saved.length, 1, '点「保存」必须恰好发 1 次 POST，实际 ' + String(saved.length))
+        assert.deepEqual(
+          JSON.parse(String(saved[0].body)),
+          { catalogId: 'anthropic', apiKey: 'sk-lane-secret' },
+          'body 必须恰为 {catalogId, apiKey}（API 地址没填就不许出现 baseUrl）',
         )
 
-        // ── 第三种关法（Esc）在真浏览器里也要成立：弹窗真的从 DOM 里消失
-        await page.keyboard.press('Escape')
-        await page.waitForSelector('[data-pxm-catalog]', { state: 'detached', timeout: 5000 })
-        assert.equal(
-          await page.$('[data-pxm-catalog]'),
+        // 切到自定义 tab：hint 与面板跟着换（文案逐字），仍然零请求。
+        await page.click('[data-pxm-add-tab="custom"]')
+        await page.waitForFunction(
+          () => {
+            const panel = document.querySelector('[data-pxm-add-panel="custom"]')
+            return panel !== null && panel.hidden === false
+          },
           null,
-          'Esc 必须关闭弹窗（真浏览器路径）',
+          { timeout: 5000 },
         )
+        const customFacts = await addFacts(page)
+        assert.equal(customFacts.panelCustom.display, 'flex', 'custom 面板必须显形')
+        assert.equal(customFacts.panel.display, 'none', 'catalog 面板必须隐掉')
+        assert.equal(
+          customFacts.hint.text,
+          '连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。',
+          'hint 必须换成官方 addCustomHint',
+        )
+        assert.equal(customFacts.segCustom.index, '1', '滑块下标必须跟到第二段')
+        assert.equal(
+          customFacts.indicator.declaredTransform,
+          segmentShift(1),
+          '滑块位移必须跟着下标走（下标 1 → 100% + 一格 gap）',
+        )
+        // 基线 = 刚才那一次保存；后面的"零请求"断言都相对它数**增量**。
+        const postsAfterSave = (await providerPosts()).length
+        assert.deepEqual(
+          (await providerPosts()).length,
+          postsAfterSave,
+          '切 tab 不得再发请求',
+        )
+
+        // 「取消」：零请求、回到虚线按钮态。
+        await page.click('[data-pxm-add-cancel]')
+        await page.waitForSelector('[data-pxm-add-card]', { state: 'detached', timeout: 5000 })
+        assert.ok(
+          await page.$('[data-pxm-add-vendor]'),
+          '「取消」后必须回到虚线「添加模型提供商」',
+        )
+        assert.equal(
+          (await providerPosts()).length,
+          postsAfterSave,
+          '「取消」必须零请求（不新增任何 POST api/providers）',
+        )
+
         assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
       } finally {
         await context.close()
@@ -1778,23 +1902,24 @@ if (launched.browser === null) {
     })
 
     /**
-     * 「移除」的**两步确认**（行为级，真浏览器）：
+     * 「删除」的**两步确认**（行为级，真浏览器）：
      * 第一次点只改文案、**零请求**；第二次点才恰好发一次 `POST …/<id>/delete`。
      *
-     * 这条同时是反向变异 `M47` 的判据（把两步退回一步直发 → 这里红）。
+     * 文案逐字用官方 `.probe/models-client.js:2967` 的 `remove` = 「删除」。
+     * 这条同时是反向变异 `M48-remove-one-step` 的判据（把两步退回一步直发 → 这里红）。
      */
-    it('3.8 「移除」两步确认：第一次点零请求，第二次点恰好 1 次 POST …/delete', async () => {
+    it('3.8 「删除」两步确认：第一次点零请求，第二次点恰好 1 次 POST …/delete', async () => {
       const { page, context, problems, calls } = await openVendorLane()
       try {
         const remove = '[data-pxm-vendor-remove]'
-        assert.ok(await page.$(remove), '厂商卡片行动作里必须有「移除」（[data-pxm-vendor-remove]）')
-        assert.equal((await page.textContent(remove)).trim(), '移除')
+        assert.ok(await page.$(remove), '厂商卡片行动作里必须有「删除」（[data-pxm-vendor-remove]）')
+        assert.equal((await page.textContent(remove)).trim(), '删除')
 
         await page.click(remove)
         assert.equal(
           (await page.textContent(remove)).trim(),
-          '确认移除',
-          '第一次点只把文案改成「确认移除」',
+          '确认删除',
+          '第一次点只把文案改成「确认删除」',
         )
         // 给异步一点时间：若这一步真的发了请求，必须被抓到（不是"恰好还没记录"）。
         await page.waitForTimeout(300)
@@ -1817,7 +1942,7 @@ if (launched.browser === null) {
           1,
           '第二次点必须恰好发 1 次 POST，实际 ' + String(afterSecond.length),
         )
-        assert.equal(afterSecond[0].method, 'POST', '本仓库只支持 GET/POST：移除也走 POST')
+        assert.equal(afterSecond[0].method, 'POST', '本仓库只支持 GET/POST：删除也走 POST')
         assert.match(
           afterSecond[0].url,
           /\/api\/providers\/ofox\/delete$/,

@@ -10,7 +10,8 @@
  *   2. **纪律**：`imageCapable` 只能是有据可依的 9 家，其余 `note` 必须写明"生图能力未取证"；
  *      3 个 `threed-*` 不进目录（PixMart 只做 2D）；
  *   3. **视图与草稿**：`catalogView` 的 7 个字段 + `added`；`providerFromCatalog` 的
- *      "空 models / 空 allowedSizes / 不预填密钥"三条。
+ *      "空 models / 空 allowedSizes / 不预填密钥"三条；`providerFromCustom`（设置页
+ *      「自定义厂商」tab 的草稿）与目录草稿**同形状**，差别只在身份字段。
  *
  * 注意：测试**不读**参考项目那个路径——把机器相关的绝对路径塞进断言会让用例不可移植；
  * "与参考项目一致"这句话由 `src/catalog.ts` 里的 `model.ts:<行号>` 注释 + 这里的硬断言共同保证。
@@ -23,6 +24,7 @@ import {
   catalogView,
   findCatalogEntry,
   providerFromCatalog,
+  providerFromCustom,
 } from '../lib/catalog.js'
 
 /** 期望的 20 个 id（顺序 = 目录顺序 = 参考项目声明顺序，3D 已剔除）。 */
@@ -249,5 +251,57 @@ describe('providerFromCatalog：新增厂商的草稿', () => {
       assert.equal(draft.apiKey, '', `${entry.id} 不该预填密钥`)
       assert.equal(draft.apiKeyEnv, '', `${entry.id} 不该预填环境变量名`)
     }
+  })
+})
+
+describe('providerFromCustom：自定义厂商的草稿', () => {
+  it('身份字段来自用户输入，其余与目录草稿同形状（group=custom / standard / 空 models）', () => {
+    assert.deepEqual(
+      providerFromCustom({
+        id: 'my-relay',
+        label: '我的中转',
+        baseUrl: 'https://my-relay.example/v1',
+      }),
+      {
+        id: 'my-relay',
+        label: '我的中转',
+        group: 'custom',
+        baseUrl: 'https://my-relay.example/v1',
+        geminiNativeBaseUrl: '',
+        dialect: 'standard',
+        apiMode: 'images-generations',
+        apiKeyEnv: '',
+        apiKey: '',
+        models: [],
+        allowedSizes: [],
+        sizeMode: 'whitelist',
+        extraHeaders: {},
+        timeoutMs: 180_000,
+      },
+    )
+    // 与目录里 custom 那条落盘后是同一个形状（除身份字段外逐字段一致）
+    const fromCatalog = providerFromCatalog(findCatalogEntry('custom'))
+    const fromCustom = providerFromCustom({ id: 'x', label: 'y', baseUrl: 'https://e.test/v1' })
+    const identity = ['id', 'label', 'baseUrl']
+    for (const key of Object.keys(fromCatalog)) {
+      if (identity.includes(key)) continue
+      assert.deepEqual(fromCustom[key], fromCatalog[key], `字段 ${key} 应与目录草稿一致`)
+    }
+  })
+
+  it('apiKey 只在显式给出时落进 apiKey 字段；apiKeyEnv 一律空串', () => {
+    const withoutKey = providerFromCustom({ id: 'a', label: 'a', baseUrl: 'https://e.test/v1' })
+    assert.equal(withoutKey.apiKey, '')
+    assert.equal(withoutKey.apiKeyEnv, '')
+
+    const withKey = providerFromCustom({
+      id: 'a',
+      label: 'a',
+      baseUrl: 'https://e.test/v1',
+      apiKey: 'sk-secret',
+    })
+    assert.equal(withKey.apiKey, 'sk-secret')
+    // 网页显式填的密钥必须压过环境变量 → 不指任何环境变量
+    assert.equal(withKey.apiKeyEnv, '')
   })
 })

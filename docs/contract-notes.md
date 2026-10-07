@@ -2793,3 +2793,92 @@ Base URL / 原生 URL / 密钥都只改本地 state；「保存」才 `POST cred
 1 条信息性（`M12-no-overscroll-contain`，已知盲区 §13.7 —— 它只被"原产物 sha256"自证用例顺带命中，
 **没有**被 overscroll 相关断言抓住，所以盲区仍然成立）。
 
+---
+
+## 32. 返工：「添加模型提供商」改成官方**页内 add-card**（2026-10-12）
+
+用户反馈两张截图：① PixMart 的「添加模型配置」**弹窗里是空的**；② DSH 官方「模型」页 —— 并说
+**「ui 和 dsh 官方不一致」**。
+
+### 32.1 空目录的原因（不是 bug，是没重启）
+
+宿主代码改了但**跑着的宿主还加载着旧 `lib/`**。免费探针即可判定：旧宿主 `pixmart_providers`
+输出**没有 `catalog` 字段**（新宿主有 20 条）。所以那张图里的空态是**预期行为**（客户端在
+宿主没给目录时显示「厂商目录为空」）。**宿主改动一律要重启才生效**（客户端改动刷新页面即可）。
+
+### 32.2 我把形态做错了 —— 教训值得记
+
+§31 里我认定"用户给的 3 列卡片网格截图 = 官方形态"，于是做了**弹窗 + 20 张卡片网格**。
+但：
+
+| 截图 | 实际属于 | 官方真实形态 |
+|---|---|---|
+| 3 列厂商卡片网格「添加模型配置」 | **参考项目 pixmart-ai**（`Settings.tsx:915-1009` + `VendorCard.tsx`） | — |
+| 本次的「模型」页 | **DSH 官方** | `addOpen ? addCard : addButton`：虚线按钮 → **页内** add-card（`addModes` 分段控件 + 按 mode 的 hint + 面板），**目录是一个原生 `<select>`**，不是卡片网格、更不是弹窗 |
+
+**教训**：用户说"和官方一致"时，"官方"指的是**本仓库要复刻的那个 DSH**；而截图可能来自别处。
+**先认定截图属于哪个应用，再定取值来源**——§31 里我把"数据来源（pixmart-ai 的厂商清单）"
+和"形态来源（DSH 官方）"混成了一件事。
+
+改后的结构（照 `.probe/models-client.js:2235-2340` + `.probe/models-css-pretty.txt:37-44`）：
+虚线按钮 → 页内 `addCard`（`bg-module-platform` / `radius-lg` / `padding 14px 16px`）→
+`addModes`（官方 `SegmentedControl`：第三方模型提供商 / 自定义模型 API + **逐字**的官方 hint）→
+catalog 面板（**原生 `<select class=input>`** 列未添加的厂商 + 嵌在下面的编辑器，
+且**编辑器不带自己的底色**——官方 `.addCard .editor{background:0 0;padding:0}`）/
+custom 面板（ID / 显示名 / API 地址 / 密钥）→ 取消 / 保存。行尾「移除」按官方文案改成**「删除」**。
+
+### 32.3 又一处 token 强耦合：`interactive-bg-hover` **不是** hover
+
+官方 `SegmentedControl.module.css` 的轨道底色是
+`background: var(--dsw-alias-interactive-bg-hover)` —— **常态**用色。所以 §30 那条
+"不做 hover 态"**不包括它**（我们表达不了 `:hover`，但这枚是轨道的底色）。
+
+按 §30.4 的四文件耦合同步加齐：`client/client.js` 的 `T`（新增 `interactiveBgHover`）、
+`test/client-tokens.test.mjs` 的 `REQUIRED_TOKENS`、`test/browser/shell.html`（浅 `#2631480f`）、
+`test/browser/theme.test.mjs` 的 `DARK`（深 `#ffffff14`）。官方分段控件其余取值
+（`gap 2px` / `padding 4px` / 滑块 `height calc(100% - 8px)` / tab `28px`·`0 16px`·13/20·500）
+逐条照抄（原文见该 CSS 文件）。
+
+**`--dsw-elevation-soft` 刻意没进夹具**：它是复合阴影
+（`var(--dsw-elevation-stroke), 0 4px 16px 0 #00000008, 0 0 24px 0 #00000008`），
+不属于现有"颜色 token ∪ 圆角 token"模型；滑块阴影用文件既有的 `shadow()` 近似，偏差记在代码注释里。
+
+### 32.4 宿主接口扩展（`POST /providers`）
+
+一次调用完成新增：`{ catalogId, baseUrl?, apiKey? }`（模式 A，`baseUrl` 覆盖目录默认值）或
+`{ custom: { id, label, baseUrl }, apiKey? }`（模式 B）。校验：`id` 匹配
+`^[a-z0-9][a-z0-9-]{0,31}$`（不 trim）、`label` trim 后非空 ≤40、`baseUrl` 非空且 `http(s)://` 前缀、
+两模式二选一（都不给或都给 → 400 `bad_field`）；带 `apiKey` 时同时把 `apiKeyEnv` 置 `''`
+（与 credentials 路由同语义），**响应绝不回显密钥**。
+子智能体指出并改对了一处**老断言的语义**：旧用例「两模式都不给」原本断言 `unknown_catalog_id`，
+与新契约 ⑦ 冲突，改为 `bad_field`（更准确：那是"请求形状不对"，不是"目录里没有"）。
+
+### 32.5 断言与可证伪性
+
+- jsdom `test/client-settings-dom.test.mjs`：**39/39**（新增 A1–A8：展开/收起、两段 hint 逐字、
+  select 选项 = 目录减已添加、**恰 1 次 POST 且 body 恰为 `{catalogId, apiKey}`**、
+  自定义模式 body、`addCatalogExhausted`、删除两步确认）。
+- 浏览器 `test/browser/vendors.test.mjs`：**16/16**（3.6 虚线按钮保留；新增 **3.7** add-card /
+  addModes / addPanel 的 `[hidden]` 真的 `display:none` / SegmentedControl 8 项取值 /
+  原生 select / **`.addCard .editor` 没有第二层底色**（既查声明值、也查计算底色）；
+  **3.7b** 选厂商零 POST + 保存恰 1 次 + 切 tab 零请求 + 取消零请求；**3.8** 删除两步）。
+- 反向变异自证：`M46-add-card-editor-surface`（编辑器挂回底色）、
+  `M47-add-on-select-posts`（select 的 onChange 直接 POST）、`M48-remove-one-step`
+  （由旧 `M47-remove-one-step` 改名而来，随弹窗删除重新编号）—— 均实测被对应用例抓住。
+
+### 32.6 刻意偏差（明说）
+
+1. **动作按钮（取消/保存）只渲染一份**，放在两个面板之外。官方是每个面板各一份，但那会让
+   **隐藏面板里也留一枚同锚点且不可见的按钮** —— 实测 Playwright 按锚点取到不可见那枚会超时，
+   对用户则是 Tab 会停在看不见的按钮上。语义等价，代码注释里写明了。
+2. **滑块的 `width` / `transform` 只能断 Chromium 归一化后的等价式**（官方原文的 `calc`
+   会被序列化改写，例如 `translateX(calc(0 * (100% + 2px)))` → `translateX(calc(0% + 0px))`）；
+   `display` / 滑块 `height` / `select` 的 `line-height` 与圆角改断**声明值**。
+3. **custom 面板没有「协议」字段**：官方 hint 提到"协议和模型"，但冻结的请求体里没有这两个字段，
+   不做一个发了也没用的控件。
+
+### 32.7 结果
+
+`pnpm verify` 全绿：宿主 `pnpm test` **412**（§31 的 395 + 17），
+浏览器 `pnpm test:browser` **65**（§31 的 64 + 1）。**宿主改动需要重启才生效**（见 §32.1）。
+

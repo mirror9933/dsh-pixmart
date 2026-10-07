@@ -112,11 +112,20 @@ const REQUIRED_TOKENS = [
    * `button-primary-fill` 官方是 `var(--dsw-alias-brand-primary)` 的别名；
    * `label-primary-foreground` 是**前景**色（浅色白、深色近黑），与 fill 成对出现，
    * 少一枚就会出现"深色主题下按钮文字看不清"这类只在某一主题暴露的问题。
-   * 注：官方 `primaryButton:hover` 用的 `interactive-bg-hover` **不入清单** ——
-   * 本插件的样式是内联 `style`，表达不了 `:hover`，本次不做悬停态（见 contract-notes §30）。
+   * 注：官方 `primaryButton:hover` 的悬停态本插件**不做**（内联 `style` 表达不了 `:hover`，
+   * 见 contract-notes §30）——但下面那枚 `interactive-bg-hover` **不是**悬停态，见它的注释。
    */
   '--dsw-alias-button-primary-fill',
   '--dsw-alias-label-primary-foreground',
+  /*
+   * 2026-10-12 「添加模型提供商」按官方返工时进的一枚。**它容易被子智能体退回硬编码**，
+   * 所以特别说明：官方 `SegmentedControl` 的**轨道底色**就是它（**常态**，不是 `:hover`）——
+   * `.control{background:var(--dsw-alias-interactive-bg-hover)}`
+   * （`dsh-client-ui-primitives/lib/SegmentedControl.module.css`）。
+   * 因此"我们不做悬停态"这条**不包括**它：管道那个底色必须真的挂在 token 上，
+   * 深色主题才会跟着变（浅 `#2631480f` / 深 `#ffffff14`）。
+   */
+  '--dsw-alias-interactive-bg-hover',
   /*
    * 2026-10-08 组件尺寸对齐再进四枚：**官方尺寸里唯一做成变量的那一族**
    * （`--dsw-radius-{xs,sm,md,lg,xl,panel}`，见 `dsh-client-ui-theme` 的 base CSS `:root{…}`）。

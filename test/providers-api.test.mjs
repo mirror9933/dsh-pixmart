@@ -15,7 +15,8 @@
  *   7. **写后重取**：`GET api/providers` 必须立刻反映刚写入的值（用真实 runtime，
  *      钉住"config() 吃首次读盘快照"这个实测缺陷）。
  *   8. `GET /providers` 的只读 `catalog`（20 条目录 + 真实 `added`）；
- *   9. `POST /providers`（从目录新增）与 `POST /providers/<id>/delete`（移除）：
+ *   9. `POST /providers`（新增：目录 `catalogId` / 自定义 `custom` 二选一 + 可选
+ *      `baseUrl` 覆盖 + 可选 `apiKey`）与 `POST /providers/<id>/delete`（移除）：
  *      落盘 / 409 / 400 / 404、默认厂商被删后的改写、
  *      **删掉出厂预设 ofox 后重新 `load()` 不会把它补回来**（`removedProviders`
  *      生效，即 docs/contract-notes.md §26.4 老限制的回归断言）、删到一个不剩不崩。
@@ -1267,19 +1268,29 @@ describe('POST /pixmart/api/providers（从目录新增）', () => {
     }
   })
 
-  it('未知 / 缺失 / 乱类型 catalogId → 400（unknown_catalog_id / bad_field），且不落盘', async () => {
+  it('未知 / 空串 / 乱类型 catalogId → 400，且不落盘；两个模式都不给 → 400 bad_field', async () => {
     const { dir, store } = makeStore()
     try {
       const webServer = makeFakeWebServer()
       const runtime = makeFakeRuntime(store)
       const before = readFileSync(join(dir, 'config.json'), 'utf8')
 
-      for (const body of [{ catalogId: 'nope' }, { catalogId: '' }, {}]) {
+      // 目录里没有 / catalogId 给空串 → unknown_catalog_id（保持现状）
+      for (const body of [{ catalogId: 'nope' }, { catalogId: '' }]) {
         const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', { body })
         assert.equal(result.status, 400, `${JSON.stringify(body)} 应被拒`)
         assert.equal(result.json.ok, false)
         assert.equal(result.json.error.code, 'unknown_catalog_id')
       }
+
+      // 新增契约（add-card 二选一）：catalogId 与 custom 都不给 → bad_field
+      // （旧行为是 unknown_catalog_id；本次冻结契约改成能读懂的 bad_field）
+      const neither = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {},
+      })
+      assert.equal(neither.status, 400)
+      assert.equal(neither.json.error.code, 'bad_field')
+      assert.match(neither.json.error.message, /二选一/)
 
       // 非字符串 → 与其余写路由同一套字段校验（bad_field）
       const bad = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
@@ -1294,6 +1305,438 @@ describe('POST /pixmart/api/providers（从目录新增）', () => {
         ['ofox', 'agnes'],
       )
       assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── add-card 一次调用：模式 A（目录 + baseUrl/apiKey 覆盖）/ 模式 B（自定义） ──────
+//
+// 冻结契约（客户端 add-card 的「保存」按钮，两个 tab 各发一种 body）：
+//   A `{ catalogId, baseUrl?, apiKey? }` / B `{ custom: { id, label, baseUrl }, apiKey? }`
+//   —— 二选一；`baseUrl` 覆盖目录默认值；`apiKey` 非空则直接落盘并把 `apiKeyEnv` 置空。
+
+/** 从盘上读一份 config.json：证明写入真的落到了磁盘，而不只是内存副本。 */
+function readDiskConfig(dir) {
+  return JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
+}
+
+describe('POST /pixmart/api/providers（模式 A：目录 + baseUrl / apiKey 覆盖）', () => {
+  it('① baseUrl 覆盖目录默认值：盘上是覆盖值（去首尾空白），不是 dashscope 默认值', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian', baseUrl: '  https://my-relay.example/v1  ' },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.ok, true)
+      // 首尾空白去掉后才落盘
+      assert.equal(added.json.provider.baseUrl, 'https://my-relay.example/v1')
+
+      const onDisk = readDiskConfig(dir).providers.find((provider) => provider.id === 'bailian')
+      assert.equal(onDisk.baseUrl, 'https://my-relay.example/v1')
+      assert.notEqual(onDisk.baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+      // 只覆盖地址那一项：身份字段仍来自目录
+      assert.equal(onDisk.label, '阿里云百炼')
+      assert.equal(onDisk.group, 'official')
+      assert.equal(onDisk.dialect, 'standard')
+      // 没给 apiKey → 不预填密钥、也不指环境变量
+      assert.equal(onDisk.apiKey, '')
+      assert.equal(onDisk.apiKeyEnv, '')
+
+      const reloaded = await reloadStore(dir)
+      assert.equal(
+        reloaded.get().providers.find((provider) => provider.id === 'bailian').baseUrl,
+        'https://my-relay.example/v1',
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('② apiKey 落盘、apiKeyEnv 置空、**响应体里搜不到密钥明文**', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian', apiKey: SECRET },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.provider.id, 'bailian')
+      assert.equal(added.json.provider.hasApiKey, true)
+      // 页面显式填的密钥必须压过环境变量 → apiKeyEnv 置空
+      assert.equal(added.json.provider.apiKeyEnv, '')
+      assert.equal(added.body.includes(SECRET), false, '响应体泄露了密钥')
+      assert.equal(/"apiKey"\s*:/.test(added.body), false, '响应体出现了 apiKey 字段')
+
+      const onDisk = readDiskConfig(dir).providers.find((provider) => provider.id === 'bailian')
+      assert.equal(onDisk.apiKey, SECRET)
+      assert.equal(onDisk.apiKeyEnv, '')
+
+      // 重新读盘（走生产路径 parseConfig）也能取到密钥
+      const reloaded = await reloadStore(dir)
+      const again = reloaded.get().providers.find((provider) => provider.id === 'bailian')
+      assert.equal(again.apiKey, SECRET)
+      assert.equal(again.apiKeyEnv, '')
+
+      // 后续 GET 也只回脱敏视图
+      const listed = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.equal(listed.body.includes(SECRET), false)
+      assert.equal(listed.json.providers.find((p) => p.id === 'bailian').hasApiKey, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('apiKey 给空串 = 本次不带密钥（落盘仍是空串，不写假值）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'bailian', apiKey: '' },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.provider.hasApiKey, false)
+      const onDisk = readDiskConfig(dir).providers.find((provider) => provider.id === 'bailian')
+      assert.equal(onDisk.apiKey, '')
+      assert.equal(onDisk.apiKeyEnv, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('POST /pixmart/api/providers（模式 B：自定义厂商）', () => {
+  it('③ 新建 provider 的字段逐个断言（group/dialect/apiMode/models/allowedSizes/geminiNativeBaseUrl）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: {
+            id: 'my-relay',
+            label: '我的中转',
+            baseUrl: 'https://my-relay.example/v1',
+          },
+        },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.ok, true)
+      const view = added.json.provider
+      assert.equal(view.id, 'my-relay')
+      assert.equal(view.label, '我的中转')
+      assert.equal(view.group, 'custom')
+      assert.equal(view.dialect, 'standard')
+      assert.equal(view.apiMode, 'images-generations')
+      assert.deepEqual(view.models, [])
+      assert.deepEqual(view.allowedSizes, [])
+      assert.equal(view.geminiNativeBaseUrl, '')
+      assert.equal(view.hasApiKey, false)
+      assert.equal(view.timeoutMs, 180_000)
+
+      // 盘上**逐字段**（不经视图）：与目录草稿是同一个形状，后续路由/工具不必区分来源
+      const onDisk = readDiskConfig(dir).providers.at(-1)
+      assert.deepEqual(onDisk, {
+        id: 'my-relay',
+        label: '我的中转',
+        group: 'custom',
+        baseUrl: 'https://my-relay.example/v1',
+        geminiNativeBaseUrl: '',
+        dialect: 'standard',
+        apiMode: 'images-generations',
+        apiKeyEnv: '',
+        apiKey: '',
+        models: [],
+        allowedSizes: [],
+        sizeMode: 'whitelist',
+        extraHeaders: {},
+        timeoutMs: 180_000,
+      })
+
+      const listed = await call(webServer, runtime, 'GET', '/pixmart/api/providers')
+      assert.deepEqual(
+        listed.json.providers.map((provider) => provider.id),
+        ['ofox', 'agnes', 'my-relay'],
+      )
+      // 自定义 id 不在目录里 → catalog 仍是 20 条，不硬塞进去
+      assert.equal(listed.json.catalog.length, 20)
+      assert.equal(
+        listed.json.catalog.some((entry) => entry.id === 'my-relay'),
+        false,
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('③b 自定义厂商也能一次带密钥：落盘 + apiKeyEnv 空 + 响应无明文', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'my-relay', label: '我的中转', baseUrl: 'https://my-relay.example/v1' },
+          apiKey: SECRET,
+        },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.provider.hasApiKey, true)
+      assert.equal(added.json.provider.apiKeyEnv, '')
+      assert.equal(added.body.includes(SECRET), false, '响应体泄露了密钥')
+
+      const onDisk = readDiskConfig(dir).providers.at(-1)
+      assert.equal(onDisk.apiKey, SECRET)
+      assert.equal(onDisk.apiKeyEnv, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('④ id 非法（大写 / 下划线 / 超长 / 以 - 开头 / 空）→ 400 bad_field，盘上没有任何变化；32 位合法', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const badIds = ['My-Relay', 'my_relay', 'a'.repeat(33), '-relay', 'my relay', '']
+      for (const id of badIds) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+          body: { custom: { id, label: '标签', baseUrl: 'https://relay.example/v1' } },
+        })
+        assert.equal(result.status, 400, `id=${JSON.stringify(id)} 应被拒`)
+        assert.equal(result.json.ok, false)
+        assert.equal(result.json.error.code, 'bad_field')
+      }
+
+      // 被拒的写入绝不落盘：内存与磁盘都没变
+      assert.deepEqual(
+        store.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+
+      // 边界：正好 32 位（1 + 31）合法
+      const okId = 'a'.repeat(32)
+      const ok = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { custom: { id: okId, label: '32 位', baseUrl: 'https://relay.example/v1' } },
+      })
+      assert.equal(ok.status, 200)
+      assert.equal(ok.json.provider.id, okId)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑤ label 空 / 全空白 / 超 40 → 400 bad_field；正好 40 可以', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      for (const label of ['', '   ', 'x'.repeat(41)]) {
+        const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+          body: { custom: { id: 'my-label', label, baseUrl: 'https://relay.example/v1' } },
+        })
+        assert.equal(result.status, 400, `label=${JSON.stringify(label)} 应被拒`)
+        assert.equal(result.json.error.code, 'bad_field')
+      }
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+
+      const ok = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'my-label-40', label: 'x'.repeat(40), baseUrl: 'https://relay.example/v1' },
+        },
+      })
+      assert.equal(ok.status, 200)
+      assert.equal(readDiskConfig(dir).providers.at(-1).label, 'x'.repeat(40))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑥ baseUrl 非 http(s) / 空 → 400 bad_field（模式 B 与模式 A 的覆盖值都算）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      for (const baseUrl of ['ftp://relay.example/v1', 'relay.example/v1', '', '   ']) {
+        const custom = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+          body: { custom: { id: 'my-url', label: '标签', baseUrl } },
+        })
+        assert.equal(custom.status, 400, `custom.baseUrl=${JSON.stringify(baseUrl)} 应被拒`)
+        assert.equal(custom.json.error.code, 'bad_field')
+
+        const override = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+          body: { catalogId: 'bailian', baseUrl },
+        })
+        assert.equal(override.status, 400, `baseUrl=${JSON.stringify(baseUrl)} 应被拒`)
+        assert.equal(override.json.error.code, 'bad_field')
+      }
+
+      assert.deepEqual(
+        store.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑦ 两种模式都给或都不给 → 400 bad_field（消息里有可读的"二选一"）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const both = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          catalogId: 'bailian',
+          custom: { id: 'my-relay', label: '标签', baseUrl: 'https://relay.example/v1' },
+        },
+      })
+      assert.equal(both.status, 400)
+      assert.equal(both.json.error.code, 'bad_field')
+      assert.match(both.json.error.message, /二选一/)
+
+      const neither = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {},
+      })
+      assert.equal(neither.status, 400)
+      assert.equal(neither.json.error.code, 'bad_field')
+      assert.match(neither.json.error.message, /二选一/)
+
+      // 只给 apiKey（既不是目录也不是自定义）同样按"都不给"处理，且不回显密钥
+      const keyOnly = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { apiKey: SECRET },
+      })
+      assert.equal(keyOnly.status, 400)
+      assert.equal(keyOnly.json.error.code, 'bad_field')
+      assert.equal(keyOnly.body.includes(SECRET), false)
+
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑧ 自定义 id 已存在 → 409 already_exists，且不覆盖已有字段、不落盘', async () => {
+    const { dir, store } = makeStore({
+      apiKey: SECRET,
+      models: ['my-image-model'],
+      allowedSizes: ['1:1'],
+    })
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+      const before = readFileSync(join(dir, 'config.json'), 'utf8')
+
+      const result = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'ofox', label: '冒充 Ofox', baseUrl: 'https://evil.example/v1' },
+        },
+      })
+
+      assert.equal(result.status, 409)
+      assert.equal(result.json.ok, false)
+      assert.equal(result.json.error.code, 'already_exists')
+      assert.equal(result.body.includes(SECRET), false, '响应体泄露了密钥')
+
+      // 已有字段一个都没被覆盖
+      const ofox = store.get().providers.find((provider) => provider.id === 'ofox')
+      assert.equal(ofox.apiKey, SECRET)
+      assert.equal(ofox.baseUrl, 'https://api.example.test/v1/')
+      assert.deepEqual(ofox.models, ['my-image-model'])
+      assert.deepEqual(ofox.allowedSizes, ['1:1'])
+      assert.deepEqual(
+        store.get().providers.map((provider) => provider.id),
+        ['ofox', 'agnes'],
+      )
+      assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑨ 新增后响应里的 catalog.added 含该 id（客户端靠它刷新下拉框）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      const added = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'sensenova' },
+      })
+
+      assert.equal(added.status, 200)
+      assert.equal(added.json.catalog.length, 20)
+      assert.equal(added.json.catalog.find((entry) => entry.id === 'sensenova').added, true)
+      assert.deepEqual(
+        added.json.catalog
+          .filter((entry) => entry.added)
+          .map((entry) => entry.id)
+          .sort(),
+        ['agnes', 'ofox', 'sensenova'],
+      )
+
+      // 连着加第二家：catalog 的 added 跟着更新
+      const second = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: { catalogId: 'kimi' },
+      })
+      assert.equal(second.json.catalog.find((entry) => entry.id === 'kimi').added, true)
+      assert.equal(second.json.catalog.find((entry) => entry.id === 'sensenova').added, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('⑩ 自定义 id 撞上被删过的出厂预设：墓碑一样被摘掉（与模式 A 共用同一段逻辑）', async () => {
+    const { dir, store } = makeStore()
+    try {
+      const webServer = makeFakeWebServer()
+      const runtime = makeFakeRuntime(store)
+
+      await call(webServer, runtime, 'POST', '/pixmart/api/providers/ofox/delete')
+      assert.deepEqual(store.get().removedProviders, ['ofox'])
+
+      const created = await call(webServer, runtime, 'POST', '/pixmart/api/providers', {
+        body: {
+          custom: { id: 'ofox', label: 'Ofox 自建', baseUrl: 'https://my-relay.example/v1' },
+        },
+      })
+
+      assert.equal(created.status, 200)
+      assert.equal(created.json.provider.id, 'ofox')
+      assert.equal(created.json.provider.group, 'custom')
+      assert.deepEqual(store.get().removedProviders, [], '新建同名 id 后不该还留着墓碑')
+
+      const reloaded = await reloadStore(dir)
+      assert.deepEqual(reloaded.get().removedProviders, [])
+      const ofox = reloaded.get().providers.find((provider) => provider.id === 'ofox')
+      assert.equal(ofox.baseUrl, 'https://my-relay.example/v1')
+      assert.equal(ofox.group, 'custom')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

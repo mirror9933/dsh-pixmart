@@ -23,7 +23,13 @@ import {
   type PixmartConfig,
   type ProviderConfig,
 } from './config.js'
-import { PROVIDER_CATALOG, catalogView, findCatalogEntry, providerFromCatalog } from './catalog.js'
+import {
+  PROVIDER_CATALOG,
+  catalogView,
+  findCatalogEntry,
+  providerFromCatalog,
+  providerFromCustom,
+} from './catalog.js'
 import { historicalTotals } from './store/historical.js'
 import { assertContained } from './store/paths.js'
 import { TrashError, type ProjectSummaryWithModules } from './store/project-store.js'
@@ -564,7 +570,7 @@ async function handleApi(
     return
   }
 
-  // POST /pixmart/api/providers —— 从厂商目录新增一个（写配置）
+  // POST /pixmart/api/providers —— 新增一个（写配置）：目录 `catalogId` 或自定义 `custom`，二选一
   if (route === '/providers' || route === '/providers/') {
     if (requirePost()) return
     await handleAddProvider(runtime, response, readBody)
@@ -653,17 +659,101 @@ async function requireProvider(
   return { config, provider }
 }
 
+/** 自定义厂商（模式 B）的 id 形状：1–32 位，小写字母/数字开头，其余只允许小写字母、数字、连字符。 */
+const CUSTOM_PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
+
+/** 自定义厂商显示名上限（字符数，按去空白后的值算）。 */
+const MAX_CUSTOM_LABEL = 40
+
 /**
- * `POST /pixmart/api/providers` —— 从厂商目录（`src/catalog.ts`）**新增**一家。
+ * 新增厂商时 `baseUrl` 的形状校验 —— 与 `endpointProblem` 的差别只有一点：
+ * **空串不合法**。`endpointProblem('')` 表示"清除地址"（credentials 路由的语义），
+ * 而新建的厂商地址空着就发不出任何请求，不如当场拒掉。
+ */
+function newProviderBaseUrlProblem(value: string): string | undefined {
+  if (value === '') return '不能为空'
+  if (!/^https?:\/\//i.test(value)) return '必须以 http:// 或 https:// 开头'
+  return undefined
+}
+
+/** `pickCustomProvider` 的结果：要么给出干净的身份字段，要么给出一条能读懂的拒绝理由。 */
+type CustomPick =
+  | { readonly ok: true; readonly id: string; readonly label: string; readonly baseUrl: string }
+  | { readonly ok: false; readonly message: string }
+
+/**
+ * 校验模式 B 的 `custom`：`{ id, label, baseUrl }` 三个字段都必填、都要合法。
  *
- * 请求体：`{ catalogId }`（目录条目的 id，如 `bailian`）。
+ * 逐条规则（都是 400 `bad_field`，理由随 `message` 回去，方便设置页直接显示）：
+ *   1. `custom` 必须是对象（数组 / null / 字符串都不算）；
+ *   2. `id` 必须匹配 `^[a-z0-9][a-z0-9-]{0,31}$`（**不去空白**：形状是逐字符的契约，
+ *      带空格就是写错了）；
+ *   3. `label` 去空白后非空、且 ≤ 40 字符（空白的 label 算空）；
+ *   4. `baseUrl` 去空白后非空且是 http(s) 地址。
+ */
+function pickCustomProvider(raw: unknown): CustomPick {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, message: 'custom 应为对象：{ id, label, baseUrl }' }
+  }
+  const custom = raw as Record<string, unknown>
+
+  const id = custom.id
+  if (typeof id !== 'string' || !CUSTOM_PROVIDER_ID.test(id)) {
+    return {
+      ok: false,
+      message:
+        'custom.id 必须匹配 ^[a-z0-9][a-z0-9-]{0,31}$：小写字母或数字开头，1–32 位，只含小写字母、数字、连字符',
+    }
+  }
+
+  if (typeof custom.label !== 'string') {
+    return { ok: false, message: 'custom.label 应为字符串' }
+  }
+  const label = custom.label.trim()
+  if (label === '') return { ok: false, message: 'custom.label 不能为空' }
+  if (label.length > MAX_CUSTOM_LABEL) {
+    return {
+      ok: false,
+      message: `custom.label 最长 ${String(MAX_CUSTOM_LABEL)} 个字符（收到 ${String(label.length)} 个）`,
+    }
+  }
+
+  if (typeof custom.baseUrl !== 'string') {
+    return { ok: false, message: 'custom.baseUrl 应为字符串' }
+  }
+  const baseUrl = custom.baseUrl.trim()
+  const problem = newProviderBaseUrlProblem(baseUrl)
+  if (problem !== undefined) {
+    return { ok: false, message: `custom.baseUrl 不是可用地址：${problem}` }
+  }
+
+  return { ok: true, id, label, baseUrl }
+}
+
+/**
+ * `POST /pixmart/api/providers` —— **新增**一家厂商（写配置）。
  *
- * 新增出来的厂商是**空壳但是可用的起点**：`models` / `allowedSizes` 都留空
- * （见 `providerFromCatalog`），用户接着在设置页填密钥、点「拉取模型」。
+ * 一次调用完成设置页 add-card 的三件事：**选目录厂商或自定义厂商** + **可选覆盖地址** +
+ * **可选带密钥**。两种模式**二选一**（都有或都没有 → 400 `bad_field`）：
+ *
+ *   - 模式 A（目录）：`{ catalogId, baseUrl?, apiKey? }` —— `catalogId` 是
+ *     `src/catalog.ts` 的条目 id（如 `bailian`），`baseUrl` 给了就覆盖目录默认值
+ *     （换成中转站时用）；不给则原样用目录的 `baseUrl`（`custom` 那条是空串）。
+ *   - 模式 B（自定义）：`{ custom: { id, label, baseUrl }, apiKey? }` —— 三个字段都必填，
+ *     校验规则见 `pickCustomProvider`。
+ *
+ * 两种模式新增出来的厂商都是**空壳但是可用的起点**：`models` / `allowedSizes` 都留空
+ * （见 `providerFromCatalog` / `providerFromCustom`），用户接着在设置页填密钥、点「拉取模型」。
  * 这里**不发明**任何模型名，也不抄任何厂商的尺寸表——尺寸由 `sizes.ts` 兜底。
  *
- * 错误码：`catalogId` 缺失/不在目录里 → 400 `unknown_catalog_id`；
- * 该 id 已在配置里 → 409 `already_exists`（不覆盖用户已填的字段）。
+ * `apiKey`（可选，两种模式通用）：非空字符串则**直接写进新建的 provider**，同时把
+ * `apiKeyEnv` 置 `''` —— 与 `POST /providers/<id>/credentials` 的既有语义一致
+ * （页面显式填的密钥必须压过环境变量）。响应只回 `toProviderView()` 的脱敏视图，
+ * **绝不回显密钥本体**。
+ *
+ * 错误码：`catalogId` 有值但不在目录里 → 400 `unknown_catalog_id`（保持现状）；
+ * 模式二选一不成立 / `baseUrl` / `custom` 任一字段非法 → 400 `bad_field`；
+ * 目标 id 已在配置里 → 409 `already_exists`（不覆盖用户已填的字段）。
  * 写盘走 `ConfigStore.update()`（原子写 + 串行读改写），与其余写路由一致。
  */
 async function handleAddProvider(
@@ -672,35 +762,85 @@ async function handleAddProvider(
   readBody: BodyReader,
 ): Promise<void> {
   const body = await readBody()
-  // 非字符串 → BodyError(400 bad_field)，由 guard 统一回给客户端（与其余写路由同）。
+
+  // 模式二选一：用"键出现"判定，`catalogId: ''` 仍算模式 A（随后按 unknown_catalog_id 拒）。
   const catalogId = pickStringField(body, 'catalogId')
-  const entry = catalogId.present ? findCatalogEntry(catalogId.value) : undefined
-  if (entry === undefined) {
-    const known = PROVIDER_CATALOG.map((item) => item.id).join(', ')
+  const hasCustom = 'custom' in body
+  if (catalogId.present === hasCustom) {
     fail(
       response,
       400,
-      'unknown_catalog_id',
+      'bad_field',
       catalogId.present
-        ? `厂商目录里没有 "${catalogId.value}"；可用：${known}`
-        : `catalogId 缺失；可用：${known}`,
+        ? 'catalogId 与 custom 必须二选一，不能同时给'
+        : 'catalogId 与 custom 必须二选一：目录新增给 catalogId，自定义新增给 custom',
     )
     return
   }
 
+  // 非字符串 → BodyError(400 bad_field)，由 guard 统一回给客户端（与其余写路由同）。
+  const apiKey = pickStringField(body, 'apiKey')
+  // 空串 = "本次不带密钥"（不清除、不写空值），与 credentials 路由的"出现即写"语义区分开。
+  const keyFields =
+    apiKey.present && apiKey.value !== '' ? { apiKey: apiKey.value, apiKeyEnv: '' } : {}
+
+  let draft: ProviderConfig
+  if (hasCustom) {
+    const custom = pickCustomProvider(body.custom)
+    if (!custom.ok) {
+      fail(response, 400, 'bad_field', custom.message)
+      return
+    }
+    draft = providerFromCustom({
+      id: custom.id,
+      label: custom.label,
+      baseUrl: custom.baseUrl,
+      apiKey: apiKey.value,
+    })
+  } else {
+    const entry = findCatalogEntry(catalogId.value)
+    if (entry === undefined) {
+      const known = PROVIDER_CATALOG.map((item) => item.id).join(', ')
+      fail(
+        response,
+        400,
+        'unknown_catalog_id',
+        catalogId.present
+          ? `厂商目录里没有 "${catalogId.value}"；可用：${known}`
+          : `catalogId 缺失；可用：${known}`,
+      )
+      return
+    }
+    // 模式 A 的 `baseUrl` 是**可选覆盖**：出现即必须合法（空串也不合法——地址空着的
+    // 新厂商发不出任何请求，宁可当场拒掉）。
+    const baseUrlOverride = pickStringField(body, 'baseUrl')
+    if (baseUrlOverride.present) {
+      const problem = newProviderBaseUrlProblem(baseUrlOverride.value)
+      if (problem !== undefined) {
+        fail(response, 400, 'bad_field', `baseUrl 不是可用地址：${problem}`)
+        return
+      }
+    }
+    draft = {
+      ...providerFromCatalog(entry),
+      ...(baseUrlOverride.present ? { baseUrl: baseUrlOverride.value } : {}),
+      ...keyFields,
+    }
+  }
+
+  const id = draft.id
   // 预检：早失败、少写一次盘。真正的判重在 mutate 里再做一次（见下）。
   const config = await runtime.config()
-  if (config.providers.some((provider) => provider.id === entry.id)) {
-    fail(response, 409, 'already_exists', `厂商 "${entry.id}" 已在配置里，未做任何修改`)
+  if (config.providers.some((provider) => provider.id === id)) {
+    fail(response, 409, 'already_exists', `厂商 "${id}" 已在配置里，未做任何修改`)
     return
   }
 
-  const draft = providerFromCatalog(entry)
   // `update()` 的 mutate 是串行的读改写：两个并发添加同一家厂商时，
   // 后到的那个会在这里看到已存在并原样返回（不写第二份、不覆盖用户刚填的字段）。
   let conflicted = false
   const updated = await runtime.configStore.update((current) => {
-    if (current.providers.some((provider) => provider.id === entry.id)) {
+    if (current.providers.some((provider) => provider.id === id)) {
       conflicted = true
       return current
     }
@@ -709,17 +849,17 @@ async function handleAddProvider(
       providers: [...current.providers, draft],
       // 重新添加一个被删过的出厂预设时，把它从"已删除"清单里摘掉：
       // 留着它不会影响本次结果（present 优先），但会让人以为"删除记录还在"。
-      removedProviders: current.removedProviders.filter((id) => id !== entry.id),
+      removedProviders: current.removedProviders.filter((item) => item !== id),
     }
   })
   if (conflicted) {
-    fail(response, 409, 'already_exists', `厂商 "${entry.id}" 已在配置里，未做任何修改`)
+    fail(response, 409, 'already_exists', `厂商 "${id}" 已在配置里，未做任何修改`)
     return
   }
 
-  const added = updated.providers.find((provider) => provider.id === entry.id)
+  const added = updated.providers.find((provider) => provider.id === id)
   if (added === undefined) {
-    fail(response, 500, 'internal', `新增厂商 "${entry.id}" 后未在配置里找到`)
+    fail(response, 500, 'internal', `新增厂商 "${id}" 后未在配置里找到`)
     return
   }
   sendJson(response, 200, {

@@ -54,6 +54,13 @@
          */
         --dsw-alias-border-l3: #0000001f;
         /*
+         * 官方 **SegmentedControl 的轨道底色**用的就是这一枚（它**不是**"悬停态"）——
+         * `SegmentedControl.module.css` 里 `.control{background:var(--dsw-alias-interactive-bg-hover)}`
+         * （`dsh-client-ui-primitives/lib/SegmentedControl.module.css`）。取值同上一枚的出处
+         * （`dsh-client-ui-theme/lib/client.js:1148` 的浅色那份）。
+         */
+        --dsw-alias-interactive-bg-hover: #2631480f;
+        /*
          * 官方**输入控件描边**：`primitives` 的 `settings-form/fields.module.css` 里
          * `.input{border:.5px solid var(--dsw-alias-border-l4)}`（`Input.module.css` 的
          * `.wrap`、`settings-plugin-inventory` 的搜索框也是它）。

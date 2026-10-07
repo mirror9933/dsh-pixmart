@@ -287,3 +287,48 @@ export function providerFromCatalog(entry: CatalogEntry): ProviderConfig {
     timeoutMs: 180_000,
   }
 }
+
+/**
+ * `providerFromCustom` 的输入 —— 设置页 add-card「自定义厂商」tab 里用户填的三样东西。
+ * 取值校验（id 形状 / label 长度 / baseUrl 形状）在路由层做，这里只负责拼装。
+ */
+export interface CustomProviderInput {
+  /** 用户填的厂商 id（路由已按 `^[a-z0-9][a-z0-9-]{0,31}$` 校验过）。 */
+  readonly id: string
+  /** 显示名（路由已去空白并校验非空 / ≤ 40 字符）。 */
+  readonly label: string
+  /** 接入地址（路由已去空白并校验非空 http(s)）。 */
+  readonly baseUrl: string
+  /** 网页这次显式填的密钥；省略或空串 = 本次不带密钥。 */
+  readonly apiKey?: string
+}
+
+/**
+ * 用「自定义厂商」的三个字段造一个**可直接落盘**的 `ProviderConfig`。
+ *
+ * 与 `providerFromCatalog` 的差别**只有身份字段的来源**（用户填 vs 目录转录）：
+ * 分组固定 `custom`、方言固定 `standard`、`models` / `allowedSizes` 留空、
+ * `geminiNativeBaseUrl` 空串、`timeoutMs` 默认值——这样"自定义接入"和
+ * "目录里 custom 那条"落盘后是同一个形状，后续路由/工具不需要区分来源。
+ *
+ * `apiKeyEnv` **一律空串**：网页显式填的密钥是唯一来源，不指向任何环境变量
+ * （与 `POST /providers/<id>/credentials` 的既有语义一致）。
+ */
+export function providerFromCustom(input: CustomProviderInput): ProviderConfig {
+  return {
+    id: input.id,
+    label: input.label,
+    group: 'custom',
+    baseUrl: input.baseUrl,
+    geminiNativeBaseUrl: '',
+    dialect: 'standard',
+    apiMode: 'images-generations',
+    apiKeyEnv: '',
+    apiKey: input.apiKey ?? '',
+    models: [],
+    allowedSizes: [],
+    sizeMode: 'whitelist',
+    extraHeaders: {},
+    timeoutMs: 180_000,
+  }
+}

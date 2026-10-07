@@ -1073,198 +1073,368 @@ describe('jsdom lane：厂商卡片 = 官方「模型」页同构', () => {
   })
 })
 
-// ── 「添加模型配置」目录弹窗 + 「移除」两步确认（2026-10-12）──────────────────
+// ── 「添加模型提供商」页内 add-card + 目录下拉 + 「删除」两步确认（2026-10-12）──
 //
-// 宿主接口（task-4 §1 冻结）：`GET api/providers` 多一份 `catalog`（20 条，形状见
-// `catalogEntry`）；`POST api/providers {catalogId}` 新增一家；
-// `POST api/providers/<id>/delete` 移除一家（**没有 DELETE 方法**，本仓库只支持 GET/POST）。
+// 形态照 **DSH 官方**「模型」设置页（不是参考项目的弹窗）：
+//   `.probe/models-client.js:2235-2340` 的 `addBlock`（`addOpen ? addCard : addButton`）、
+//   `.probe/models-css-pretty.txt:37-44` 的 `addBlock` / `addModes` / `addPanel` / `addCard`
+//   + `:44` 的 `.addCard .editor{background:0 0;padding:0}`；文案逐字见
+//   `.probe/models-client.js:2966-3005`。
 //
-// 定位只认锚点（`data-pxm-catalog*` / `data-pxm-vendor-remove`），不认类名、不认文案排布 ——
-// "卡片怎么排"是实现细节，"能不能点、点了发不发请求、发几次"才是行为。
+// 宿主接口（task-6 冻结）：
+//   - `GET api/providers` 多一份 `catalog`（20 条，形状见 `catalogEntry`）；
+//   - `POST api/providers {catalogId, baseUrl?, apiKey?}` 从目录新增一家；
+//   - `POST api/providers {custom:{id,label,baseUrl}, apiKey?}` 自定义新增一家；
+//   - `POST api/providers/<id>/delete` 删除一家（**没有 DELETE 方法**，本仓库只支持 GET/POST）。
+//
+// 定位只认锚点（`data-pxm-add-*` / `data-pxm-vendor-remove`），不认类名、不认文案排布 ——
+// "面板怎么排"是实现细节，"点了发不发请求、发几次、body 恰是什么"才是行为。
 
-/** 弹窗面板根（关闭后不存在，不是隐藏）。 */
-const catalogDialog = (lane) => lane.container.querySelector('[data-pxm-catalog]')
-/** 遮罩层（点它 = 关闭）。 */
-const catalogOverlay = (lane) => lane.container.querySelector('[data-pxm-catalog-overlay]')
-/** 目录卡片集合。 */
-const catalogCards = (lane) => [...lane.container.querySelectorAll('[data-pxm-catalog-card]')]
-/** 按 `data-pxm-catalog-id` 取一张卡（**不按索引**：顺序由排序规则决定）。 */
-function catalogCard(lane, id) {
-  return lane.container.querySelector('[data-pxm-catalog-id="' + String(id) + '"]') ?? null
-}
+/** add-card 根（`addOpen === false` 时**不存在**，不是隐藏 —— 官方也是条件渲染）。 */
+const addCard = (lane) => lane.container.querySelector('[data-pxm-add-card]')
+/** 虚线「添加模型提供商」。 */
+const addButton = (lane) => lane.container.querySelector('[data-pxm-add-vendor]')
+/** 提供商下拉（原生 `<select>`，官方就是 `select.input.selectInput`）。 */
+const providerSelect = (lane) => lane.container.querySelector('[data-pxm-add-provider]')
+/** 两个 tab（`data-pxm-add-tab="catalog|custom"`）。 */
+const addTab = (lane, value) =>
+  lane.container.querySelector('[data-pxm-add-tab="' + String(value) + '"]')
+/** 两个面板（`data-pxm-add-panel="catalog|custom"`）。 */
+const addPanel = (lane, value) =>
+  lane.container.querySelector('[data-pxm-add-panel="' + String(value) + '"]')
+/** 提示那一行（`data-pxm-add-hint`）。 */
+const addHint = (lane) => lane.container.querySelector('[data-pxm-add-hint]')
+const addSave = (lane) => lane.container.querySelector('[data-pxm-add-save]')
+const addCancel = (lane) => lane.container.querySelector('[data-pxm-add-cancel]')
+const addError = (lane) => lane.container.querySelector('[data-pxm-add-error]')
+const addKeyInput = (lane) => lane.container.querySelector('#pxm-add-key')
+const addBaseUrlInput = (lane) => lane.container.querySelector('#pxm-add-base-url')
 
-/** 点虚线按钮打开弹窗，并先断"它现在真的可点"。 */
-async function openCatalog(lane) {
-  const button = lane.container.querySelector('[data-pxm-add-vendor]')
+/** 点虚线按钮展开 add-card，并先断"它现在真的可点 + 卡真的出来了"。 */
+async function openAddCard(lane) {
+  const button = addButton(lane)
   assert.ok(button, '设置页必须有虚线「添加模型提供商」按钮（[data-pxm-add-vendor]）')
-  assert.equal(
-    button.disabled,
-    false,
-    '「添加模型提供商」必须可点（2026-10-12 起它打开「添加模型配置」弹窗，不再恒 disabled）',
-  )
+  assert.equal(button.disabled, false, '「添加模型提供商」必须可点（点它在页内展开 add-card）')
   await lane.click(button)
-  assert.ok(catalogDialog(lane), '点虚线按钮后必须出现弹窗（[data-pxm-catalog]）')
-  return catalogDialog(lane)
+  const card = addCard(lane)
+  assert.ok(card, '点虚线按钮后必须出现**页内** add-card（[data-pxm-add-card]）')
+  return card
 }
 
-describe('jsdom lane：「添加模型配置」弹窗与「移除」两步确认', () => {
-  it('C1 点虚线按钮 → 弹窗出现、标题「添加模型配置」、20 张卡各带状态与字母占位方块', async () => {
+/** 切到另一个 tab（点 tab 的真实路径，不直接改 state）。 */
+async function switchAddMode(lane, value) {
+  const tab = addTab(lane, value)
+  assert.ok(tab, 'add-card 里必须有 data-pxm-add-tab="' + String(value) + '" 那一枚 tab')
+  assert.equal(tab.disabled, false, 'tab「' + String(value) + '」必须可点')
+  await lane.click(tab)
+}
+
+/**
+ * 「提供商」下拉的选项值，按 DOM 顺序。
+ *
+ * 期望顺序 = 宿主 catalog 顺序里的**未添加**项（`custom` 那一组固定排最后，
+ * 与我们 `sortCatalog` 的稳定规则一致）。这里**独立复述**一遍，实现漂移就红。
+ */
+const EXPECTED_OPTION_ORDER = [
+  'anthropic',
+  'azure',
+  'cohere',
+  'dashscope',
+  'deepseek',
+  'fal',
+  'fireworks',
+  'google',
+  'mistral',
+  'novita',
+  'ofox',
+  'openai',
+  'openrouter',
+  'replicate',
+  'siliconflow',
+  'together',
+  'xai',
+  'custom',
+  'custom-openai',
+  'selfhost',
+]
+const ALREADY_ADDED = ['google', 'ofox']
+const EXPECTED_OPTIONS = EXPECTED_OPTION_ORDER.filter((id) => !ALREADY_ADDED.includes(id))
+
+describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步确认', () => {
+  it('A1 点虚线按钮 → 页内出现 add-card、虚线按钮消失；两个 tab 的文案逐字对齐官方', async () => {
     const lane = await createLane()
     await lane.render()
 
-    const dialog = await openCatalog(lane)
-    assert.equal(dialog.getAttribute('role'), 'dialog', '弹窗必须是 role="dialog"')
-    assert.ok(
-      (dialog.textContent ?? '').includes('添加模型配置'),
-      '弹窗标题必须是「添加模型配置」（与官方截图一致）',
-    )
+    assert.equal(addCard(lane), null, '默认态不该有 add-card（官方是条件渲染，不是隐藏）')
+    assert.ok(addButton(lane), '默认态必须有虚线「添加模型提供商」')
 
-    const cards = catalogCards(lane)
-    assert.equal(cards.length, 20, `目录里必须渲染 20 张卡片（宿主 catalog 的条数），实际 ${cards.length}`)
+    const card = await openAddCard(lane)
+    // 官方 `addOpen ? addCard : addButton`：展开后虚线按钮**不在 DOM 里**。
+    assert.equal(addButton(lane), null, '展开后虚线按钮必须消失（官方 addOpen ? addCard : addButton）')
+
+    // 两个 tab 的文案逐字是官方 `addCatalog` / `addCustom`（:2976-2977）。
+    assert.equal(addTab(lane, 'catalog').textContent.trim(), '第三方模型提供商')
+    assert.equal(addTab(lane, 'custom').textContent.trim(), '自定义模型 API')
+    // 在页内（不是弹窗）：没有遮罩、没有 role="dialog"。
+    assert.equal(card.getAttribute('role'), null, 'add-card 不是对话框（官方没有 overlay / dialog）')
     assert.equal(
-      cards.filter((card) => card.getAttribute('data-pxm-state') === 'added').length,
-      2,
-      '夹具里有 2 家已添加（google / ofox）',
+      lane.container.querySelector('[data-pxm-catalog]'),
+      null,
+      '旧的目录弹窗必须删干净（[data-pxm-catalog] 不该再存在）',
     )
-    for (const card of cards) {
-      const state = card.getAttribute('data-pxm-state')
-      assert.ok(
-        state === 'available' || state === 'added',
-        '每张卡必须有 data-pxm-state="available|added"，实测 ' + String(state),
-      )
-      assert.ok(
-        (card.getAttribute('data-pxm-catalog-id') ?? '') !== '',
-        '每张卡必须有非空的 data-pxm-catalog-id',
-      )
-      const logo = card.querySelector('[data-pxm-catalog-logo]')
-      assert.ok(logo, '每张卡必须有字母占位方块（[data-pxm-catalog-logo]）')
-      const name = (card.querySelector('[data-pxm-catalog-name]')?.textContent ?? '').trim()
-      assert.equal(
-        (logo.textContent ?? '').trim(),
-        name.charAt(0),
-        '字母占位方块必须是厂商名首字符（' + name + '）',
-      )
-    }
+  })
 
-    // 排序：`custom` 固定排最后（参考实现 `Settings.tsx:972-978`）。
-    const tailIds = cards.slice(-3).map((card) => card.getAttribute('data-pxm-catalog-id'))
+  it('A2 两个 tab 切换：hint 与面板跟着换，文案逐字对齐官方', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openAddCard(lane)
+
+    // 默认是 catalog：hint = 官方 `addCatalogHint`（:2978）。
+    assert.equal(addTab(lane, 'catalog').getAttribute('aria-selected'), 'true')
+    assert.equal(
+      addHint(lane).textContent,
+      '从内置目录中选择 OpenAI、Anthropic、Kimi 等提供商，填入其 API 密钥即可使用。',
+    )
+    assert.equal(addPanel(lane, 'catalog').hidden, false, 'catalog tab 下 catalog 面板必须可见')
+    assert.equal(addPanel(lane, 'custom').hidden, true, 'catalog tab 下 custom 面板必须隐藏')
+
+    await switchAddMode(lane, 'custom')
+    assert.equal(addTab(lane, 'custom').getAttribute('aria-selected'), 'true')
+    assert.equal(addTab(lane, 'catalog').getAttribute('aria-selected'), 'false')
+    assert.equal(
+      addHint(lane).textContent,
+      '连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。',
+    )
+    assert.equal(addPanel(lane, 'custom').hidden, false, 'custom tab 下 custom 面板必须可见')
+    assert.equal(addPanel(lane, 'catalog').hidden, true, 'custom tab 下 catalog 面板必须隐藏')
+
+    // 切 tab 一个请求都不发（"保存才算数"）。
+    assert.deepEqual(lane.postCalls(), [], '切 tab 不得发任何请求')
+
+    await switchAddMode(lane, 'catalog')
+    assert.equal(addPanel(lane, 'custom').hidden, true, '切回 catalog 后 custom 面板必须再隐藏')
+  })
+
+  it('A3 「提供商」下拉是一个原生 select，选项 = 未添加的厂商、顺序 = 目录顺序减去已添加', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openAddCard(lane)
+
+    const select = providerSelect(lane)
+    assert.ok(select, 'catalog 面板必须有 [data-pxm-add-provider]')
+    assert.equal(select.tagName, 'SELECT', '官方就是原生 <select class="input selectInput"]，不是自绘下拉')
+
+    const values = [...select.options].map((option) => option.value)
     assert.deepEqual(
-      tailIds.slice().sort(),
-      ['custom', 'custom-openai', 'selfhost'],
-      'custom 那一组必须固定排在最后，实测尾部三张：' + JSON.stringify(tailIds),
+      values,
+      EXPECTED_OPTIONS,
+      'select 的选项必须 = 未添加的厂商、顺序与目录一致；实测 ' + JSON.stringify(values),
     )
-
-    // `imageCapable === false` → 名字旁一枚**保守**角标「未取证生图」（不能说成"不支持"）。
-    const unverified = catalogCard(lane, 'anthropic')
-    assert.ok(unverified, '夹具里必须有 anthropic 这张卡')
-    assert.ok(
-      (unverified.textContent ?? '').includes('未取证生图'),
-      'imageCapable=false 的卡片必须标注「未取证生图」',
-    )
-    assert.equal(
-      (unverified.textContent ?? '').includes('不支持'),
-      false,
-      '「未取证」是保守标注，不得写成"不支持"',
-    )
+    for (const id of ALREADY_ADDED) {
+      assert.equal(values.includes(id), false, '已添加的 ' + id + ' 不得出现在选项里')
+    }
+    assert.equal(select.value, EXPECTED_OPTIONS[0], '默认选中第一个可用的厂商')
+    // 选项文案是宿主给的可读名（不是 id）。
+    const first = [...select.options][0]
+    assert.equal(first.textContent.trim(), 'Anthropic', '选项文案必须是厂商的可读名')
   })
 
-  it('C2 已添加的卡片：state=added、置灰不可点、显示「已添加」，点击不发任何请求', async () => {
-    const lane = await createLane()
-    await lane.render()
-    await openCatalog(lane)
-
-    const added = catalogCard(lane, 'google')
-    assert.ok(added, '夹具里必须有已添加的 google 这张卡')
-    assert.equal(added.getAttribute('data-pxm-state'), 'added')
-    assert.equal(added.disabled, true, '已添加的卡片必须不可点（disabled）')
-    assert.ok((added.textContent ?? '').includes('已添加'), '已添加的卡片必须显示「已添加」')
-    assert.ok(
-      Number(added.style.opacity) > 0 && Number(added.style.opacity) < 1,
-      '已添加的卡片必须置灰（opacity 0~1 之间），实测 ' + added.style.opacity,
-    )
-
-    await act(async () => {
-      added.click()
-    })
-    await settleAll()
-    assert.deepEqual(lane.postCalls(), [], '点已添加的卡片不得发任何请求')
-    assert.ok(catalogDialog(lane), '点已添加的卡片不得关闭弹窗')
-  })
-
-  it('C3 点可用卡片 → 恰好 1 次 POST api/providers、body 恰为 {catalogId}；成功后弹窗关闭', async () => {
+  it('A4 选厂商 + 填密钥 + 保存 → 恰好 1 次 POST api/providers，body 恰为 {catalogId, apiKey}', async () => {
     const posted = []
     const lane = await createLane({
       respond: (url, init) => {
         const method = String(init?.method ?? 'GET').toUpperCase()
         if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
           posted.push(JSON.parse(String(init?.body ?? '{}')))
-          return jsonResponse({
-            ok: true,
-            provider: providerView({ id: 'openai', label: 'OpenAI' }),
-          })
+          return jsonResponse({ ok: true, provider: providerView({ id: 'anthropic', label: 'Anthropic' }) })
         }
         return jsonResponse(providersPayload())
       },
     })
     await lane.render()
-    await openCatalog(lane)
+    await openAddCard(lane)
 
-    const card = catalogCard(lane, 'openai')
-    assert.ok(card, '夹具里必须有可用的 openai 这张卡')
-    assert.equal(card.getAttribute('data-pxm-state'), 'available')
-    await lane.click(card)
+    // 选一家（**不发请求**）。
+    await lane.select(providerSelect(lane), 'anthropic')
+    assert.deepEqual(lane.postCalls(), [], '选厂商不得发请求（要等「保存」）')
+
+    await lane.type(addKeyInput(lane), SECRET)
+    await lane.click(addSave(lane))
 
     const posts = lane.postCalls()
-    assert.equal(posts.length, 1, `点一张可用卡片必须恰好发 1 次 POST，实际 ${posts.length}`)
+    assert.equal(posts.length, 1, `保存必须恰好发 1 次 POST，实际 ${posts.length}`)
     assert.match(posts[0].url, /\/api\/providers$/, 'POST 的目标必须是 api/providers')
     assert.deepEqual(
-      JSON.parse(String(posts[0].body)),
-      { catalogId: 'openai' },
-      'body 必须恰为 {catalogId}（字段名由 task-4 §1 冻结）',
+      posted,
+      [{ catalogId: 'anthropic', apiKey: SECRET }],
+      'body 必须恰为 {catalogId, apiKey}（**没有多余字段**：API 地址没填就不许出现 baseUrl）',
     )
-    assert.deepEqual(posted, [{ catalogId: 'openai' }])
-    assert.equal(catalogDialog(lane), null, '添加成功后弹窗必须关闭')
+    // 密钥不许出现在界面文本里。
+    assert.equal(lane.text().includes(SECRET), false, '界面文本泄露了密钥')
   })
 
-  it('C4 三种关法：关闭按钮 / Esc / 点遮罩（点面板内部不关）', async () => {
-    // ① 关闭按钮
-    const laneA = await createLane()
-    await laneA.render()
-    await openCatalog(laneA)
-    await laneA.click(laneA.container.querySelector('[data-pxm-catalog-close]'))
-    assert.equal(catalogDialog(laneA), null, '点 [data-pxm-catalog-close] 必须关闭')
+  it('A4b 目录里「自定义设置 → API 地址」填了才发 baseUrl，留空不发；与提供商默认相同也不发', async () => {
+    const posted = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(JSON.parse(String(init?.body ?? '{}')))
+          return jsonResponse({ ok: true, provider: providerView({ id: 'anthropic' }) })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.select(providerSelect(lane), 'anthropic')
 
-    // ② Esc（document 上的 keydown）
-    const laneB = await createLane()
+    /*
+     * ① 填一个**与「提供商默认」不同**的地址 → 必须进 body。
+     *    夹具里每条的 `baseUrl` 都是 `https://api.example.test/v1`。
+     */
+    await lane.type(addBaseUrlInput(lane), 'https://relay.example.test/v1')
+    await lane.click(addSave(lane))
+    assert.deepEqual(
+      posted,
+      [{ catalogId: 'anthropic', baseUrl: 'https://relay.example.test/v1' }],
+      '填了 API 地址就必须作为 baseUrl 覆盖发出去',
+    )
+
+    /*
+     * ② 留空 → **不许**发 `baseUrl: ''`：宿主对空串返回 400 bad_field
+     *    （空串的语义是"覆盖成空"）。少发一个字段 ≠ 少一个断言。
+     */
+    const laneB = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(JSON.parse(String(init?.body ?? '{}')))
+          return jsonResponse({ ok: true, provider: providerView({ id: 'anthropic' }) })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
     await laneB.render()
-    await openCatalog(laneB)
-    await act(async () => {
-      laneB.window.document.dispatchEvent(
-        new laneB.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-      )
-    })
-    await settleAll()
-    assert.equal(catalogDialog(laneB), null, 'Esc 必须关闭')
+    await openAddCard(laneB)
+    await laneB.select(providerSelect(laneB), 'anthropic')
+    await laneB.click(addSave(laneB))
+    assert.equal(posted.length, 2, '第二次保存也要发出去')
+    assert.deepEqual(
+      posted[1],
+      { catalogId: 'anthropic' },
+      'API 地址留空时必须**完全不出现** baseUrl 字段（发空串会被宿主判 400 bad_field）',
+    )
 
-    // ③ 点遮罩关；点面板内部**不**关
-    const laneC = await createLane()
+    /*
+     * ③ 填一个**与提供商默认相同**的值 → 也没必要发（等价于不覆盖）。
+     */
+    const laneC = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(JSON.parse(String(init?.body ?? '{}')))
+          return jsonResponse({ ok: true, provider: providerView({ id: 'anthropic' }) })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
     await laneC.render()
-    await openCatalog(laneC)
-    await act(async () => {
-      catalogDialog(laneC).click()
-    })
-    await settleAll()
-    assert.ok(catalogDialog(laneC), '点面板内部不得关闭弹窗')
-    await act(async () => {
-      catalogOverlay(laneC).click()
-    })
-    await settleAll()
-    assert.equal(catalogDialog(laneC), null, '点遮罩必须关闭')
-
-    assert.deepEqual(laneC.postCalls(), [], '三种关法都不该发任何请求')
+    await openAddCard(laneC)
+    await laneC.select(providerSelect(laneC), 'anthropic')
+    await lane.type(addBaseUrlInput(laneC), 'https://api.example.test/v1')
+    await laneC.click(addSave(laneC))
+    assert.deepEqual(
+      posted[2],
+      { catalogId: 'anthropic' },
+      '与「提供商默认」相同的地址不该当成覆盖发出去',
+    )
   })
 
-  it('C5 「移除」两步确认：第一次只改文案（零请求）、点别处复原；第二次才 POST …/delete', async () => {
+  it('A5 「取消」→ 零请求，并回到虚线按钮态（add-card 从 DOM 里消失）', async () => {
+    const lane = await createLane()
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+
+    await lane.click(addCancel(lane))
+    assert.deepEqual(lane.postCalls(), [], '「取消」必须零请求')
+    assert.equal(addCard(lane), null, '「取消」后 add-card 必须消失')
+    assert.ok(addButton(lane), '「取消」后必须回到虚线按钮态')
+    // 草稿也不该残留（再展开是干净的：密钥框空）。
+    await openAddCard(lane)
+    assert.equal(addKeyInput(lane).value, '', '取消后草稿必须清空（再展开时密钥框是空的）')
+  })
+
+  it('A6 custom 面板保存 → body 恰为 {custom:{id,label,baseUrl}, apiKey}', async () => {
+    const posted = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(JSON.parse(String(init?.body ?? '{}')))
+          return jsonResponse({ ok: true, provider: providerView({ id: 'my-relay' }) })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    await openAddCard(lane)
+    await switchAddMode(lane, 'custom')
+
+    // 地址为空时「保存」必须被**客户端先拦**（不许把注定 400 的请求发出去）。
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-id="1"]'), 'my-relay')
+    assert.equal(addSave(lane).disabled, true, 'API 地址为空时「保存」必须禁用（宿主对空串返回 400）')
+    await lane.type(
+      lane.container.querySelector('[data-pxm-add-custom-label="1"]'),
+      '我的中转',
+    )
+    await lane.type(
+      lane.container.querySelector('[data-pxm-add-custom-baseurl="1"]'),
+      'https://relay.example.test/v1',
+    )
+    assert.equal(addSave(lane).disabled, false, '三格齐了「保存」必须可点')
+    await lane.type(addKeyInput(lane), SECRET)
+    await lane.click(addSave(lane))
+
+    assert.equal(posted.length, 1, `custom 保存必须恰好 1 次 POST，实际 ${posted.length}`)
+    assert.deepEqual(
+      posted[0],
+      {
+        custom: {
+          id: 'my-relay',
+          label: '我的中转',
+          baseUrl: 'https://relay.example.test/v1',
+        },
+        apiKey: SECRET,
+      },
+      'custom 的 body 必须恰为 {custom:{id,label,baseUrl}, apiKey}',
+    )
+  })
+
+  it('A7 目录全添加完 → 显示「目录中的提供商都已添加。」，且自动切到自定义 tab', async () => {
+    const all = catalogFixture().map((entry) => ({ ...entry, added: true }))
+    const lane = await createLane({
+      respond: () => jsonResponse(providersPayload({ catalog: all })),
+    })
+    await lane.render()
+    await openAddCard(lane)
+
+    const exhausted = lane.container.querySelector('[data-pxm-add-exhausted]')
+    assert.ok(exhausted, '全添加完必须有 [data-pxm-add-exhausted]')
+    assert.equal(
+      exhausted.textContent.trim(),
+      '目录中的提供商都已添加。',
+      '文案必须逐字是官方 addCatalogExhausted（:2980）',
+    )
+    assert.equal(providerSelect(lane), null, '没有可新增的厂商时不该再画那个 <select>')
+    // 目录没了可选项 → 自动落到自定义 tab（否则用户看到的是一个空面板）。
+    assert.equal(addTab(lane, 'catalog').disabled, true, '目录 tab 在全添加完时必须禁用')
+    assert.equal(addTab(lane, 'custom').getAttribute('aria-selected'), 'true')
+    assert.equal(addPanel(lane, 'custom').hidden, false)
+  })
+
+  it('A8 「删除」两步确认：第一次只改文案（零请求）、点别处复原；第二次才 POST …/delete', async () => {
     const deleted = []
     const lane = await createLane({
       respond: (url, init) => {
@@ -1279,12 +1449,13 @@ describe('jsdom lane：「添加模型配置」弹窗与「移除」两步确认
     await lane.render()
 
     const removeButton = () => lane.container.querySelector('[data-pxm-vendor-remove]')
-    assert.ok(removeButton(), '厂商卡片行动作里必须有「移除」（[data-pxm-vendor-remove]）')
-    assert.equal(removeButton().textContent.trim(), '移除')
+    assert.ok(removeButton(), '厂商卡片行动作里必须有「删除」（[data-pxm-vendor-remove]）')
+    // 文案逐字用官方 `remove` = 「删除」（`:2967`）。
+    assert.equal(removeButton().textContent.trim(), '删除')
 
     // 第一次点：只改文案，一个请求都不发
     await lane.click(removeButton())
-    assert.equal(removeButton().textContent.trim(), '确认移除', '第一次点只把文案改成「确认移除」')
+    assert.equal(removeButton().textContent.trim(), '确认删除', '第一次点只把文案改成「确认删除」')
     assert.deepEqual(lane.postCalls(), [], '第一次点不得发任何请求（两步确认的第一半）')
 
     // 点别处 → 复原（仍然零请求）
@@ -1292,12 +1463,12 @@ describe('jsdom lane：「添加模型配置」弹窗与「移除」两步确认
       lane.window.document.body.dispatchEvent(new lane.window.Event('pointerdown', { bubbles: true }))
     })
     await settleAll()
-    assert.equal(removeButton().textContent.trim(), '移除', '点别处必须把文案复原')
+    assert.equal(removeButton().textContent.trim(), '删除', '点别处必须把文案复原')
     assert.deepEqual(lane.postCalls(), [], '复原过程不得发任何请求')
 
     // 再来一次：第一次 → 第二次，这一下才真的删
     await lane.click(removeButton())
-    assert.equal(removeButton().textContent.trim(), '确认移除')
+    assert.equal(removeButton().textContent.trim(), '确认删除')
     assert.deepEqual(lane.postCalls(), [], '第二次点之前仍然不得发请求')
     await lane.click(removeButton())
 
@@ -1305,28 +1476,9 @@ describe('jsdom lane：「添加模型配置」弹窗与「移除」两步确认
     assert.match(deleted[0], /\/api\/providers\/ofox\/delete$/, '目标必须是 POST api/providers/<id>/delete')
     const posts = lane.postCalls()
     assert.equal(posts.length, 1)
-    assert.equal(posts[0].method, 'POST', '本仓库只支持 GET/POST：移除也走 POST，不是 DELETE')
-  })
-
-  it('C6 副标题三种映射：official / aggregator / custom 各断言一次', async () => {
-    const lane = await createLane()
-    await lane.render()
-    await openCatalog(lane)
-
-    const subtitleOf = (id) => {
-      const card = catalogCard(lane, id)
-      assert.ok(card, `目录里必须有 id="${id}" 这张卡`)
-      const node = card.querySelector('[data-pxm-catalog-subtitle]')
-      assert.ok(node, `id="${id}" 的卡片必须有副标题（[data-pxm-catalog-subtitle]）`)
-      return (node.textContent ?? '').trim()
-    }
-
-    assert.equal(subtitleOf('openai'), '官方 API 接入', 'group=official → 「官方 API 接入」')
-    assert.equal(subtitleOf('siliconflow'), '聚合接入', 'group=aggregator → 「聚合接入」')
-    assert.equal(subtitleOf('custom'), '自定义接入', 'group=custom → 「自定义接入」')
+    assert.equal(posts[0].method, 'POST', '本仓库只支持 GET/POST：删除也走 POST，不是 DELETE')
   })
 })
-
 
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
 
