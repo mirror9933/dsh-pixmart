@@ -29,10 +29,13 @@ window.__ModuleLoader__.load({
     const PLUGIN = 'dsh-pixmart'
     const VERSION = '0.0.1'
     /**
-     * 两处插槽共用的显示名：设置面板左导航的一项 + 左侧栏面板图标那一项。
-     * 用产品名 `PixMart`（与页面标题、包名一致）。若要两处叫不同名字，拆成两个常量即可。
+     * 两处插槽的显示名 —— **刻意不同**（用户要求，task-22）：
+     * - `settings.section`（设置面板左导航）用产品名 `PixMart`；
+     * - `sidebar.panellist`（侧栏那一项）用 `PixMart 作品库` —— 侧栏里它紧挨着「插件」分组，
+     *   名字必须点出"点开是作品库"，否则用户不知道那一项里有什么。
      */
-    const SLOT_LABEL = 'PixMart'
+    const SETTINGS_LABEL = 'PixMart'
+    const SIDEBAR_LABEL = 'PixMart 作品库'
     const PANEL_KEY = 'pixmart'
     const SETTINGS_ID = 'pixmart'
     const OVERLAY_ID = 'pixmart-preview'
@@ -8733,7 +8736,7 @@ window.__ModuleLoader__.load({
       registerSlot(
         ctx,
         'settings.section',
-        { name: 'settings.section', id: SETTINGS_ID, order: 30, label: SLOT_LABEL },
+        { name: 'settings.section', id: SETTINGS_ID, order: 30, label: SETTINGS_LABEL },
         ProvidersSection,
         'dsh-pixmart: settings section',
       )
@@ -8742,7 +8745,7 @@ window.__ModuleLoader__.load({
       registerSlot(
         ctx,
         'sidebar.panellist',
-        { name: 'sidebar.panellist', id: PANEL_KEY, order: 10, label: SLOT_LABEL },
+        { name: 'sidebar.panellist', id: PANEL_KEY, order: 10, label: SIDEBAR_LABEL },
         PanelIcon,
         'dsh-pixmart: sidebar panel icon',
       )

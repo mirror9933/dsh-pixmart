@@ -253,6 +253,12 @@ describe('apply 注册三处插槽', () => {
     assert.ok(icon, '必须注册 sidebar.panellist')
     assert.equal(icon.meta.id, 'pixmart')
     assert.equal(icon.meta.order, 10)
+    // 侧栏那一项显示「PixMart 作品库」——与设置页的「PixMart」**刻意不同**（task-22）：
+    // 侧栏里它紧挨着「插件」分组，名字要点出"点开是作品库"。
+    assert.equal(
+      typeof icon.meta.label === 'function' ? icon.meta.label() : icon.meta.label,
+      'PixMart 作品库',
+    )
 
     const panel = bundle.slots.registrations.find((r) => r.meta?.name === 'main')
     assert.ok(panel, '必须注册 main')
