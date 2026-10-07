@@ -125,6 +125,40 @@ if (launched.browser !== null) {
    * 为什么不直接用 `stepperFacts.value`：那个共用探针（`lane.js`）仍然按
    * `textContent` 读，而 `lane.js` 不在本任务写域。这里自带读法，不去依赖那个字段。
    */
+  /**
+   * 下拉弹层的**水平事实**：触发器 / 弹层 / **所在行式字段**（`[data-pxm-field]`）的矩形。
+   *
+   * 这是"独立复述"：容器 = **包含这枚下拉的那一行式字段**（不复用客户端的祖先查找逻辑），
+   * 它的**内容框**左边界就是"弹层往左不许越过"的那条线。行本身在卡片里，所以这条
+   * 比"不许越过卡片细边框"更严。
+   */
+  const horizontalFacts = (page, label) =>
+    page.evaluate((want) => {
+      const field = Array.prototype.slice
+        .call(document.querySelectorAll('[data-pxm-field]'))
+        .filter((node) => {
+          const l = node.querySelector('[data-pxm-field-label]')
+          return l !== null && (l.textContent || '').trim() === String(want).trim()
+        })[0]
+      if (!field) return null
+      const trigger = field.querySelector('[data-pxm-role="select"]')
+      if (trigger === null) return null
+      const list = field.querySelector('[data-pxm-select-list]')
+      const cs = window.getComputedStyle(field)
+      const fr = field.getBoundingClientRect()
+      const tr = trigger.getBoundingClientRect()
+      const lr = list === null ? null : list.getBoundingClientRect()
+      return {
+        field: { left: fr.left, right: fr.right },
+        /** 容器**内容框**左边界 = 行左边界 + 左 padding + 左边框。 */
+        contentLeft:
+          fr.left + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.borderLeftWidth) || 0),
+        trigger: { left: tr.left, right: tr.right, width: tr.width },
+        list: lr === null ? null : { left: lr.left, right: lr.right, width: lr.width },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }
+    }, label)
+
   const readStepperValue = (page) =>
     page.evaluate(() => {
       const el = document.querySelector('[data-pxm-stepper-value]')
@@ -929,22 +963,31 @@ if (launched.browser !== null) {
             JSON.stringify(long.listRect),
         )
         /*
-         * 宽度 = **max(触发器宽, 内容宽)**，并夹在视口内（task-17 改的契约）。
+         * 水平契约（task-18）：**右边界贴触发器右边界，向左延展**，且**不许越出所在
+         * 字段/卡片的内容框**。
          *
-         * 旧契约是"与触发器同宽"，那会让长模型 id 在窄列里被省略号截断 —— 而模型 id
-         * 恰恰只差后缀（`microsoft/mai-image-2.5` / `-flash` / `-pro`），截断之后用户
-         * 分不清要选哪一个（用户报的 bug）。现在弹层可以比触发器宽（它是 `position: fixed`
-         * 的，没有祖先裁切问题），只有视口右边界能夹住它；被夹住时长标签**换行**显示。
+         * 演进：旧契约"与触发器同宽"（长 id 被省略号截断）→ task-17 "可以更宽但只夹视口"
+         * （用户截图：弹层右边界跑出了「默认值」那张卡的细边框）→ 现在两条一起钉：
+         * 右对齐 + 容器内。**这不是放宽**（比"夹视口"更严，多了"不许越出卡片"）。
          */
+        const longH = await horizontalFacts(page, '模型')
+        assert.ok(longH !== null && longH.list !== null, '必须能量到弹层与它所在的行式字段')
+        assert.ok(
+          Math.abs(longH.list.right - longH.trigger.right) <= 1,
+          '弹层右边界必须与触发器右边界对齐（±1）：' + JSON.stringify(longH),
+        )
+        assert.ok(
+          longH.list.left >= longH.contentLeft - 1,
+          '弹层左边界不得越出所在字段/卡片的内容框：' + JSON.stringify(longH),
+        )
+        assert.ok(
+          longH.list.right <= longH.field.right + 1,
+          '弹层右边界不得越出所在字段行（因此也不会越过卡片细边框）：' + JSON.stringify(longH),
+        )
         assert.ok(
           long.listRect.width >= long.triggerRect.width - 1,
           '弹层宽度不得小于触发器（max(触发器宽, 内容宽)）：' +
             JSON.stringify({ list: long.listRect, trigger: long.triggerRect }),
-        )
-        assert.ok(
-          long.listRect.right <= viewport.width - 8 + 1 && long.listRect.left >= 8 - 1,
-          '弹层必须夹在视口内（左右各留 8px 安全边距）：' +
-            JSON.stringify({ list: long.listRect, viewport }),
         )
         // 内容比上限长 ⇒ 内层必须真的可滚，且滚动区不越出弹层。
         assert.equal(long.scrollOverflowY, 'auto', '长列表的内层必须可滚')
@@ -985,6 +1028,17 @@ if (launched.browser !== null) {
           narrow.listRect.right <= narrowViewport.width && narrow.listRect.left >= 0,
           '窄屏下弹层必须夹在视口内：' +
             JSON.stringify({ list: narrow.listRect, viewport: narrowViewport }),
+        )
+        // 窄屏同样要满足新契约：右对齐 + 不越出容器内容框。
+        const narrowH = await horizontalFacts(page, '模型')
+        assert.ok(narrowH !== null && narrowH.list !== null, '窄屏下也要能量到弹层与所在行')
+        assert.ok(
+          Math.abs(narrowH.list.right - narrowH.trigger.right) <= 1,
+          '窄屏下弹层右边界仍必须与触发器右边界对齐：' + JSON.stringify(narrowH),
+        )
+        assert.ok(
+          narrowH.list.left >= narrowH.contentLeft - 1,
+          '窄屏下弹层仍不得越出所在字段/卡片的内容框：' + JSON.stringify(narrowH),
         )
         assert.deepEqual(problems, [])
       } finally {
@@ -1108,9 +1162,20 @@ if (launched.browser !== null) {
           '长 id 时弹层必须按内容撑开（max(触发器宽, 内容宽)）：' +
             JSON.stringify({ list: facts.listRect, trigger: facts.triggerRect }),
         )
+        // 水平位置（task-18）：右对齐 + 不越出所在字段/卡片的内容框。
+        const wideH = await horizontalFacts(wide.page, '模型')
+        assert.ok(wideH !== null && wideH.list !== null, '必须能量到弹层与它所在的行式字段')
         assert.ok(
-          facts.listRect.right <= viewport.width - 8 + 1 && facts.listRect.left >= 8 - 1,
-          '弹层必须夹在视口内（左右各 8px）：' + JSON.stringify({ list: facts.listRect, viewport }),
+          Math.abs(wideH.list.right - wideH.trigger.right) <= 1,
+          '弹层右边界必须与触发器右边界对齐：' + JSON.stringify(wideH),
+        )
+        assert.ok(
+          wideH.list.left >= wideH.contentLeft - 1,
+          '弹层不得越出所在字段/卡片的内容框：' + JSON.stringify(wideH),
+        )
+        assert.ok(
+          facts.listRect.bottom <= viewport.height && facts.listRect.top >= 0,
+          '弹层纵向仍必须完整落在视口内：' + JSON.stringify({ list: facts.listRect, viewport }),
         )
         assert.deepEqual(wide.problems, [])
       } finally {
@@ -1124,14 +1189,80 @@ if (launched.browser !== null) {
         const facts = await probe(narrow.page, 'selectFacts', '模型')
         const viewport = await probe(narrow.page, 'viewportRect')
         const longest = await checkAll(narrow.page, '窄视口(420)')
+        const narrowH = await horizontalFacts(narrow.page, '模型')
+        assert.ok(narrowH !== null && narrowH.list !== null, '窄视口下也要能量到弹层与所在行')
         assert.ok(
-          facts.listRect.right <= viewport.width - 8 + 1 && facts.listRect.left >= 8 - 1,
-          '窄视口下弹层仍必须夹在视口内：' + JSON.stringify({ list: facts.listRect, viewport }),
+          Math.abs(narrowH.list.right - narrowH.trigger.right) <= 1,
+          '窄视口下弹层右边界仍必须与触发器右边界对齐：' + JSON.stringify(narrowH),
+        )
+        assert.ok(
+          narrowH.list.left >= narrowH.contentLeft - 1,
+          '窄视口下弹层仍不得越出所在字段/卡片的内容框：' + JSON.stringify(narrowH),
         )
         assert.ok(longest.clientWidth > 0, '选项标签必须真的占位（不能是 0 宽的空盒）')
         assert.deepEqual(narrow.problems, [])
       } finally {
         await narrow.context.close()
+      }
+    })
+
+    /**
+     * task-18：**尺寸下拉不要搜索框**（候选是短词，搜索是噪音），而**模型下拉（>8 项）
+     * 仍然要**（防"一刀切把搜索全关了"）。一正一反两条放在同一个用例里，互为对照。
+     *
+     * 尺寸这一侧**故意给 40 项**（Agnes 的清单：8 比例 + 32 精确尺寸）—— 用户明确要求
+     * 尺寸这个字段一律不搜索，所以"项数多"也不该自动把搜索框打开。
+     * 关掉搜索之后，选项一个都不能少，键盘（↑↓）仍要能用（退化成短列表形态）。
+     */
+    it('4.9 尺寸下拉：40 项也不带搜索框；模型下拉（>8 项）仍然带 —— 一正一反', async () => {
+      const RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2', '21:9']
+      const sizeOptions = RATIOS.map((value) => ({ value: value, label: value }))
+      for (const w of [1024, 1280, 1536, 2048]) {
+        for (const h of [768, 1024, 1152, 1344, 1536, 2048, 3072, 4096]) {
+          sizeOptions.push({ value: String(w) + 'x' + String(h), label: String(w) + 'x' + String(h) })
+        }
+      }
+      assert.equal(sizeOptions.length, 40, '夹具必须真的是 40 项（Agnes 的清单）')
+      const MODELS = []
+      for (let i = 0; i < 12; i += 1) MODELS.push('vendor/model-' + String(i))
+
+      const sizeNoSearchFixture = () => ({
+        providers: {
+          ...providersFixture,
+          defaults: { provider: 'ofox', model: MODELS[0], size: '1:1', n: 1 },
+          providers: [{ ...providersFixture.providers[0], models: MODELS, sizeOptions: sizeOptions }],
+        },
+        projects: [],
+      })
+
+      const { page, context, problems } = await openLane({ fixture: sizeNoSearchFixture })
+      try {
+        // ① 尺寸：40 项，**没有**搜索框。
+        assert.equal(await openSize(page), true, '必须能打开「尺寸」下拉')
+        const sizeFacts = await probe(page, 'selectFacts', '尺寸')
+        assert.equal(
+          sizeFacts.search,
+          null,
+          '尺寸下拉**不许**渲染搜索框（40 项也不许）：' + JSON.stringify(sizeFacts.search),
+        )
+        assert.equal(sizeFacts.options.length, 40, '关掉搜索也不许丢选项：40 项必须全部列出')
+        // 关掉搜索 ≠ 关掉键盘：↑↓ 仍然只改高亮（短列表形态）。
+        await page.focus('[data-pxm-select-list]')
+        await page.keyboard.press('ArrowDown')
+        const moved = await probe(page, 'selectFacts', '尺寸')
+        assert.ok(moved.activeIndex >= 0, '没有搜索框时 ↑↓ 仍必须能移动高亮')
+
+        // ② 模型：12 项（>8），**仍然有**搜索框（自动开关没被一刀切）。
+        await press(page, '[data-pxm-select-list]', 'Escape')
+        assert.equal(await openModel(page), true, '必须能打开「模型」下拉')
+        const modelFacts = await probe(page, 'selectFacts', '模型')
+        assert.ok(
+          modelFacts.search !== null,
+          '模型下拉 12 项（>8）**必须仍然**自动带搜索框 —— 否则就是"一刀切把搜索全关了"',
+        )
+        assert.deepEqual(problems, [])
+      } finally {
+        await context.close()
       }
     })
 

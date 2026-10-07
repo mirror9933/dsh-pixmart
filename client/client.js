@@ -3015,6 +3015,21 @@ window.__ModuleLoader__.load({
      * —— 本插件与官方 shell 都不这么写）。代价：弹层仍挂在字段的 DOM 子树里（对
      * 探针与"点外部关闭"是好事，见下面 `onPointerDown`），需要自己跟一次滚动/尺寸变化。
      */
+    /**
+     * 计算出来的 `background-color` 有没有**可见的表面**（alpha > 0）。
+     *
+     * 为什么按"数字通道"判、而不是跟 `'transparent'` / `'rgba(0, 0, 0, 0)'` 这类字面量比：
+     * `test/client-tokens.test.mjs` 有一条静态红线 —— **源码里不许出现颜色函数**
+     * （`rgb(...)` / `rgba(...)`），哪怕是拿来做比较也不行。这里只取数字：
+     * 3 个数字 = `rgb(r,g,b)`（不透明）；4 个数字才看第 4 个（alpha）。
+     * 取不到数字（`transparent` / 空串）→ 没有表面。
+     */
+    function hasVisibleSurface(computedColor) {
+      const numbers = String(computedColor ?? '').match(/[0-9.]+/g)
+      if (numbers === null) return false
+      return numbers.length < 4 || Number(numbers[3]) > 0
+    }
+
     function SelectField(props) {
       const options = isArray(props.options) ? props.options : []
       const value = props.value ?? ''
@@ -3032,7 +3047,13 @@ window.__ModuleLoader__.load({
       const [place, setPlace] = React.useState(() => ({
         up: false,
         anchor: 0,
-        left: 0,
+        /**
+         * 弹层**右边界**距视口右边的距离（`position: fixed` 的 `right`）。
+         *
+         * task-18 起水平定位改为"右边界贴触发器右边界、向左延展"：用 `right` 而不是 `left`
+         * 之后，宽度怎么变都由浏览器把左边界算出来，**不需要先量宽度再定位**。
+         */
+        right: 0,
         width: 0,
         // 初值只是"打开那一帧"的占位：真正的值在 useLayoutEffect 里量到触发器后写入，
         // 所以取同一枚上限常量（`S.menuMaxHeightPx`）而不是另一处硬编码的 px。
@@ -3054,8 +3075,16 @@ window.__ModuleLoader__.load({
        * 用可见项数的话，"打开 16 项 → 打 `flux` → 结果只剩 2 项"会把搜索框自己抽掉，
        * 用户刚输入的内容连同输入框一起消失（实测过这个形态）。
        * 过滤结果为空时仍然画着搜索框（用户要能改关键字）。
+       *
+       * **显式关闭的口子**（task-18）：`searchable: false` = **强制不显示**搜索框
+       * （`false` 与"没传"是两件事）；`searchable: true` = 强制显示；缺省才按 >8 自动。
+       * 尺寸下拉只有短词（`1:1`…），搜索框是噪音 —— 它按 `false` 落地；
+       * 模型下拉（可能几十项）仍然自动带搜索框。
        */
-      const enableSearch = props.searchable === true || options.length > SEARCH_MIN_OPTIONS
+      const enableSearch =
+        props.searchable === false
+          ? false
+          : props.searchable === true || options.length > SEARCH_MIN_OPTIONS
 
       const trimmedKeyword = keyword.trim().toLowerCase()
       /**
@@ -3081,6 +3110,31 @@ window.__ModuleLoader__.load({
        * 依赖 `[open, options.length, enableSearch]`：内容长度会改变弹层高度，
        * 高度又决定"翻不翻"，所以这三者任一变化都重算一次。
        */
+      /**
+       * 弹层的**水平容器** = 向上找到最近的"行式字段 / 有底色的卡片"，返回它的**内容框**
+       * 左边界（px）。找不到就返回 `null`（调用方退回视口夹取）。
+       *
+       * 为什么要它（task-18）：用户截图里模型弹层的**右边界跑出了「默认值」那张卡的细边框**。
+       * 弹层虽然可以比触发器宽，但它不该越出自己所在的那张卡 —— 所以"能往左延到哪里"
+       * 由**卡的内容框左边界**决定，而不是由视口决定。
+       */
+      const containerContentLeft = () => {
+        let node = triggerRef.current === null ? null : triggerRef.current.parentElement
+        while (node !== null && node !== document.documentElement) {
+          const style = window.getComputedStyle(node)
+          if (node.hasAttribute('data-pxm-field') || hasVisibleSurface(style.backgroundColor)) {
+            const box = node.getBoundingClientRect()
+            return (
+              box.left +
+              (Number.parseFloat(style.paddingLeft) || 0) +
+              (Number.parseFloat(style.borderLeftWidth) || 0)
+            )
+          }
+          node = node.parentElement
+        }
+        return null
+      }
+
       React.useLayoutEffect(() => {
         if (!open) return undefined
         const measure = () => {
@@ -3100,17 +3154,45 @@ window.__ModuleLoader__.load({
           // 因为 cap 已被 contentMax 夹住 —— 所以翻转只发生在"下方真的不够"时）。
           const goUp = capDown < capUp
           const cap = clamp(goUp ? capUp : capDown, px(S.menuMinHeightPx), contentMax)
-          const left = Math.max(margin, Math.min(rect.left, viewportWidth - rect.width - margin))
           /*
-           * 弹层**可以比触发器宽**（task-17）：`position: fixed` 之后没有祖先裁切问题，
-           * 所以宽度取 `max(触发器宽, 内容宽)` 再夹进视口。
+           * ── 水平：**右边界贴住触发器右边界，向左延展**（task-18）──────────────
            *
-           * 三个约束分别落在内联样式上（浏览器算出来的就是那个式子）：
-           *   `width: max-content`（内容宽） / `minWidth: 触发器宽` / `maxWidth: 右侧可用空间`。
-           * 触发器贴近视口右边时 `maxWidth` 会退化回触发器宽 —— 那时长标签**换行**显示，
-           * 仍然不会被省略号截断（见选项行标签的样式）。
+           *   `可用宽 = 触发器右边界 − 容器内容框左边界`
+           *   `width  = min(内容宽, 可用宽)`（但永不窄于触发器）
+           *
+           * 两半分别落在内联样式上：`width: max-content`（内容宽）+ `maxWidth`（可用宽）+
+           * `minWidth: 触发器宽`；位置则用 **`right`** 锚在触发器的右边界上 ——
+           * 浏览器算出来的左边界恰好是 `触发器右边界 − 实际宽度`，与任务里的
+           * `left = 触发器右边界 − width` 等价，**但不需要先量出宽度再定位**，
+           * 也就没有"先画错再跳"的那一帧。
+           *
+           * 容器装不下（或零布局环境，例如 jsdom 的 rect 全是 0）时退回"贴着触发器右边界、
+           * 夹在视口内"；放不下时长标签**换行**（见选项行标签的样式），绝不截断。
            */
-          const maxWidth = Math.max(rect.width, viewportWidth - left - margin)
+          const containerLeft = containerContentLeft()
+          const hasLayout = rect.width > 0
+          const fitsCard =
+            containerLeft !== null && hasLayout && rect.right - containerLeft >= rect.width
+          const available = !hasLayout
+            ? viewportWidth - margin * 2
+            : fitsCard
+              ? rect.right - containerLeft
+              : rect.right - margin
+          const maxWidth = Math.max(rect.width, available)
+          /*
+           * 右锚点要**夹在视口内**：`right` 是"距视口右边的距离"，所以它必须落在
+           * `[margin, 视口宽 − margin − 宽度上限]` —— 下界保证弹层**右**边界不出视口，
+           * 上界保证弹层**左**边界也不出视口（宽度未知时用 `maxWidth` 顶住）。
+           *
+           * 触发器自己已经不在视口里时（例如背后的设置弹窗被横向滚走 —— 实测过），
+           * 这条夹取保证弹层至少**看得见**：task-17 之前就是"夹到视口边"这个行为，
+           * 窄屏用例一直在钉它。
+           */
+          const rightAnchor = clamp(
+            viewportWidth - rect.right,
+            margin,
+            Math.max(margin, viewportWidth - margin - maxWidth),
+          )
           setPlace({
             /**
              * 用**两条边**定位，而不是"算好高度 + top = triggerTop − 4 − maxHeight"。
@@ -3127,7 +3209,8 @@ window.__ModuleLoader__.load({
             anchor: goUp
               ? Math.max(margin, viewportHeight - Math.max(margin, rect.top - menuGap))
               : rect.bottom + menuGap,
-            left: left,
+            // `position: fixed` 的 right 同理：提前换算成"距视口右边的距离"。
+            right: rightAnchor,
             width: rect.width,
             maxWidth: maxWidth,
             maxHeight: cap,
@@ -3201,7 +3284,19 @@ window.__ModuleLoader__.load({
        */
       const focusOnMount = React.useCallback((node) => {
         if (node === null) return
-        if (typeof node.focus === 'function') node.focus()
+        if (typeof node.focus !== 'function') return
+        /*
+         * `preventScroll: true`（task-18）：弹层是 `position: fixed` 的，聚焦它**不该**
+         * 让背后的设置弹窗滚动。不阻止的话，浏览器为了"把焦点元素滚进视野"会去滚最近的
+         * 可滚祖先，而弹层在那个祖先里的**静态位置**可能很靠左 —— 结果是设置弹窗被横向
+         * 滚走、连**触发器**都被推出视口（实测：420px 视口下打开 16 项模型下拉后
+         * 触发器 `right` 变成 −97，弹层也就跟着跑出屏幕）。旧浏览器不支持这个选项时退回普通聚焦。
+         */
+        try {
+          node.focus({ preventScroll: true })
+        } catch (err) {
+          node.focus()
+        }
       }, [])
 
       /**
@@ -3221,9 +3316,19 @@ window.__ModuleLoader__.load({
         (node) => {
           if (node === null) return
           if (node.contains(document.activeElement)) return
-          if (typeof node.focus === 'function') node.focus()
+          if (typeof node.focus === 'function') {
+            // 同 `focusOnMount`：弹层里的聚焦不许滚动背后的面板。
+            try {
+              node.focus({ preventScroll: true })
+            } catch (err) {
+              node.focus()
+            }
+          }
           // 长列表里高亮项可能在滚动区之外：把它带进视野（官方 `Menu` 也做这件事）。
-          if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+          // `inline:'nearest'`：**只**在弹层自己的滚动区里纵向移动，不带动祖先横向滚动。
+          if (typeof node.scrollIntoView === 'function') {
+            node.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+          }
         },
         [],
       )
@@ -3267,7 +3372,12 @@ window.__ModuleLoader__.load({
       const focusSearch = () => {
         const input = searchRef.current
         if (input === null || typeof input.focus !== 'function') return false
-        input.focus()
+        // 与 `focusOnMount` 同理：弹层里的聚焦不许滚动背后的面板（`preventScroll`）。
+        try {
+          input.focus({ preventScroll: true })
+        } catch (err) {
+          input.focus()
+        }
         return true
       }
 
@@ -3431,18 +3541,18 @@ window.__ModuleLoader__.load({
             ...(place.up
               ? { bottom: String(place.anchor) + 'px' }
               : { top: String(place.anchor) + 'px' }),
-            left: String(place.left) + 'px',
             /*
-             * 宽度 = `max(触发器宽, 内容宽)`，并夹进视口（task-17）。
+             * 水平：**右边界贴触发器右边界，向左延展**（task-18）。
              *
-             * 以前是 `width: place.width` + `maxWidth: place.width`（**跟触发器同宽**），
-             * 于是长模型 id 只能在窄列里被省略号截断 —— 而模型 id 恰恰只差后缀，
-             * 用户分不清就选错。现在：
-             *   `max-content` 让弹层按**内容**撑开（比触发器宽也没关系，它是 fixed 的）；
-             *   `minWidth` 保证短内容也不比触发器窄（视觉上仍"贴着"那个字段）；
-             *   `maxWidth` 是右侧可用空间（`place.maxWidth`），贴右边时自动夹住，
-             *   此时长标签改为**换行**（见选项行标签的样式），绝不截断。
+             *   `right`  = 触发器右边界到视口右边的距离 ⇒ 弹层右边界 == 触发器右边界；
+             *   `width: max-content`（内容宽）/ `minWidth: 触发器宽` /
+             *   `maxWidth: 可用宽`（容器内容框到触发器右边界）⇒
+             *   实际宽度 = `min(内容宽, 可用宽)`，实际左边界 = `右边界 − 实际宽度`。
+             *
+             * 于是弹层**永远在卡片里面**（可用宽就是从卡的内容框左边界量到触发器右边界），
+             * 放不下时长标签**换行**（见选项行标签的样式），绝不截断。
              */
+            right: String(place.right) + 'px',
             width: 'max-content',
             minWidth: String(place.width) + 'px',
             maxWidth: String(place.maxWidth) + 'px',
@@ -5311,6 +5421,14 @@ window.__ModuleLoader__.load({
               value: size,
               disabled: save.busy,
               options: sizes,
+              /*
+               * **尺寸下拉一律不要搜索框**（task-18）：候选都是短词（`1:1` / `3:4` …），
+               * 搜索框只是噪音。`searchable: false` 是**强制关闭**（与"没传"不同），
+               * 所以 Agnes 那种 40 项（8 比例 + 32 精确尺寸）的清单同样不带搜索框 ——
+               * 用户明确要求尺寸这一个字段一律不搜索（模型 / 厂商下拉不受影响，
+               * 它们仍然按 >8 自动带搜索框）。
+               */
+              searchable: false,
               onChange: (event) => setSize(event.target.value),
             }),
           ),

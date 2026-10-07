@@ -2421,6 +2421,101 @@ describe('jsdom lane：张数步进器的手动输入（task-17）', () => {
   })
 })
 
+// ── task-18：尺寸下拉**不要**搜索框（模型/厂商不受影响）───────────────────────
+//
+// `SelectField` 的搜索框原本按"选项数 > 8 自动开"。尺寸那一枚按要求**显式关闭**：
+// `searchable: false` = 强制不显示（与"没传"是两件事）。这里一正一反各断一条，
+// 防的正是"一刀切把搜索全关了"：尺寸（哪怕 Agnes 的 40 项）没有搜索框，
+// 模型（>8 项）仍然有。
+
+/** 点开某一行的下拉，返回弹层容器（没打开就报错，不静默跳过）。 */
+async function openSelect(lane, label) {
+  const trigger = lane.selectTriggerByLabel(label)
+  assert.ok(trigger, '「' + label + '」那一行必须有下拉触发器')
+  await act(async () => {
+    trigger.click()
+  })
+  await settleAll()
+  const list = lane.selectList()
+  assert.ok(list, '点开「' + label + '」之后必须出现弹层（[data-pxm-select-list]）')
+  return list
+}
+
+describe('jsdom lane：下拉搜索框的显式开关（task-18）', () => {
+  it('E1 尺寸下拉不渲染搜索框 —— 哪怕 40 项（Agnes 的清单）也没有', async () => {
+    // Agnes 那套：8 个比例 + 32 个精确尺寸 = 40 项，全都短词。
+    const RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2', '21:9']
+    const WIDTHS = [1024, 1280, 1536, 2048]
+    const HEIGHTS = [768, 1024, 1152, 1344, 1536, 2048, 3072, 4096]
+    const PIXELS = []
+    for (const w of WIDTHS) {
+      for (const h of HEIGHTS) {
+        PIXELS.push(String(w) + 'x' + String(h))
+      }
+    }
+    const sizeOptions = RATIOS.concat(PIXELS).map((value) => ({ value: value, label: value }))
+    assert.equal(sizeOptions.length, 40, '夹具必须真的是 40 项（Agnes 的清单）')
+
+    const lane = await defaultsLane({
+      respond: defaultsResponder(),
+      props: {
+        providers: [
+          { id: 'agnes', label: 'Agnes AI', models: ['m-1'], sizeOptions: sizeOptions },
+        ],
+        defaults: { provider: 'agnes', model: 'm-1', size: '1:1', n: 1 },
+      },
+    })
+    await lane.render()
+
+    const list = await openSelect(lane, '尺寸')
+    assert.equal(
+      list.querySelector('[data-pxm-select-search]'),
+      null,
+      '尺寸下拉**不许**渲染搜索框（40 项也不许 —— 候选都是短词，搜索是噪音）',
+    )
+    // 关掉搜索也不许把选项弄丢。
+    assert.equal(
+      list.querySelectorAll('[data-pxm-option]').length,
+      sizeOptions.length,
+      '40 项必须全部渲染出来',
+    )
+    // 选中一条仍然要能写回（弹层已经开着，直接点那一项）。
+    const chosen = list.querySelector('[data-pxm-option="3:4"]')
+    assert.ok(chosen, '弹层里必须有 3:4 这一项')
+    await act(async () => {
+      chosen.click()
+    })
+    await settleAll()
+    assert.equal(lane.selectValue(lane.selectTriggerByLabel('尺寸')), '3:4')
+  })
+
+  it('E2 模型下拉（>8 项）仍然有搜索框 —— 防"一刀切把搜索全关了"', async () => {
+    const models = []
+    for (let i = 0; i < 12; i += 1) models.push('vendor/model-' + String(i))
+    const lane = await defaultsLane({
+      respond: defaultsResponder(),
+      props: {
+        providers: [{ id: 'ofox', label: 'Ofox', models: models, allowedSizes: ['1:1'] }],
+        defaults: { provider: 'ofox', model: models[0], size: '1:1', n: 1 },
+      },
+    })
+    await lane.render()
+
+    const list = await openSelect(lane, '模型')
+    assert.ok(
+      list.querySelector('[data-pxm-select-search]'),
+      '模型下拉 12 项（>8）**必须仍然**自动带搜索框',
+    )
+    // 厂商下拉只有 1 家（≤8）：自动模式下本来就没有搜索框（现状不变）。
+    const vendorList = await openSelect(lane, '厂商')
+    assert.equal(
+      vendorList.querySelector('[data-pxm-select-search]'),
+      null,
+      '厂商下拉只有 1 项，自动模式下不该有搜索框',
+    )
+  })
+})
+
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
 
 /**
