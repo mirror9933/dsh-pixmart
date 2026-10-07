@@ -1,9 +1,26 @@
 {
   "name": "dsh-pixmart",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH 电商生图插件：主图 / 详情图 / 广告图生成，风格复刻，作品库与生图实时预览",
   "type": "module",
   "license": "MIT",
+  "author": "mirror9933",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirror9933/dsh-pixmart.git"
+  },
+  "homepage": "https://github.com/mirror9933/dsh-pixmart#readme",
+  "bugs": {
+    "url": "https://github.com/mirror9933/dsh-pixmart/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ecommerce",
+    "product-image",
+    "image-generation"
+  ],
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {

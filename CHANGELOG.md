@@ -3,6 +3,14 @@
 本文件记录本项目的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.2] - 2026-10-07
+
+### Added
+
+- npm 与仓库的关联元数据：`repository` / `homepage` / `bugs` / `keywords` / `author`
+  （awesome-dsh-plugin 收录要求已发布包的 `repository` 指回被收录的仓库，否则两者不会关联）。
+- 仓库添加 `dsh-plugin` topic。
+
 ## [0.1.1] - 2026-10-07
 
 ### Added
@@ -60,5 +68,6 @@
 开发期的内部版本，`private: true`，**未发布**；仅通过本地路径安装验证功能（主链路、厂商适配、作品库、
 四套测试 lane）。打包步骤当时尚未收尾，因此不做分发。
 
+[0.1.2]: https://www.npmjs.com/package/dsh-pixmart/v/0.1.2
 [0.1.1]: https://www.npmjs.com/package/dsh-pixmart/v/0.1.1
 [0.1.0]: https://www.npmjs.com/package/dsh-pixmart/v/0.1.0

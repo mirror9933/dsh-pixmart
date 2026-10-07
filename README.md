@@ -14,7 +14,7 @@ dsh --profile px --dump-config                           # 输出里应出现 ds
 
 - **包名** `dsh-pixmart` —— 已发布，最省事；
 - **Release 的 `.tgz`**（零闸门，包内自带 `lib/`+`dist/`）：
-  `https://github.com/mirror9933/dsh-pixmart/releases/download/v0.1.1/dsh-pixmart-0.1.1.tgz`
+  `https://github.com/mirror9933/dsh-pixmart/releases/download/v0.1.2/dsh-pixmart-0.1.2.tgz`
 - **本地目录**（开发用）：链接安装不触发构建，先自己 `pnpm build && pnpm build:client`。
 
 ⚠️ **别填仓库地址**：它算 git 依赖，pnpm 11 的构建闸门会拦下 `prepare`（`allowBuilds` 要精确键、含 commit sha，DSH 的「允许并重试」救不了）。用上面前两条。
