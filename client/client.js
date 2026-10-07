@@ -1518,6 +1518,28 @@ window.__ModuleLoader__.load({
           },
           props.label,
         ),
+        /*
+         * 可选的**说明文字**（2026-10-12 task-19）：堆叠字段里它排在标签**下一行**、
+         * 控件之上（官方 `._3nPmjq_advancedHint` 那一档 12px/18px / `label-tertiary`）。
+         * 行式 `Field` 早就有 `description`，这里补上是为了让「作品库导出路径」这类
+         * **长文本**字段能从行式改成堆叠式而不丢说明。
+         */
+        props.description === undefined || props.description === null
+          ? null
+          : h(
+              'span',
+              {
+                'data-pxm-editor-field-desc': '1',
+                'data-pxm-field-desc': '1',
+                style: {
+                  color: T.labelTertiary,
+                  fontSize: S.rowDescFontSize,
+                  fontWeight: 400,
+                  lineHeight: S.rowDescLineHeight,
+                },
+              },
+              props.description,
+            ),
         h(
           'div',
           {
@@ -5529,11 +5551,21 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { display: 'flex', flexDirection: 'column' } },
+          /*
+           * 官方对**文本输入**本来的形态是"标签 + 说明在上、输入框在下一行占满整行"
+           * （厂商卡片编辑区里的「API 密钥」/「API 地址」就是这一种，即官方
+           * `._3nPmjq_field` / `._3nPmjq_fieldLabel`）。这里以前用的是**行式** `Field`
+           * （标签+说明在左、控件在右），而右侧那一列是 `flexShrink:0` 的收缩盒 ——
+           * 输入框因此只拿到自己的固有宽度（实测 ≈200px），占位符
+           * `绝对路径，如 D:/PixMart…` 被截断，而这一项要填的是**绝对路径**（长字符串）。
+           * 换成堆叠式之后输入框 `width:100%` 直接吃满卡片内容框宽度（task-19）。
+           */
           h(
-            Field,
+            EditorField,
             {
               label: '作品库导出路径（须为绝对路径）',
               description: '留空 = 未配置；导出时才复制到 <该路径>/<项目 id>/',
+              controlId: 'pxm-export-dir',
             },
             h(TextInput, {
               id: 'pxm-export-dir',

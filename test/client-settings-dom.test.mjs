@@ -3130,6 +3130,92 @@ describe('jsdom lane：作品库导出路径卡片', () => {
     await settleAll()
     assert.ok(exportDirButton(lane, '保存'), '请求结束后按钮应恢复')
   })
+
+  it('长绝对路径：逐字保存（布局改成堆叠式后值仍一字不改）', async () => {
+    /*
+     * task-19：这一项从**行式**（标签+说明在左、控件在右）改成官方**堆叠式**
+     * （标签+说明在上、输入框在下一行占满整行），因为行式给了输入框一个 ~200px 的窄列，
+     * 而它要填的是**绝对路径**。这里断两件事：
+     *   ① 结构确实是堆叠式（`[data-pxm-editor-field]`，column；标签/说明在输入框之上）；
+     *   ② 超长绝对路径**逐字**进 POST body（证明只有布局变了，值没被截断或改写）。
+     */
+    const LONG_PATH =
+      'D:/PixMart 产品图导出/2026 秋季批次/电商主图（3:4 白底 + 场景）/最终交付-请勿改动'
+    const posted = []
+    let current = ''
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/settings\/export-dir$/.test(String(url))) {
+          const body = JSON.parse(String(init?.body ?? '{}'))
+          posted.push(body)
+          current = body.exportDir
+          return jsonResponse({ ok: true, exportDir: current })
+        }
+        return jsonResponse(providersPayload({ exportDir: current }))
+      },
+    })
+    await lane.render()
+
+    const input = exportDirInput(lane)
+    // ① 堆叠形态：输入框住在一个 flex-column 的堆叠字段里，标签与说明在它**之上**。
+    const field = input.closest('[data-pxm-editor-field]')
+    assert.ok(field, '导出路径必须用官方**堆叠式**字段（[data-pxm-editor-field]）')
+    assert.equal(
+      lane.window.getComputedStyle(field).flexDirection,
+      'column',
+      '堆叠字段必须是 flex-direction: column（标签在上、输入框在下）',
+    )
+    const label = field.querySelector('[data-pxm-field-label]')
+    assert.ok(label, '堆叠字段必须有标签')
+    assert.ok(
+      (label.textContent ?? '').includes('作品库导出路径（须为绝对路径）'),
+      '标签文案必须原样保留，实测 ' + JSON.stringify(label.textContent),
+    )
+    const desc = field.querySelector('[data-pxm-editor-field-desc]')
+    assert.ok(desc, '说明文字必须保留在堆叠字段里')
+    assert.ok(
+      (desc.textContent ?? '').includes('留空 = 未配置'),
+      '说明文案必须原样保留，实测 ' + JSON.stringify(desc.textContent),
+    )
+    // 顺序：标签 → 说明 → 控件（文档顺序就是堆叠顺序，列方向里它等价于"由上到下"）。
+    const order = [...field.children].map((node) => node.getAttribute('data-pxm-field-label') === '1'
+      ? 'label'
+      : node.getAttribute('data-pxm-editor-field-desc') === '1'
+        ? 'desc'
+        : node.getAttribute('data-pxm-editor-field-control') === '1'
+          ? 'control'
+          : 'other')
+    assert.deepEqual(order.slice(0, 3), ['label', 'desc', 'control'], '必须是「标签 / 说明 / 控件」自上而下')
+    // 输入框自己必须是整宽（`inputStyle` 的 width:100%），不再是窄列里的收缩盒。
+    assert.equal(input.style.width, '100%', '输入框必须是 width:100%（占满堆叠字段）')
+    assert.ok(
+      input.closest('[data-pxm-editor-field-control]'),
+      '输入框必须住在堆叠字段的控件区里',
+    )
+    assert.equal(
+      input.closest('[data-pxm-field-control]'),
+      null,
+      '输入框不该再住在行式 Field 的右列（[data-pxm-field-control]）里 —— 那一列是收缩盒，' +
+        '正是"输入框只有 ~200px"的根因',
+    )
+
+    // ② 逐字保存：超长绝对路径一个字符都不能变。
+    await lane.type(input, LONG_PATH)
+    assert.equal(input.value, LONG_PATH, '输入框里必须原样保存用户敲的整串路径')
+    await lane.click(exportDirButton(lane, '保存'))
+    assert.equal(posted.length, 1, '应只有 1 次 POST')
+    assert.deepEqual(posted[0], { exportDir: LONG_PATH }, 'POST body 必须只有 exportDir 且逐字一致')
+    assert.equal(posted[0].exportDir, LONG_PATH, '路径必须**逐字**一致（不被截断/改写）')
+    // 成功后重取 → 界面照新值显示（也不截断）。
+    assert.equal(exportDirInput(lane).value, LONG_PATH, '保存后界面必须显示完整路径')
+    assert.ok(lane.text().includes('已保存'), '应给出成功提示')
+
+    // 清除仍然可用（语义没变）。
+    await lane.click(exportDirButton(lane, '清除'))
+    assert.deepEqual(posted[1], { exportDir: '' }, '「清除」仍然发空串')
+    assert.equal(exportDirInput(lane).value, '')
+  })
 })
 
 async function settleAll() {

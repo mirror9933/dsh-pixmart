@@ -645,6 +645,141 @@ if (launched.browser === null) {
       }
     })
 
+    /**
+     * task-19（用户截图）：**「作品库导出路径」的输入框显示不全** —— 占位符
+     * `绝对路径，如 D:/PixMart…` 被截断，框只有约 200px 宽，而它要填的是**绝对路径**。
+     *
+     * 根因：那一项用的是**行式**字段（标签+说明在左、控件在右），右列是 `flexShrink:0`
+     * 的收缩盒，输入框只拿到自己的固有宽度。改成官方**堆叠式**（`data-pxm-editor-field`：
+     * 标签+说明在上、输入框在下一行占满整行）之后：
+     *   - 实测宽度必须 ≥ 卡片**内容框**宽度的 90%（具体数字写进失败信息）；
+     *   - 左边界与卡片内容框左边界对齐（±1）、右边界不越出（±1）—— 不再是挤在右边的窄列；
+     *   - 纵向必须是"标签在输入框**上方**"（堆叠形态，不是左右同排）；
+     *   - 「保存 / 清除」两枚按钮仍在卡片内容框内（既有行为不回归）。
+     * **窄视口（375px）下同样要成立**（375 是既有窄屏用例用的那一档）。
+     */
+    it('导出路径输入框 = 堆叠式：宽度 ≥ 卡片内容框的 90%，左右与内容框对齐（窄屏同样）', async () => {
+      /** 卡片 / 内容框 / 输入框 / 标签 / 两枚按钮的矩形（一次取完，少往返）。 */
+      const exportBox = (page) =>
+        page.evaluate(() => {
+          const input = document.querySelector('#pxm-export-dir')
+          if (input === null) return null
+          // 卡片 = 最近的 `skin.card`（flex + column + padding 12px 14px），与 jsdom 那份夹具同判据。
+          let node = input.parentElement
+          let card = null
+          while (node !== null && node !== document.body) {
+            const cs = window.getComputedStyle(node)
+            if (
+              cs.display === 'flex' &&
+              cs.flexDirection === 'column' &&
+              cs.padding === '12px 14px'
+            ) {
+              card = node
+              break
+            }
+            node = node.parentElement
+          }
+          if (card === null) return null
+          const cardStyle = window.getComputedStyle(card)
+          const cardRect = card.getBoundingClientRect()
+          const padL = parseFloat(cardStyle.paddingLeft) || 0
+          const padR = parseFloat(cardStyle.paddingRight) || 0
+          const bL = parseFloat(cardStyle.borderLeftWidth) || 0
+          const bR = parseFloat(cardStyle.borderRightWidth) || 0
+          const rectOf = (el) => {
+            if (el === null || el === undefined) return null
+            const r = el.getBoundingClientRect()
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }
+          }
+          const fieldBox = input.closest('[data-pxm-editor-field]')
+          return {
+            card: rectOf(card),
+            content: {
+              left: cardRect.left + bL + padL,
+              right: cardRect.right - bR - padR,
+              width: cardRect.width - bL - bR - padL - padR,
+            },
+            input: rectOf(input),
+            label: rectOf(
+              fieldBox === null ? null : fieldBox.querySelector('[data-pxm-field-label]'),
+            ),
+            desc: rectOf(
+              fieldBox === null ? null : fieldBox.querySelector('[data-pxm-editor-field-desc]'),
+            ),
+            fieldDirection:
+              fieldBox === null ? null : window.getComputedStyle(fieldBox).flexDirection,
+            buttons: Array.prototype.map.call(card.querySelectorAll('button'), (button) => ({
+              text: (button.textContent || '').trim(),
+              disabled: button.disabled === true,
+              rect: rectOf(button),
+            })),
+          }
+        })
+
+      // 375 是既有窄屏用例那档；1280 是常规设置页宽度。
+      for (const width of [1280, 375]) {
+        const { page, context, problems } = await openLane({
+          width,
+          height: 900,
+          slot: 'settings.section',
+          fixture: fixture(),
+        })
+        try {
+          await page.waitForSelector('#pxm-export-dir')
+          const box = await exportBox(page)
+          assert.ok(box !== null, String(width) + 'px：必须能定位导出路径卡片与其内容框')
+
+          const need = box.content.width * 0.9
+          assert.ok(
+            box.input.width >= need,
+            String(width) + 'px：导出路径输入框必须 ≥ 卡片内容框宽度的 90%（≥ ' +
+              String(Math.round(need * 100) / 100) +
+              'px），实测 ' +
+              String(Math.round(box.input.width * 100) / 100) +
+              'px（卡片内容框 ' +
+              String(Math.round(box.content.width * 100) / 100) +
+              'px）：' +
+              JSON.stringify({ input: box.input, content: box.content }),
+          )
+          assert.ok(
+            Math.abs(box.input.left - box.content.left) <= 1,
+            String(width) + 'px：输入框左边界必须与卡片内容框左边界对齐（±1）：' +
+              JSON.stringify({ input: box.input, content: box.content }),
+          )
+          assert.ok(
+            box.input.right <= box.content.right + 1,
+            String(width) + 'px：输入框右边界不得越出卡片内容框（±1）：' +
+              JSON.stringify({ input: box.input, content: box.content }),
+          )
+          // 堆叠形态：标签 / 说明在输入框**上方**，字段是 column。
+          assert.equal(box.fieldDirection, 'column', String(width) + 'px：字段必须是 flex-direction:column')
+          assert.ok(
+            box.label !== null && box.label.bottom <= box.input.top + 1,
+            String(width) + 'px：标签必须在输入框上方（堆叠式，而不是左右同排）：' +
+              JSON.stringify({ label: box.label, input: box.input }),
+          )
+          assert.ok(
+            box.desc !== null && box.desc.top >= box.label.top - 1 && box.desc.bottom <= box.input.top + 1,
+            String(width) + 'px：说明文字必须夹在标签与输入框之间：' +
+              JSON.stringify({ label: box.label, desc: box.desc, input: box.input }),
+          )
+          // 「保存 / 清除」仍在卡片内容框内（位置正常、没被挤出卡片）。
+          for (const text of ['保存', '清除']) {
+            const button = box.buttons.filter((b) => b.text === text)[0]
+            assert.ok(button !== undefined, String(width) + 'px：卡片里必须有「' + text + '」按钮')
+            assert.ok(
+              button.rect.left >= box.content.left - 1 && button.rect.right <= box.content.right + 1,
+              String(width) + 'px：「' + text + '」必须落在卡片内容框内：' +
+                JSON.stringify({ button: button.rect, content: box.content }),
+            )
+          }
+          assert.deepEqual(problems, [])
+        } finally {
+          await context.close()
+        }
+      }
+    })
+
     it('成组的「标签 + 值」（数据目录）在窄屏下仍留在同一行', async () => {
       /**
        * 这一对是 bug 1（标签与值被 flex 拆散）在现产物里**仅存**的成组形态：
