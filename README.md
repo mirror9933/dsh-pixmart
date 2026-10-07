@@ -6,14 +6,13 @@
 ## 安装
 
 ```sh
-dsh plugin --profile px add E:\Programs\agent\dsh-pixmart   # 或包名 / GitHub 地址，见下
-dsh --profile px --dump-config                              # 输出里应出现 dsh-pixmart 层
+dsh plugin --profile px add dsh-pixmart                  # 已发布到 npm，最省事；也可换 .tgz 地址或本地绝对路径
+dsh --profile px --dump-config                           # 输出里应出现 dsh-pixmart 层
 ```
 
-**在线安装**（`dsh plugin add <spec>`）—— 三种填法：
-- **包名** `dsh-pixmart`（需先 `npm publish`）；**GitHub 地址** `https://github.com/mirror9933/dsh-pixmart`；**本地目录**（**必须绝对路径**）如 `E:\Programs\agent\dsh-pixmart`。
-- git 安装走 `prepare`、打包/发布走 `prepack`，都会**自动构建** `lib/` + `dist/`，装完即可用（本地改 `client.js` 时仍需手动 `pnpm build:client`）。
-- ⚠️ **GitHub 地址**这条会被 pnpm 11 的构建脚本闸门拦下（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`）；处置与无闸门的替代装法见「发布」。
+**在线安装**（`dsh plugin add <spec>`）—— 按推荐顺序：
+- **① 包名 `dsh-pixmart`**（**已发布到 npm**，最省事）；**② Release 的 `.tgz`**（**零闸门**、包内自带 `lib/`+`dist/`）：`https://github.com/mirror9933/dsh-pixmart/releases/download/v0.1.0/dsh-pixmart-0.1.0.tgz`；**③ 本地绝对路径**如 `E:\Programs\agent\dsh-pixmart`（开发用，链接安装**不会**触发构建，先自己 `pnpm build && pnpm build:client`）。
+- ⚠️ **别填 GitHub 仓库地址**（`https://github.com/mirror9933/dsh-pixmart`）：它算 git 依赖，pnpm 11 会用构建闸门拦下 `prepare`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），得手改 profile 的 `allowBuilds` 精确键（**含 commit sha、每次提交都变**），DSH 的「允许并重试」写的是裸包名、救不了 ⇒ 请用 ①②。
 
 **改了什么 → 怎么生效**：host 半（`src/` → `lib/`）**重启宿主**；client 半（`client/client.js` → `dist/client.js`）先 `pnpm build:client` 再**刷新页面**；`package.json` / `exports` / profile bundles **重启宿主**。
 （`dsh` 的退出码恒为 1，**别用退出码判断成功**，看输出里的 `Done in …`。）
@@ -102,11 +101,14 @@ pnpm verify         # typecheck + build + 宿主 lane + 浏览器 lane，全绿�
 
 ## 发布
 
-`npm publish` 即可（`private` 已去掉、tarball 里已含 `lib/` + `dist/`）—— 只差先 `npm login`。
+```sh
+npm login && npm publish    # 需要 2FA：加 `--otp=<6 位码>`，或改用能 bypass-2FA 的 granular access token
+npm pack                    # → dsh-pixmart-<版本>.tgz（prepack 已构建好 lib/ + dist/）
+gh release create v<版本> dsh-pixmart-<版本>.tgz --title v<版本>    # 别人就能用「.tgz 地址」装（见「安装」②）
+```
 
-**GitHub 地址装法**会被 pnpm 11 拦下 `prepare`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`）：按报错在 profile 的
-`pnpm-workspace.yaml` 加 `allowBuilds: { "dsh-pixmart@git+<仓库地址>#<commit>": true }`（**键要带 spec + commit**，
-裸包名无效、每次新 commit 都要更新）；或改用 `npm pack` 出的 `.tgz` 挂 GitHub Release，`dsh plugin add <该 tgz 的 https 地址>`（无闸门）。
+装「`.tgz` **地址**」是零闸门的分发方式（见「安装」的 ②）；**git 仓库地址不是**——它是 git 依赖，会被 pnpm 11 的构建闸门挡住。
+改版本号时记得同步 README「安装」里的 `.tgz` 地址。
 
 ## 许可
 
