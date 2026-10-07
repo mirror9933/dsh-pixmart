@@ -220,6 +220,14 @@ async function createLane(options = {}) {
     setRespond(next) {
       respond = next
     },
+    /**
+     * `client.js` 的 `__test__` 表（常量与纯函数）。
+     *
+     * 为什么挂出来：有些断言必须与**源码里的同一串文本**对齐（例如 `HOST_STALE_HINT`）。
+     * 在测试里再抄一遍字符串，源码一改这里就会"静默地断错东西"；直接读常量则
+     * 语义永远跟源码同步（`test/host-error.test.mjs` 另有对常量本身的断言）。
+     */
+    __test__: bag,
     text: () => container.textContent ?? '',
     buttons: () => [...container.querySelectorAll('button')],
     button(label) {
@@ -2942,6 +2950,153 @@ describe('jsdom lane：模型选择面板', () => {
         /* 已关就算了 */
       }
     }
+  })
+})
+
+// ── task-21：设置页四处文案（错误态二选一 / 历史产出 / 导语 / 尺寸说明）──────────
+
+describe('jsdom lane：设置页文案精简（task-21）', () => {
+  /** 通用兜底提示（只在**没有**具体错误时渲染）与它要排除的那半句。 */
+  const GENERIC = '宿主路由可能尚未就绪，或插件未加载到当前 profile。'
+
+  it('F1 错误态二选一：有具体错误就只渲染它（通用句不出现）；没有具体错误才渲染通用句', async () => {
+    /*
+     * 用户拍板的行为：**二选一**。以前两句同屏出现、建议还不一致
+     * （`state.error` 常常就是 `HOST_STALE_HINT`，旁边那句却说"可能没就绪/没加载"）。
+     * 一正一反两条，防的是"干脆两句都删了"。
+     */
+    // ① 有具体错误（宿主回可读 message）→ 只渲染它。
+    const withError = await createLane({
+      respond: () => jsonResponse({ ok: false, error: { code: 'boom', message: '服务端炸了：请稍后重试' } }, 500),
+    })
+    await withError.render()
+    const textA = withError.text()
+    assert.ok(textA.includes('服务端炸了：请稍后重试'), '必须渲染宿主给的具体错误：' + JSON.stringify(textA))
+    assert.equal(
+      textA.includes(GENERIC),
+      false,
+      '有具体错误时**不许**再渲染那句通用提示（同屏两条诊断、建议还不一致）：' + JSON.stringify(textA),
+    )
+    assert.ok(withError.button('重试'), '错误态必须仍然给出「重试」按钮')
+
+    // ② 具体错误 = `HOST_STALE_HINT`（unknown_route，最常见的形态）→ 只渲染它。
+    const hostStale = await createLane({
+      respond: () => jsonResponse({ ok: false, error: { code: 'unknown_route' } }, 404),
+    })
+    await hostStale.render()
+    const hint = hostStale.__test__.HOST_STALE_HINT
+    const textB = hostStale.text()
+    assert.ok(
+      textB.includes(hint),
+      'unknown_route 必须渲染 HOST_STALE_HINT（' + hint + '）：' + JSON.stringify(textB),
+    )
+    assert.equal(
+      textB.includes(GENERIC),
+      false,
+      'HOST_STALE_HINT 旁边不许再出现那句"可能没就绪/没加载"：' + JSON.stringify(textB),
+    )
+
+    // ③ 没有具体错误（message 是空串）→ 这时才渲染通用句。
+    const noDetail = await createLane({
+      respond: () => jsonResponse({ ok: false, error: { code: 'boom', message: '' } }, 500),
+    })
+    await noDetail.render()
+    const textC = noDetail.text()
+    assert.ok(
+      textC.includes(GENERIC),
+      '没有具体错误时必须退回那句通用提示（防"两句都删了"）：' + JSON.stringify(textC),
+    )
+    assert.equal(
+      textC.includes(hint),
+      false,
+      '没有具体错误时不许凭空出现 HOST_STALE_HINT：' + JSON.stringify(textC),
+    )
+    assert.ok(noDetail.button('重试'), '通用提示态同样必须给出「重试」按钮')
+  })
+
+  it('F2 历史产出：全卡「账本之前」≤ 1 次，且张数/项目数与宿主 note 都在', async () => {
+    /*
+     * 以前渲染成「**历史产出（账本之前）**：12 张 / 2 个项目 —— **账本之前**的产出由项目记录汇总」
+     * —— 同一句里"账本之前"说了两遍（前一半是我们的前缀，后一半是宿主 note，宿主不改）。
+     * 我们的前缀已收成「历史产出：」。
+     */
+    const NOTE = '账本之前的产出由项目记录汇总'
+    const lane = await createLane({
+      respond: () =>
+        jsonResponse(
+          providersPayload({ historical: { projects: 2, images: 12, note: NOTE } }),
+        ),
+    })
+    await lane.render()
+    const text = lane.text()
+    const occurrences = text.split('账本之前').length - 1
+    assert.ok(
+      occurrences <= 1,
+      '「账本之前」最多出现 1 次（实测 ' + String(occurrences) + ' 次）：' + JSON.stringify(text),
+    )
+    // 精简不等于丢信息：前缀、数字、宿主 note 内容与分隔符都还在。
+    assert.ok(text.includes('历史产出：12 张 / 2 个项目 —— ' + NOTE), '拼接与分隔符必须不变：' + JSON.stringify(text))
+    assert.ok(text.includes(NOTE), '宿主 note 内容必须仍然渲染（宿主不改，我们也不吞）')
+    assert.ok(text.includes('12 张') && text.includes('2 个项目'), '张数 / 项目数必须仍然渲染')
+    assert.equal(text.includes('历史产出（账本之前）'), false, '旧前缀必须已经删掉')
+  })
+
+  it('F3 导语：逐字等于定稿，且长度 ≤ 定稿长度（防以后又加字）', async () => {
+    const FINAL =
+      '添加厂商、填写密钥与端点，并选定默认生图模型；密钥只以「是否就位」回显，不会显示内容。'
+    const lane = await createLane()
+    await lane.render()
+    // 导语 = 含"作为就位"那条安全承诺的那个段落（页面上只有它是 <p> 级的导语）。
+    const intro = [...lane.container.querySelectorAll('p')].find((node) =>
+      (node.textContent ?? '').includes('是否就位'),
+    )
+    assert.ok(intro, '必须能找到设置页导语（含「是否就位」的那一段）')
+    const visible = (intro.textContent ?? '').trim()
+    assert.equal(visible, FINAL, '导语必须**逐字**等于定稿：' + JSON.stringify(visible))
+    assert.ok(
+      visible.length <= FINAL.length,
+      '导语长度必须 ≤ 定稿长度 ' + String(FINAL.length) + '（实测 ' + String(visible.length) + '）—— 防以后又加字',
+    )
+    // 安全承诺两个关键片段都不能丢。
+    assert.ok(visible.includes('是否就位'), '必须保留「是否就位」')
+    assert.ok(visible.includes('不会显示内容'), '必须保留「不会显示内容」')
+    // 冗余不能回来（枚举在列表里本来就有按钮）。
+    assert.equal(visible.includes('拉取模型'), false, '删掉的枚举「拉取模型」不许回来')
+    assert.equal(visible.includes('测试连接'), false, '删掉的枚举「测试连接」不许回来')
+    assert.equal(visible.includes('任何时候'), false, '删掉的冗余「任何时候」不许回来')
+  })
+
+  it('F4 尺寸说明：可见文本 == 定稿；那半句在 title 里（悬停可见），不在可见文本里', async () => {
+    const DETAIL = 'Agnes 的档位 1K–4K 由精确像素决定'
+    const lane = await createLane()
+    await lane.render()
+    const sizeField = [...lane.container.querySelectorAll('[data-pxm-field]')].find(
+      (node) => (node.querySelector('[data-pxm-field-label]')?.textContent ?? '').trim() === '尺寸',
+    )
+    assert.ok(sizeField, '「默认值」卡里必须有「尺寸」那一行')
+    const desc = sizeField.querySelector('[data-pxm-field-desc]')
+    assert.ok(desc, '「尺寸」那一行必须有说明文字')
+    assert.equal(
+      (desc.textContent ?? '').trim(),
+      '默认出图尺寸',
+      '可见说明必须就是定稿的「默认出图尺寸」：' + JSON.stringify(desc.textContent),
+    )
+    assert.equal(
+      desc.getAttribute('title'),
+      DETAIL,
+      '那半句产品细节必须搬到 title（悬停可见），且逐字一致：' + JSON.stringify(desc.getAttribute('title')),
+    )
+    // 可见文本里不许再有那半句（title 不算可见文本）。
+    assert.equal(
+      (sizeField.textContent ?? '').includes('Agnes 的档位'),
+      false,
+      'Agnes 那半句不许留在可见文本里：' + JSON.stringify(sizeField.textContent),
+    )
+    assert.equal(
+      lane.text().includes(DETAIL),
+      false,
+      '整页可见文本里都不该出现那半句（它只在 title 属性里）',
+    )
   })
 })
 

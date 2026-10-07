@@ -1441,6 +1441,11 @@ window.__ModuleLoader__.load({
                 {
                   'data-pxm-field-desc': '1',
                   ...(describedBy === undefined ? {} : { id: describedBy }),
+                  /*
+                   * 可选 `descriptionTitle`（task-21）：说明里塞不下的产品细节收进**悬停提示** ——
+                   * 版面减重、信息不丢。官方 `.rowDesc` 本身没有这层，是我们补的一个可选口子。
+                   */
+                  ...(isString(props.descriptionTitle) ? { title: props.descriptionTitle } : {}),
                   style: {
                     color: T.labelTertiary,
                     fontSize: S.rowDescFontSize,
@@ -5436,7 +5441,11 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '尺寸', description: '默认出图尺寸（Agnes 的档位 1K–4K 由精确像素决定）' },
+            /*
+             * task-21：可见说明只剩「默认出图尺寸」（原来括号里那半句产品细节偏重），
+             * Agnes 的档位一句搬到**该字段说明的 `title`** 里 —— 悬停可见、信息不丢。
+             */
+            { label: '尺寸', description: '默认出图尺寸', descriptionTitle: 'Agnes 的档位 1K–4K 由精确像素决定' },
             h(SelectField, {
               id: 'pxm-defaults-size',
               label: '尺寸',
@@ -5753,18 +5762,34 @@ window.__ModuleLoader__.load({
         )
       }
       if (state.phase === 'error') {
+        /*
+         * 诊断文案**二选一**（task-21）：有具体错误就**只**渲染它；没有具体错误时才退回那句通用提示。
+         *
+         * 以前两句同屏出现，而且建议还不一致：`state.error` 常常就是
+         * 「宿主未加载此接口，请重启 DeepSeek Harness 后重试」（`HOST_STALE_HINT`），
+         * 旁边那句却还在说"宿主路由可能尚未就绪，或插件未加载到当前 profile"。
+         * 同一件事说两遍、还说岔了 —— 现在按"有没有具体错误"分流。
+         * 判空用 `trim()`：空白串等同于"没有具体错误"。
+         */
+        const detail = isString(state.error) ? state.error.trim() : ''
         return h(
           'div',
           { className: 'pxm-settings', style: skin.wrap },
           header,
           h(
             Notice,
-            { role: 'alert', title: '读取失败', detail: state.error },
+            {
+              role: 'alert',
+              title: '读取失败',
+              ...(detail === '' ? {} : { detail: detail }),
+            },
             h(
               'div',
               { style: skin.row },
               h(Btn, { onClick: () => reload() }, '重试'),
-              h('p', { style: skin.muted }, '宿主路由可能尚未就绪，或插件未加载到当前 profile。'),
+              detail === ''
+                ? h('p', { style: skin.muted }, '宿主路由可能尚未就绪，或插件未加载到当前 profile。')
+                : null,
             ),
           ),
         )
@@ -5823,11 +5848,14 @@ window.__ModuleLoader__.load({
         'div',
         { className: 'pxm-settings', style: skin.wrap },
         header,
+        /*
+         * 导语压成一句（task-21）：删掉「拉取模型、测试连接」这类**列表里已有按钮**的枚举
+         * 与"任何时候都"这类冗余；**保留**密钥那条安全承诺（「是否就位」+「不会显示内容」）。
+         */
         h(
           'p',
           { style: skin.muted },
-          '在此填写密钥与端点、拉取模型、测试连接，并选定默认生图模型。' +
-            '密钥只以「是否就位」的形式回显，任何时候都不会显示内容。',
+          '添加厂商、填写密钥与端点，并选定默认生图模型；密钥只以「是否就位」回显，不会显示内容。',
         ),
 
         h(DefaultsCard, {
@@ -5979,7 +6007,12 @@ window.__ModuleLoader__.load({
             ? h(
                 'div',
                 { style: { fontSize: '12px', opacity: 0.7, lineHeight: 1.6 } },
-                '历史产出（账本之前）：' +
+                /*
+                 * task-21：前缀原来写「历史产出（账本之前）：」，而宿主给的 `historical.note`
+                 * 本身就是「账本之前的产出由项目记录汇总」—— 同一句里"账本之前"说了两遍。
+                 * 只收我们的前缀（宿主的 note 不动，拼接与分隔符也不动）。
+                 */
+                '历史产出：' +
                   String(historical.images) +
                   ' 张 / ' +
                   String(historical.projects ?? 0) +
