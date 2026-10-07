@@ -1915,6 +1915,13 @@ window.__ModuleLoader__.load({
        */
       test: '测试连接',
       fetchModels: '拉取模型',
+      /*
+       * 忙碌文案（task-12）：两枚按钮**共用同一个 `probe` mutation**，所以忙碌文案不能挂在
+       * 同一个 `probe.busy` 上 —— 否则一个在跑，两枚同时变成各自的「…中」（用户截图里的 bug）。
+       * 这里把两条文案也收进常量表（与 `test` / `fetchModels` 成对），配 `probeAction` 使用。
+       */
+      testing: '测试中…',
+      fetching: '拉取中…',
       modelListTitle: '拉到的模型',
       selectAllModels: '全选',
       clearModels: '全不选',
@@ -2076,6 +2083,14 @@ window.__ModuleLoader__.load({
       targetKeyRef.current = targetKey
       /** 当前显示的探测结果**属于哪个目标**（空串 = 还没有任何结果）。 */
       const [resultTarget, setResultTarget] = React.useState('')
+      /**
+       * **这一次在跑的是哪一枚**（`''` / `'test'` / `'models'`）—— task-12 的 bug 修复。
+       *
+       * 两枚按钮共用同一个 `probe` mutation，所以"忙不忙"只有一个 `probe.busy`；但**忙碌文案
+       * 必须只给正在跑的那一枚**（否则一个在跑、两枚同时显示各自的「…中」，正是用户截图里
+       * 那两行）。禁用仍然看 `probe.busy`（两枚一起禁用是对的，别改）。
+       */
+      const [probeAction, setProbeAction] = React.useState('')
 
       const errorText =
         save.result !== null && save.result.ok !== true
@@ -2169,6 +2184,8 @@ window.__ModuleLoader__.load({
         if (body === null || !probeReady) return
         // 记下**发起时**的目标：响应回来时若目标已经变了，这条结果就不属于现在（不显示）。
         const keyAtStart = targetKey
+        // 忙碌文案只给这一枚（另一枚保持原文案，但仍然被 `probe.busy` 禁用）。
+        setProbeAction('test')
         probe
           .run(async () => {
             const outcome = await apiPost('api/providers/probe', body)
@@ -2177,6 +2194,8 @@ window.__ModuleLoader__.load({
           })
           .then((outcome) => {
             if (!alive.current) return outcome
+            // 请求已经落地（成功或失败都一样）：忙碌文案收掉 —— 无论下面的目标守卫怎么走。
+            setProbeAction('')
             if (targetKeyRef.current !== keyAtStart) return outcome
             setResultTarget(keyAtStart)
             return outcome
@@ -2191,6 +2210,8 @@ window.__ModuleLoader__.load({
         const body = probeBody('models')
         if (body === null || !probeReady) return
         const keyAtStart = targetKey
+        // 忙碌文案只给这一枚（同 `onProbeTest`）。
+        setProbeAction('models')
         probe
           .run(async () => {
             const outcome = await apiPost('api/providers/probe', body)
@@ -2201,6 +2222,7 @@ window.__ModuleLoader__.load({
           })
           .then((outcome) => {
             if (!alive.current) return outcome
+            setProbeAction('')
             if (targetKeyRef.current !== keyAtStart) return outcome
             if (isObject(outcome) && outcome.ok === true && isArray(outcome.models)) {
               props.onPulled(outcome.models)
@@ -2239,11 +2261,12 @@ window.__ModuleLoader__.load({
             LinkButton,
             {
               attrs: { 'data-pxm-add-probe-test': '1' },
+              // 禁用看 `probe.busy`（**两枚一起禁用**是对的）；文案只看"这一枚在不在跑"。
               disabled: !probeReady,
               onClick: onProbeTest,
               title: probeReady ? '用当前草稿连一次，验证地址与密钥（不写配置）' : ADD_COPY.probeNeedsKey,
             },
-            probe.busy ? '测试中…' : ADD_COPY.test,
+            probe.busy && probeAction === 'test' ? ADD_COPY.testing : ADD_COPY.test,
           ),
           h(
             LinkButton,
@@ -2253,7 +2276,7 @@ window.__ModuleLoader__.load({
               onClick: onProbeModels,
               title: probeReady ? '用当前草稿拉一次模型目录（不写配置）' : ADD_COPY.probeNeedsKey,
             },
-            probe.busy ? '拉取中…' : ADD_COPY.fetchModels,
+            probe.busy && probeAction === 'models' ? ADD_COPY.fetching : ADD_COPY.fetchModels,
           ),
           /*
            * 就地结果：成功/失败都在这一行里（`Msg` 的 role 会跟着切 status / alert）。

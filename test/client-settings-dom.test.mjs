@@ -2077,6 +2077,173 @@ describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', ()
   })
 })
 
+// ── task-12：忙碌文案只给"正在跑的那一枚"（两枚共用一个 probe mutation）────────
+//
+// 用户报的 bug（截图）：点「测试连接」时**两枚同时**变成忙碌文案（`测试中…` + `拉取中…`）。
+// 根因：两枚按钮共用一个 `probe`（`useMutation`），忙碌文案都挂在同一个 `probe.busy` 上。
+//
+// 「飞行中」这一刻**只能靠挂起的 fetch 来断言** —— 不挂起的话，请求可能在断言之前就
+// 落地了（那样断言的就是"返回后"的状态，等于没测）。下面的 `holdProbe()` 就是那个开关。
+
+/**
+ * 造一个**可控在途**的探测：`POST api/providers/probe` 会一直挂着，直到测试显式
+ * `release(i, body)`。其余请求（首屏 GET 等）照常立刻返回。
+ */
+function holdProbe() {
+  const held = []
+  const respond = (url, init) => {
+    const method = String(init?.method ?? 'GET').toUpperCase()
+    if (method === 'POST' && /\/api\/providers\/probe$/.test(String(url))) {
+      let settle = null
+      const promise = new Promise((resolve) => {
+        settle = resolve
+      })
+      held.push({ body: JSON.parse(String(init?.body ?? '{}')), settle })
+      return promise
+    }
+    return jsonResponse(providersPayload())
+  }
+  return {
+    respond,
+    held,
+    /** 放行第 `index` 个在途探测（响应体由调用方给）。 */
+    release: (index, body) => held[index].settle(jsonResponse(body)),
+  }
+}
+
+describe('jsdom lane：探测行忙碌文案只给在跑的那一枚（task-12）', () => {
+  it('C1 点「测试连接」在途：只有它显示「测试中…」，另一枚仍是「拉取模型」；两枚都禁用；返回后恢复', async () => {
+    const gate = holdProbe()
+    const lane = await createLane({ respond: gate.respond })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+
+    // 静止态基线：两枚都是原文案、都可点。
+    assert.equal(probeTest(lane).textContent.trim(), '测试连接')
+    assert.equal(probeModels(lane).textContent.trim(), '拉取模型')
+    assert.equal(probeTest(lane).disabled, false)
+    assert.equal(probeModels(lane).disabled, false)
+
+    await lane.click(probeTest(lane))
+    assert.equal(gate.held.length, 1, '点「测试连接」必须发出 1 次探测')
+    assert.equal(gate.held[0].body.action, 'test', '这一次的 action 必须是 test')
+
+    // ── 就在"飞行中"这一刻断言 ────────────────────────────────────────────
+    assert.equal(
+      probeTest(lane).textContent.trim(),
+      '测试中…',
+      '在跑的那一枚必须显示「测试中…」（反向断言：防止修成"两枚永远不显示忙碌"）',
+    )
+    assert.notEqual(
+      probeTest(lane).textContent.trim(),
+      '测试连接',
+      '在途时这一枚的文案**必须**已经变了（这就是上面那条的反向形式）',
+    )
+    assert.equal(
+      probeModels(lane).textContent.trim(),
+      '拉取模型',
+      '**没在跑的那一枚必须保持原文案** —— 这里正是用户截图里的 bug：以前它会同时变成「拉取中…」',
+    )
+    // 禁用状态：两枚一起禁用（现状是对的，别改坏）。
+    assert.equal(probeTest(lane).disabled, true, '在途时两枚都必须禁用（这一枚）')
+    assert.equal(probeModels(lane).disabled, true, '在途时两枚都必须禁用（另一枚）')
+
+    // 放行 → 两枚都恢复原文案与可点状态，且结果就地显示。
+    await act(async () => {
+      gate.release(0, { ok: true, latencyMs: 42, modelCount: PROBE_MODELS.length })
+    })
+    await settleAll()
+    await settleAll()
+    assert.equal(probeTest(lane).textContent.trim(), '测试连接', '返回后忙碌文案必须收掉')
+    assert.equal(probeModels(lane).textContent.trim(), '拉取模型', '另一枚始终是原文案')
+    assert.equal(probeTest(lane).disabled, false, '返回后两枚必须恢复可点')
+    assert.equal(probeModels(lane).disabled, false, '返回后两枚必须恢复可点')
+    assert.ok(
+      (probeResult(lane)?.textContent ?? '').includes('连接正常'),
+      '放行后必须就地显示成功结果',
+    )
+  })
+
+  it('C2 点「拉取模型」在途：只有它显示「拉取中…」，另一枚仍是「测试连接」；返回后恢复并渲染列表', async () => {
+    const gate = holdProbe()
+    const lane = await createLane({ respond: gate.respond })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+
+    await lane.click(probeModels(lane))
+    assert.equal(gate.held.length, 1, '点「拉取模型」必须发出 1 次探测')
+    assert.equal(gate.held[0].body.action, 'models', '这一次的 action 必须是 models')
+
+    assert.equal(
+      probeModels(lane).textContent.trim(),
+      '拉取中…',
+      '在跑的那一枚必须显示「拉取中…」（反向断言）',
+    )
+    assert.notEqual(probeModels(lane).textContent.trim(), '拉取模型', '在途时这一枚的文案必须已经变了')
+    assert.equal(
+      probeTest(lane).textContent.trim(),
+      '测试连接',
+      '**没在跑的那一枚必须保持原文案**（另一条用户截图里的 bug 形态）',
+    )
+    assert.equal(probeModels(lane).disabled, true, '在途时两枚都必须禁用（这一枚）')
+    assert.equal(probeTest(lane).disabled, true, '在途时两枚都必须禁用（另一枚）')
+    // 在途时还**没有**列表（列表要等响应回来）。
+    assert.equal(pulledList(lane), null, '在途时不该已经画出列表')
+
+    await act(async () => {
+      gate.release(0, { ok: true, models: PROBE_MODELS, count: PROBE_MODELS.length })
+    })
+    await settleAll()
+    await settleAll()
+    assert.equal(probeModels(lane).textContent.trim(), '拉取模型', '返回后忙碌文案必须收掉')
+    assert.equal(probeTest(lane).textContent.trim(), '测试连接', '另一枚始终是原文案')
+    assert.equal(probeModels(lane).disabled, false, '返回后两枚必须恢复可点')
+    assert.equal(probeTest(lane).disabled, false, '返回后两枚必须恢复可点')
+    assert.deepEqual(pulledNames(lane), PROBE_MODELS, '放行后列表必须就地渲染出那几条')
+  })
+
+  it('C3 两枚按钮的忙碌文案互不串台（先后各跑一次，各自只标记自己）', async () => {
+    const gate = holdProbe()
+    const lane = await createLane({ respond: gate.respond })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+
+    // 跑 test：只有 test 忙。
+    await lane.click(probeTest(lane))
+    assert.equal(
+      probeTest(lane).textContent.trim() + ' | ' + probeModels(lane).textContent.trim(),
+      '测试中… | 拉取模型',
+      '飞行中这一刻两枚的文案必须分别是「测试中…」「拉取模型」',
+    )
+    await act(async () => {
+      gate.release(0, { ok: true, latencyMs: 42, modelCount: 3 })
+    })
+    await settleAll()
+    await settleAll()
+
+    // 紧接着跑 models：只有 models 忙。
+    await lane.click(probeModels(lane))
+    assert.equal(
+      probeTest(lane).textContent.trim() + ' | ' + probeModels(lane).textContent.trim(),
+      '测试连接 | 拉取中…',
+      '换成拉取时，忙碌文案必须**换到另一枚**上（两枚互不串台）',
+    )
+    await act(async () => {
+      gate.release(1, { ok: true, models: PROBE_MODELS, count: PROBE_MODELS.length })
+    })
+    await settleAll()
+    await settleAll()
+    assert.equal(
+      probeTest(lane).textContent.trim() + ' | ' + probeModels(lane).textContent.trim(),
+      '测试连接 | 拉取模型',
+      '两次都返回后，两枚都必须回到原文案',
+    )
+  })
+})
+
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
 
 /**
