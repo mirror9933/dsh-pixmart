@@ -308,3 +308,19 @@ pnpm verify           # 上面几条串起来
 ## 许可
 
 MIT。提示词与实现均为本仓库原创；组织结构参考了 `pixmart-ai`（MIT）的模块化思路，详见方案 §15。
+
+## 待办（尚未实现，已记录待补）
+
+### T1. 账本要能证明"参考图真的传出去了"（可观测性）
+
+**背景**：图生图真机验证时发现，出图是对的，但**账本自证不了**（见
+[docs/contract-notes.md](./docs/contract-notes.md) §40.2）：
+
+- `usage.jsonl` 只写 `apiMode`，**没有"本次用了 N 张参考图"**；
+- `project.json` **不记录参考图路径**，作品库看不出这张图基于哪几张图；
+- 适配器带**降级重试**（`src/vendor/openai-compat.ts` 的 fallback trail 里有一档
+  `no-references`），而**账本不记录"成功的是哪一档"** —— 因此无法从账本排除"其实降级成了纯文生图"。
+
+**要补的**：
+1. `usage.jsonl` 增加**成功那一档的 label**（attempt label）与**参考图张数**；
+2. `project.json` 记录**参考图路径**（作品库可显示"基于哪几张图"，也便于复现）。
