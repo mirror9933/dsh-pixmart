@@ -191,13 +191,29 @@ const providersFixture = {
 /**
  * 写请求的响应（lane 的 `fixture.posts`，键是路径正则）。
  * `api/providers$` = 新增一家（**不含 `/` 后缀所以命不中 `…/delete`**）；
- * `/delete$` = 移除一家（task-4 §1：没有 DELETE 方法，走 POST）。
+ * `/delete$` = 移除一家（task-4 §1：没有 DELETE 方法，走 POST）；
+ * `api/providers/probe$` = **草稿探测**（task-10）。
+ *
+ * ⚠️ 这份表会被 `page.evaluate` **序列化**进页面（lane 的 `install`），所以值只能是
+ * 纯数据 —— 写函数会直接报 "Attempting to serialize unexpected value"。而探测的两种
+ * `action` 共用**同一条路径**，没法在表里按 body 分流：这里给的响应同时带上两种形状的
+ * 字段（`models`/`count` 与 `latencyMs`/`modelCount`），客户端各自只读自己那几个键。
+ * `action` 的区分由**请求体断言**承担（用例里逐条断 body 精确）。
+ * 另外：`models` 响应**没有 `provider` 字段**（与已保存厂商的 `/refresh-models` 不同），
+ * 这里也不给 —— 客户端若误读 `provider` 会立刻在这里露馅。
  */
 const POSTS = {
   'refresh-models$': { ok: true, models: PULLED, count: PULLED.length },
   '/test$': { ok: true, latencyMs: 42, modelCount: PULLED.length },
   '/models$': { ok: true, count: 1 },
   'api/providers$': { ok: true, provider: { id: 'openai', label: 'OpenAI' } },
+  'api/providers/probe$': {
+    ok: true,
+    models: PULLED,
+    count: PULLED.length,
+    latencyMs: 42,
+    modelCount: PULLED.length,
+  },
   '/delete$': { ok: true, removed: 'ofox', providers: [], defaults: { provider: '' } },
 }
 
@@ -1620,6 +1636,16 @@ if (launched.browser === null) {
           save: dump(document.querySelector('[data-pxm-add-save]')),
           cancel: dump(document.querySelector('[data-pxm-add-cancel]')),
           /*
+           * task-10：add-card 里那两枚**草稿探测**按钮（「测试连接 / 拉取模型」）。
+           * `dump` 带 `text` / `disabled` / `rect` / 几何 —— 3.7c 靠它证明这两枚
+           * **沿用既有 `LinkButton`**（28px / `0 10px` / 12px-18px / radius-sm / 无描边），
+           * 而不是新造了一套样式。
+           */
+          probeTest: dump(document.querySelector('[data-pxm-add-probe-test]')),
+          probeModels: dump(document.querySelector('[data-pxm-add-probe-models]')),
+          probeResult: dump(document.querySelector('[data-pxm-add-probe-result]')),
+          pulledRows: document.querySelectorAll('[data-pxm-add-model-row]').length,
+          /*
            * 「卡中卡」的反向判据：add-card 里**任何**编辑器（我们复用的那套编辑器锚点）
            * 都不许再挂 own surface。官方 `._3nPmjq_addCard ._3nPmjq_editor
            * {background:0 0;padding:0}`（`.probe/models-css-pretty.txt:44`）。
@@ -1942,6 +1968,104 @@ if (launched.browser === null) {
           postsAfterSave,
           '「取消」必须零请求（不新增任何 POST api/providers）',
         )
+
+        assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
+      } finally {
+        await context.close()
+      }
+    })
+
+    /**
+     * task-10：add-card 里新增的「测试连接 / 拉取模型」**不是新样式** ——
+     * 它们就是本文件 2.4 已经在量的那一档 `._3nPmjq_linkButton`
+     * （28px / `0 10px` / 12px-18px / `radius-sm` / 无描边）。
+     *
+     * 这一条同时证明"拉取"在**真浏览器**里跑得通（React 事件 + 原生 fetch stub）：
+     * 填了密钥后点「拉取模型」→ 列表就地渲染出探针回的那几条。
+     */
+    it('3.7c add-card 的「测试连接 / 拉取模型」= 既有 linkButton（不是新样式）；未填密钥不可点、填了能拉', async () => {
+      const { page, context, problems, calls } = await openVendorLane()
+      try {
+        await page.click('[data-pxm-add-vendor]')
+        await page.waitForSelector('[data-pxm-add-card]', { timeout: 10000 })
+
+        const metrics = await probeArgs(page, 'boxMetrics', ['[data-pxm-add-probe-test]'])
+        const metricsModels = await probeArgs(page, 'boxMetrics', ['[data-pxm-add-probe-models]'])
+        assert.ok(metrics !== null, 'add-card 里必须有「测试连接」（[data-pxm-add-probe-test]）')
+        assert.ok(metricsModels !== null, 'add-card 里必须有「拉取模型」（[data-pxm-add-probe-models]）')
+
+        const radii = await resolveRadii(page, [OFFICIAL_LINK_BUTTON.radiusVar])
+        const bad = []
+        for (const [where, box, text] of [
+          ['「测试连接」', metrics, '测试连接'],
+          ['「拉取模型」', metricsModels, '拉取模型'],
+        ]) {
+          // **同一枚组件**：类名与既有「拉取模型」一致（`pxm-link-btn`），不是新造样式。
+          if (box.className !== 'pxm-link-btn') {
+            bad.push(where + ' 必须是既有的 linkButton（class=pxm-link-btn），实测 ' + JSON.stringify(box.className))
+          }
+          if (box.tag !== 'BUTTON') bad.push(where + ' 必须是原生 <button>，实测 ' + box.tag)
+          if (box.text.trim() !== text) {
+            bad.push(where + ' 的文案必须是 ' + JSON.stringify(text) + '，实测 ' + JSON.stringify(box.text))
+          }
+          bad.push(...diffOf(box, OFFICIAL_LINK_BUTTON, where))
+          bad.push(...radiusDiff(box, OFFICIAL_LINK_BUTTON.radiusVar, radii, where))
+        }
+        assert.deepEqual(bad, [], 'add-card 的两枚探测动作与官方 linkButton 不一致：\n' + bad.join('\n'))
+        expectNoVisibleBorder(metrics, '「测试连接」')
+        expectNoVisibleBorder(metricsModels, '「拉取模型」')
+
+        /*
+         * 配色也要"沿用既有那一枚"：官方 `._3nPmjq_linkButton{color:var(--dsw-alias-label-tertiary)}`
+         * ——按**解析值**比，不写字面量。（`boxMetrics` 不交 `color`，所以这里用 `addFacts`。）
+         */
+        const colorFacts = await addFacts(page)
+        const colors = await resolveColors(page, [
+          { key: 'labelTertiary', token: '--dsw-alias-label-tertiary', prop: 'color' },
+        ])
+        const colorBad = colorDiff(colorFacts.probeTest, 'color', 'labelTertiary', colors, '「测试连接」').concat(
+          colorDiff(colorFacts.probeModels, 'color', 'labelTertiary', colors, '「拉取模型」'),
+        )
+        assert.deepEqual(
+          colorBad,
+          [],
+          '两枚探测动作的文字色必须等于官方 label-tertiary 的解析值：\n' + colorBad.join('\n'),
+        )
+
+        // 未填密钥：两枚不可点（宿主对空密钥返回 400，注定失败的请求不许发）。
+        const before = await addFacts(page)
+        assert.equal(before.probeTest.disabled, true, '未填密钥时「测试连接」必须不可点')
+        assert.equal(before.probeModels.disabled, true, '未填密钥时「拉取模型」必须不可点')
+        const probeCalls = async () =>
+          (await calls()).filter((call) => /\/api\/providers\/probe$/.test(call.url))
+        // `force: true`：禁用按钮不可点，这里就是要证明"点它也什么都发不出去"。
+        await page.click('[data-pxm-add-probe-test]', { force: true }).catch(() => {})
+        assert.deepEqual(await probeCalls(), [], '未填密钥时点探测按钮必须零探测请求')
+
+        // 填密钥 → 点「拉取模型」→ 列表就地渲染（探针回 PULLED 那么多条）。
+        await page.fill('#pxm-add-key', 'sk-lane-secret')
+        await page.click('[data-pxm-add-probe-models]')
+        await page.waitForSelector('[data-pxm-add-model-row]', { timeout: 10000 })
+        const after = await addFacts(page)
+        assert.equal(
+          after.pulledRows,
+          PULLED.length,
+          '「拉取模型」必须就地渲染出探针回的 ' + String(PULLED.length) + ' 条',
+        )
+        const probes = await probeCalls()
+        assert.equal(probes.length, 1, '「拉取模型」必须恰好 1 次探测，实际 ' + String(probes.length))
+        assert.deepEqual(
+          JSON.parse(String(probes[0].body)),
+          { action: 'models', catalogId: 'anthropic', apiKey: 'sk-lane-secret' },
+          '探测 body 必须恰为 {action,catalogId,apiKey}',
+        )
+        // 真实几何高度 28px（`.sm`）：类名对但尺寸被改坏的话这里红。
+        for (const [where, box] of [['「测试连接」', metrics], ['「拉取模型」', metricsModels]]) {
+          if (Math.abs(box.rect.height - 28) > 0.51) {
+            bad.push(where + ' 的真实几何高度：实测 ' + String(box.rect.height) + 'px，官方 .sm 是 28px')
+          }
+        }
+        assert.deepEqual(bad, [], 'add-card 的两枚探测动作与官方 linkButton 不一致：\n' + bad.join('\n'))
 
         assert.deepEqual(problems, [], '页面不该有 console.error / 未捕获异常')
       } finally {

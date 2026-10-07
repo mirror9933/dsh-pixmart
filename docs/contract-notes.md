@@ -2951,3 +2951,52 @@ custom 面板（ID / 显示名 / API 地址 / 密钥）→ 取消 / 保存。行
 `pnpm verify` 全绿：宿主 `pnpm test` **434**（§32 的 412 + 22），
 浏览器 `pnpm test:browser` **65**（未变）。**宿主改动需要重启才生效。**
 
+
+---
+
+## 34. 添加模型时就能「测试连接」「拉取模型」（草稿探测，2026-10-12）
+
+用户要求：**在「添加模型」的过程中就要能拉测试/拉模型**（此前这两枚按钮只在**已保存**的厂商卡片里）。
+根因：`/providers/<id>/test` 与 `/refresh-models` 都**针对已存在的 provider**（从配置里读密钥与端点），
+而添加时这些都还在**草稿**里。
+
+### 34.1 宿主：新增不落盘的草稿探测 `POST /providers/probe`
+
+body `{action:'test'|'models', catalogId?, baseUrl?, custom?, apiKey}`：
+- **身份字段解析与创建路径共用同一个函数**（把创建路径那段抽成 `pickProviderDraft`，`handleAddProvider`
+  也改用它）——所以两种模式的二选一 / `unknown_catalog_id` / id 正则 / label / baseUrl 校验
+  **天然一致**（断言里用同一份坏 body 分别打 probe 与 create，要求 status/code/message **逐字相等**）。
+- `apiKey` 必填非空（空 → 400 `bad_field`「请先填入 API 密钥…」），**不读配置、不认 `apiKeyEnv`**；
+  签名里没有 runtime ⇒ 结构上不可能写盘（断言：探测后 `config.json` **字节级不变**）。
+- `test`/`models` 的响应形状分别与 `/test`、`/refresh-models` 一致。
+  ⚠️ 但 **`models` 不返回 `provider` 视图**（与 `/refresh-models` 的差异，已告知客户端按 `{ok,models,count}` 解析）。
+- `POST /providers` 新增可选 **`models: string[]`**（两种模式都收）：trim、丢空、去重、**保序**；
+  非法类型 400。**这样"加的时候能拉"才有意义**（拉到的选择能随保存落盘）。
+
+### 34.2 客户端：add-card 里就地探测 + 勾选
+
+- 两枚按钮**沿用既有 `LinkButton`**（未新造样式，浏览器 lane 用 `OFFICIAL_LINK_BUTTON` 逐项断言）。
+- `draftTarget()` 被**探测与保存共用** ⇒ 不会出现"测试连接通了、保存却写到另一个地址"。
+  `baseUrl` 只在**填了且 ≠ 提供商默认**时才带（与保存同一规则）。
+- **没填密钥就不让点**（`probeReady`），断言要求"真点一下零请求"（不是"没点所以没请求"）。
+- 拉到的列表**就地渲染可勾选**（行样式沿用既有候选行；**锚点刻意用 `data-pxm-add-model-row`**
+  而不是 `data-pxm-model-row`——后者是已保存卡片选择面板的锚点，复用会互相污染）。
+- 保存时 `models` **按拉取顺序**输出（断言故意**倒着勾**来证明），空则不出现该字段
+  （发空数组会被读成"清空目录"，语义不同）。
+- 取消重置草稿工厂 ⇒ 拉到的列表与勾选一起消失（断言覆盖）。
+
+### 34.3 刻意取舍
+
+1. **默认一条都不勾**：勾选会真的落盘，不替用户做决定（要"拉到即全选"改一行）。
+2. **没有复用 `ModelPickerPanel`**：它自带「保存选择 / 取消」两个按钮与自己的 mutation，
+   塞进 add-card 会与 add-card 的取消/保存语义打架 → 按"耦合太深就做最简版"的口径做
+   （列表 + 勾选 + 全选/全不选 + 320px 内部滚动）。
+3. **`models` 的空白串是"过滤"而非"拒绝"**（与既有 `/models` 路由的 `invalid_models` 有意不同）；
+   要统一说一声。
+4. **本任务未新增反向变异**（`tools/` 不在其写域）：建议补 `M49: probeReady → true`（去掉密钥门槛），
+   会被浏览器 lane 3.7c 抓住。
+
+### 34.4 结果
+
+`pnpm verify` 全绿：宿主 **452**（§33 的 434 + 18）、浏览器 **66**（§33 的 65 + 1）。
+宿主侧先单独提交（`12535ac`），客户端接线随后提交。

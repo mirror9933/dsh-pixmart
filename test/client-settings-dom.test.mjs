@@ -1110,6 +1110,89 @@ const addError = (lane) => lane.container.querySelector('[data-pxm-add-error]')
 const addKeyInput = (lane) => lane.container.querySelector('#pxm-add-key')
 const addBaseUrlInput = (lane) => lane.container.querySelector('#pxm-add-base-url')
 
+/**
+ * 2026-10-12（task-10）：add-card 里的两枚**草稿探测**动作。
+ * 它们与已保存厂商卡片里的「测试连接 / 拉取模型」是同一枚 `LinkButton`
+ * （官方 `._3nPmjq_linkButton`），只是打的是**草稿**：`POST api/providers/probe`。
+ */
+const probeTest = (lane) => lane.container.querySelector('[data-pxm-add-probe-test]')
+const probeModels = (lane) => lane.container.querySelector('[data-pxm-add-probe-models]')
+/** 探测结果那一行（成功 / 失败都在里面；**没有结果时锚点不存在**）。 */
+const probeResult = (lane) => lane.container.querySelector('[data-pxm-add-probe-result]')
+/** 拉到的模型列表（没拉过时不存在）。 */
+const pulledList = (lane) => lane.container.querySelector('[data-pxm-add-model-list]')
+const pulledRows = (lane) => [...lane.container.querySelectorAll('[data-pxm-add-model-row]')]
+const pulledNames = (lane) =>
+  pulledRows(lane).map((node) => (node.querySelector('[data-pxm-add-model-name]')?.textContent ?? '').trim())
+
+/** 探测请求（`POST api/providers/probe`，**只读**：不写配置、也不新增厂商）。 */
+const probePosts = (lane) =>
+  lane.fetches.filter((call) => call.method === 'POST' && /\/api\/providers\/probe$/.test(call.url))
+
+/** 勾选 / 取消勾选某一行模型（点 checkbox 的真实路径）。 */
+async function toggleModelRow(lane, name, explicit) {
+  const row = pulledRows(lane).find(
+    (node) => (node.querySelector('[data-pxm-add-model-name]')?.textContent ?? '').trim() === name,
+  )
+  assert.ok(row, '拉到的列表里必须有模型 ' + name)
+  const box = row.querySelector('input[type="checkbox"]')
+  assert.ok(box, '每一行必须有勾选框')
+  if (explicit !== undefined) assert.equal(box.checked, explicit, name + ' 的初始勾选态必须是 ' + String(explicit))
+  await act(async () => {
+    box.click()
+  })
+  await settleAll()
+}
+
+/**
+ * 夹具给「拉取模型」回的模型目录。**故意给 3 个**（2 个图像模型 + 1 个纯文本）：
+ * 这样"列表条数"与"只勾 2 条"两件事都验得出来。
+ */
+const PROBE_MODELS = [
+  'openai/gpt-image-1',
+  'google/gemini-3.1-flash-image',
+  'text-embedding-3-large',
+]
+
+/**
+ * 造一个"provider-host 的 probe 路由"：按 `action` 回不同形状
+ * （`test` → `{ok,latencyMs,modelCount}`；`models` → `{ok,models,count}`），
+ * 并把收到的 body 逐条记进 `seen`。**形状来自 task-10 的冻结契约。**
+ */
+function probeResponder(seen, over = {}) {
+  return (url, init) => {
+    const method = String(init?.method ?? 'GET').toUpperCase()
+    const target = String(url)
+    if (method === 'POST' && /\/api\/providers\/probe$/.test(target)) {
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      seen.push(body)
+      if (over.fail === true) {
+        /*
+         * 失败形状**按 action 不同**（provider-host task-9 的确认）：
+         *   - `test`   → **HTTP 200** + `{ok:false, latencyMs, error:{code,message}}`
+         *                （与已保存厂商的 `/test` 同形）；
+         *   - `models` → **HTTP 401** + `{ok:false, error:{code,message}}`
+         *                （与 `/refresh-models` 同）。
+         * 两条的形状不同，所以夹具也必须分开造 —— 只造一条会漏掉另一条路径。
+         */
+        const failure = { code: 'auth', message: '密钥被拒（HTTP 401）' }
+        if (body.action === 'models') return jsonResponse({ ok: false, error: failure }, 401)
+        return jsonResponse({ ok: false, latencyMs: 12, error: failure })
+      }
+      if (body.action === 'models') {
+        return jsonResponse({ ok: true, models: PROBE_MODELS, count: PROBE_MODELS.length })
+      }
+      return jsonResponse({ ok: true, latencyMs: 42, modelCount: PROBE_MODELS.length })
+    }
+    if (method === 'POST' && /\/api\/providers$/.test(target)) {
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      seen.push(body)
+      return jsonResponse({ ok: true, provider: providerView({ id: 'anthropic', label: 'Anthropic' }) })
+    }
+    return jsonResponse(providersPayload())
+  }
+}
+
 /** 点虚线按钮展开 add-card，并先断"它现在真的可点 + 卡真的出来了"。 */
 async function openAddCard(lane) {
   const button = addButton(lane)
@@ -1540,6 +1623,272 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
     const posts = lane.postCalls()
     assert.equal(posts.length, 1)
     assert.equal(posts[0].method, 'POST', '本仓库只支持 GET/POST：删除也走 POST，不是 DELETE')
+  })
+
+  // ── task-10：在 add-card 里就能「测试连接 / 拉取模型」（打草稿）────────────────
+  //
+  // 冻结的宿主接口：`POST api/providers/probe`
+  //   `{action:'test'|'models', catalogId, baseUrl?, apiKey}`（目录模式）
+  //   `{action:'test'|'models', custom:{id,label,baseUrl}, apiKey}`（自定义模式）
+  //   → test  `{ok,latencyMs?,modelCount?}`；models `{ok,models,count}`；空 apiKey → 400。
+  // 「保存」新增可选 `models`（勾选结果随新增一起落盘）。
+
+  it('A9 未填密钥时两枚探测按钮不可点，点它零请求（不许发注定 400 的请求）', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+
+    assert.ok(probeTest(lane), 'add-card 里必须有「测试连接」（[data-pxm-add-probe-test]）')
+    assert.ok(probeModels(lane), 'add-card 里必须有「拉取模型」（[data-pxm-add-probe-models]）')
+    assert.equal(probeTest(lane).textContent.trim(), '测试连接', '文案沿用既有那一枚')
+    assert.equal(probeModels(lane).textContent.trim(), '拉取模型', '文案沿用既有那一枚')
+    assert.equal(probeTest(lane).disabled, true, '没填密钥时「测试连接」必须不可点')
+    assert.equal(probeModels(lane).disabled, true, '没填密钥时「拉取模型」必须不可点')
+
+    // 真点一下（不是"没点所以没请求"）：禁用元素的 click 不派发，handler 不会跑。
+    await lane.click(probeTest(lane))
+    await lane.click(probeModels(lane))
+    assert.deepEqual(probePosts(lane), [], '未填密钥时点探测按钮必须零请求')
+    assert.deepEqual(lane.postCalls(), [], '未填密钥时点探测按钮必须一个请求都不发')
+
+    // 填上密钥之后两枚必须恢复可点（否则上面那两条就是"永远点不动"的假绿）。
+    await lane.type(addKeyInput(lane), SECRET)
+    assert.equal(probeTest(lane).disabled, false, '填了密钥后「测试连接」必须可点')
+    assert.equal(probeModels(lane).disabled, false, '填了密钥后「拉取模型」必须可点')
+    assert.deepEqual(probePosts(lane), [], '只是填密钥不该发任何请求')
+  })
+
+  it('A10 点「测试连接」→ 恰好 1 次 POST api/providers/probe，body 恰为 {action,catalogId,apiKey}，就地上结果', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+    // 默认选中第一个未添加的厂商（夹具 = anthropic）；密钥是唯一的必填项。
+    await lane.type(addKeyInput(lane), SECRET)
+
+    await lane.click(probeTest(lane))
+
+    assert.equal(seen.length, 1, '「测试连接」必须恰好发 1 次探测，实际 ' + String(seen.length))
+    assert.deepEqual(
+      seen[0],
+      { action: 'test', catalogId: 'anthropic', apiKey: SECRET },
+      'body 必须恰为 {action,catalogId,apiKey}（API 地址没填就**不许**出现 baseUrl）',
+    )
+    // 注意不能用 `lane.fetches[0]`：那一条是首屏的 `GET api/providers` —— 目标要看**探测**自身。
+    assert.equal(probePosts(lane).length, 1, '探测请求必须恰好 1 条')
+    assert.match(
+      probePosts(lane)[0].url,
+      /\/api\/providers\/probe$/,
+      '探测的目标必须是 api/providers/probe',
+    )
+    // 就地结果（不是 alert、不是弹窗）。
+    assert.ok(probeResult(lane), '成功时必须就地显示探测结果（[data-pxm-add-probe-result]）')
+    assert.ok(
+      (probeResult(lane).textContent ?? '').includes('连接正常'),
+      '成功文案沿用既有的「连接正常」，实测 ' + JSON.stringify(probeResult(lane).textContent),
+    )
+    assert.ok(addCard(lane), '探测不改变 add-card 的展开状态')
+  })
+
+  it('A11 点「拉取模型」→ body 恰为 {action:models,catalogId,apiKey}，列表就地渲染出夹具的 N 条', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+
+    assert.equal(pulledList(lane), null, '还没拉取时不该有列表')
+    await lane.click(probeModels(lane))
+
+    const probes = seen.filter((body) => body.action === 'models')
+    assert.equal(probes.length, 1, '「拉取模型」必须恰好发 1 次探测，实际 ' + String(probes.length))
+    assert.deepEqual(
+      probes[0],
+      { action: 'models', catalogId: 'anthropic', apiKey: SECRET },
+      'body 必须恰为 {action,catalogId,apiKey}',
+    )
+    assert.ok(pulledList(lane), '拉取后必须就地出现列表（[data-pxm-add-model-list]）')
+    assert.deepEqual(
+      pulledNames(lane),
+      PROBE_MODELS,
+      '列表必须逐条等于探测返回的模型（保序）',
+    )
+    assert.equal(pulledRows(lane).length, PROBE_MODELS.length)
+    // 默认一条都不勾：勾选是用户的显式动作（"加的时候就拉"不该替用户做决定）。
+    for (const row of pulledRows(lane)) {
+      assert.equal(row.querySelector('input[type="checkbox"]').checked, false)
+    }
+  })
+
+  it('A12 勾选 2 条 + 保存 → POST api/providers 的 body 恰为 {catalogId, apiKey, models:[…2条…]}', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+    await lane.click(probeModels(lane))
+
+    // 全选 / 全不选这两枚也要真能用（否则列表只有'点单行'一条路）。
+    await lane.click(lane.container.querySelector('[data-pxm-add-model-select-all]'))
+    assert.deepEqual(
+      pulledRows(lane)
+        .filter((row) => row.querySelector('input[type="checkbox"]').checked)
+        .map((row) => (row.querySelector('[data-pxm-add-model-name]')?.textContent ?? '').trim()),
+      PROBE_MODELS,
+      '「全选」必须勾上拉到的每一条',
+    )
+    await lane.click(lane.container.querySelector('[data-pxm-add-model-clear]'))
+    assert.equal(
+      pulledRows(lane).every((row) => row.querySelector('input[type="checkbox"]').checked === false),
+      true,
+      '「全不选」必须把勾选清空',
+    )
+
+    /*
+     * **故意倒着勾**（第 2 条 → 第 1 条）：提交出来的 `models` 仍必须是**拉取列表的顺序**，
+     * 与已保存厂商卡片里的「保存选择」同一做法 —— 否则"点的先后"会决定落盘顺序。
+     */
+    await toggleModelRow(lane, PROBE_MODELS[1], false)
+    await toggleModelRow(lane, PROBE_MODELS[0], false)
+
+    await lane.click(addSave(lane))
+
+    const adds = seen.filter((body) => body.action === undefined)
+    assert.equal(adds.length, 1, '「保存」必须恰好发 1 次 POST api/providers，实际 ' + String(adds.length))
+    assert.deepEqual(
+      adds[0],
+      { catalogId: 'anthropic', apiKey: SECRET, models: [PROBE_MODELS[0], PROBE_MODELS[1]] },
+      'body 必须恰为 {catalogId, apiKey, models:[勾选的那 2 条，按拉取顺序]}',
+    )
+    // 凑齐一整套：探测 2 次（1 test / 1 models 之外的 pull）+ 新增 1 次 = 3 次 POST。
+    assert.equal(lane.postCalls().length, 2, '总 POST 数 = 1 次拉取 + 1 次新增')
+  })
+
+  it('A13 自定义 tab 下同样两条：探测 body 用 custom，保存时 models 一起走 custom', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+    await switchAddMode(lane, 'custom')
+
+    const CUSTOM = { id: 'my-relay', label: '我的中转', baseUrl: 'https://relay.example.test/v1' }
+    /*
+     * custom 面板还没填全（ID / API 地址空）时两枚探测按钮必须拦着：那种 body 缺字段，
+     * 宿主一定判 400 —— 注定失败的请求一个都不许发。
+     */
+    await lane.type(addKeyInput(lane), SECRET)
+    assert.equal(probeTest(lane).disabled, true, 'custom 字段没填全时「测试连接」必须不可点')
+    assert.equal(probeModels(lane).disabled, true, 'custom 字段没填全时「拉取模型」必须不可点')
+    await lane.click(probeTest(lane))
+    await lane.click(probeModels(lane))
+    assert.equal(seen.length, 0, 'custom 字段没填全时不许发探测')
+
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-id="1"]'), CUSTOM.id)
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-label="1"]'), CUSTOM.label)
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-baseurl="1"]'), CUSTOM.baseUrl)
+    assert.equal(probeTest(lane).disabled, false, 'custom 填全后「测试连接」必须可点')
+
+    await lane.click(probeModels(lane))
+    assert.equal(seen.length, 1, 'custom 模式的拉取必须发出去')
+    assert.deepEqual(
+      seen[0],
+      { action: 'models', custom: CUSTOM, apiKey: SECRET },
+      'custom 模式的探测 body 必须恰为 {action, custom:{id,label,baseUrl}, apiKey}',
+    )
+
+    await lane.click(probeTest(lane))
+    assert.equal(seen.length, 2, 'custom 模式的测试连接必须发出去')
+    assert.deepEqual(
+      seen[1],
+      { action: 'test', custom: CUSTOM, apiKey: SECRET },
+      'custom 模式的测试 body 同样精确',
+    )
+
+    await lane.click(lane.container.querySelector('[data-pxm-add-model-select-all]'))
+    await lane.click(addSave(lane))
+    const adds = seen.filter((body) => body.action === undefined)
+    assert.equal(adds.length, 1)
+    assert.deepEqual(
+      adds[0],
+      { custom: CUSTOM, apiKey: SECRET, models: PROBE_MODELS },
+      'custom 新增的 body 必须恰为 {custom, apiKey, models}',
+    )
+  })
+
+  it('A14 「取消」必须零请求，且拉到的列表 / 勾选 / 结果一起消失（草稿丢弃）', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), SECRET)
+    await lane.click(probeModels(lane))
+    await toggleModelRow(lane, PROBE_MODELS[0])
+    const before = lane.postCalls().length
+    assert.equal(before, 1, '拉取那一次是唯一的 POST')
+
+    await lane.click(addCancel(lane))
+    assert.ok(addCard(lane) === null, '「取消」后 add-card 必须消失')
+    assert.ok(addButton(lane), '「取消」后必须回到虚线按钮态')
+    assert.equal(lane.postCalls().length, before, '「取消」不得新增任何请求')
+
+    // 再展开：列表、勾选、探测结果、密钥**全部**应该是干净的。
+    await openAddCard(lane)
+    assert.equal(pulledList(lane), null, '取消后拉到的列表必须消失（草稿丢弃）')
+    assert.equal(probeResult(lane), null, '取消后探测结果必须消失')
+    assert.equal(addKeyInput(lane).value, '', '取消后密钥框必须清空')
+    assert.equal(probeTest(lane).disabled, true, '取消后（密钥为空）探测按钮必须回到不可点')
+  })
+
+  it('A15 探测失败 → 就地显示结构化错误（code + message），add-card 不关闭、不新增厂商', async () => {
+    /*
+     * 两条失败路径的形状**不同**（provider-host task-9）：
+     *   「测试连接」= HTTP 200 + `{ok:false, latencyMs, error}`；
+     *   「拉取模型」= HTTP 401 + `{ok:false, error}`。
+     * 两个都要就地渲染，且都不许把 add-card 关掉 / 顺手新增。
+     */
+    for (const [where, click, fallback] of [
+      ['测试连接', (lane) => probeTest(lane), '测试中…'],
+      ['拉取模型', (lane) => probeModels(lane), '拉取中…'],
+    ]) {
+      const seen = []
+      const lane = await createLane({ respond: probeResponder(seen, { fail: true }) })
+      await lane.render()
+      await openAddCard(lane)
+      await lane.type(addKeyInput(lane), SECRET)
+
+      await lane.click(click(lane))
+      // 等待异步落地（`probe.run` 里两次 await）。
+      await settleAll()
+      await settleAll()
+
+      assert.equal(
+        probePosts(lane).length,
+        1,
+        where + ' 失败路径也要把那一次探测发出去（只 1 次）',
+      )
+      const result = probeResult(lane)
+      assert.ok(result, where + ' 失败时也必须就地给结果（[data-pxm-add-probe-result]）')
+      const text = result.textContent ?? ''
+      assert.ok(
+        text.includes('密钥被拒（HTTP 401）'),
+        where + ' 必须显示宿主给的可读 message，实测 ' + JSON.stringify(text),
+      )
+      assert.ok(
+        text.includes('auth'),
+        where + ' 必须带上结构化 code（沿用 postResult 的 `message（code）` 形态）',
+      )
+      assert.ok(addCard(lane), where + ' 失败**不许**关闭 add-card')
+      assert.ok(result.querySelector('[role="alert"]'), where + ' 失败结果必须是 role="alert"')
+      // 失败后按钮必须回到可点（不能卡在"测试中…"）。
+      assert.equal(click(lane).textContent.trim(), fallback === '测试中…' ? '测试连接' : '拉取模型')
+      assert.deepEqual(
+        seen.filter((body) => body.action === undefined),
+        [],
+        where + ' 失败不得顺手发一次新增',
+      )
+      await lane.dispose()
+    }
   })
 })
 

@@ -1620,6 +1620,13 @@ window.__ModuleLoader__.load({
           type: 'button',
           className: 'pxm-link-btn',
           ...(isString(props.role) && props.role !== '' ? { 'data-pxm-role': props.role } : {}),
+          /*
+           * `props.attrs` 是给**语义锚点**（`data-pxm-*`）用的透传口 —— 与 `ActionButton`
+           * 同一做法（见它的注释）。2026-10-12 随 add-card 的「测试连接 / 拉取模型」引入：
+           * 那两枚要各带一个锚点，但绝不能为此新造一种按钮样式（形态必须仍是官方
+           * `._3nPmjq_linkButton`，浏览器 lane 有几何断言钉着）。
+           */
+          ...(isObject(props.attrs) ? props.attrs : {}),
           onClick: props.onClick,
           disabled,
           title: props.title,
@@ -1901,6 +1908,18 @@ window.__ModuleLoader__.load({
        * 一眼可见，否则用户会以为目录里少了厂商。用全角括号（与页面其它中文标点一致）。
        */
       addedSuffix: '（已添加）',
+      /*
+       * 2026-10-12（task-10）：add-card 里那两枚**草稿探测**动作，文案逐字沿用**已保存**
+       * 厂商卡片里那两枚（`LinkButton`，官方 `._3nPmjq_linkButton`）—— 同一件事在同一个页面
+       * 里不该有两套叫法。
+       */
+      test: '测试连接',
+      fetchModels: '拉取模型',
+      modelListTitle: '拉到的模型',
+      selectAllModels: '全选',
+      clearModels: '全不选',
+      /** 两枚探测按钮在"还没填密钥"时的悬停说明（点不了，但要让人知道为什么）。 */
+      probeNeedsKey: '先在「API 密钥」里填一个密钥，才能测试连接 / 拉取模型',
       provider: '提供商',
       keyInput: 'API 密钥',
       keyPlaceholderNative: '输入 API 密钥，或留空使用环境认证',
@@ -1954,6 +1973,8 @@ window.__ModuleLoader__.load({
       const mode = props.mode
 
       const save = useMutation()
+      /** 草稿探测（测试连接 / 拉取模型）：**只读**，绝不写配置，所以与 `save` 分开。 */
+      const probe = useMutation()
       const alive = useAlive()
 
       React.useEffect(() => {
@@ -1996,10 +2017,47 @@ window.__ModuleLoader__.load({
        */
       const customId = String(props.customId ?? '').trim()
       const customBaseUrl = String(props.customBaseUrl ?? '').trim()
+      const customLabel = String(props.customLabel ?? '').trim() || customId
       const customReady = customId !== '' && /^https?:\/\//i.test(customBaseUrl)
       const canSubmit =
         !save.busy &&
         (mode === 'custom' ? customReady : !exhausted && picked !== null)
+
+      /** 草稿密钥（**发请求前一律 trim**：宿主对空串返回 400 `bad_field`）。 */
+      const apiKey = String(props.apiKey ?? '').trim()
+      /** 拉到的模型列表 / 勾选结果 —— 两者都住在**草稿**里（取消即全部丢弃）。 */
+      const pulled = isArray(props.pulled) ? props.pulled.map(String) : []
+      const chosen = isArray(props.chosen) ? props.chosen.map(String) : []
+      const chosenSet = new Set(chosen)
+
+      /**
+       * 草稿里"要连的那一家"（task-10 的 `POST api/providers/probe` 与「保存」共用这一段）：
+       *   catalog → `{catalogId, baseUrl?}`；custom → `{custom:{id,label,baseUrl}}`。
+       *
+       * `baseUrl` 只在**填了、且与「提供商默认」不同**时才带 —— 与 `submit` 同一条规则
+       * （宿主对空串判 400；相同值带了也是噪音）。抽成一个函数是为了让**探测和保存
+       * 永远发同一份地址**，不会出现"测试连接通了、保存却写到另一个地址"。
+       */
+      const draftTarget = () => {
+        if (mode === 'custom') {
+          return { custom: { id: customId, label: customLabel, baseUrl: customBaseUrl } }
+        }
+        if (picked === null) return null
+        const body = { catalogId: String(picked.id) }
+        const override = String(props.baseUrl ?? '').trim()
+        const providerDefault = String(picked.baseUrl ?? '').trim()
+        if (override !== '' && override !== providerDefault) body.baseUrl = override
+        return body
+      }
+
+      /** 探测 / 保存共用的"草稿是否具备发起请求的条件"。 */
+      const keyReady = apiKey !== ''
+      const targetReady = mode === 'custom' ? customReady : picked !== null
+      /**
+       * 两枚探测按钮的可用性：**没填密钥就不许点**（宿主对空密钥返回 400），
+       * custom 面板还没填全 ID / 地址时同样拦住 —— 注定 400 的请求一个都不发。
+       */
+      const probeReady = keyReady && targetReady && !probe.busy && !save.busy
 
       const errorText =
         save.result !== null && save.result.ok !== true
@@ -2025,41 +2083,39 @@ window.__ModuleLoader__.load({
             )
 
       /**
-       * 提交（body 的字段名由宿主 task-6 冻结）：
-       *   catalog → `{catalogId, baseUrl?, apiKey?}`；custom → `{custom:{id,label,baseUrl}, apiKey?}`。
+       * 提交（body 的字段名由宿主 task-6 / task-10 冻结）：
+       *   catalog → `{catalogId, baseUrl?, apiKey?, models?}`；
+       *   custom  → `{custom:{id,label,baseUrl}, apiKey?, models?}`。
        *
        * `baseUrl` 只在**用户真的填了、且与「提供商默认」不同**时才进 body：留空时发
        * `baseUrl: ''` 会被宿主判 400 `bad_field`（空串在那边的语义是"覆盖成空"）。
        * 同理，custom 面板的 API 地址为空时这里**根本不发请求**（按钮也已禁用）。
+       * `models` 同理：**一条都没勾就完全不出现这个字段**（不是发空数组 —— 那会变成
+       * "把模型目录清空"，语义完全不同）。
        */
       const submit = () => {
-        const apiKey = String(props.apiKey ?? '').trim()
-        let body
-        if (mode === 'custom') {
-          if (!customReady) {
-            save.run(() =>
-              Promise.resolve({
-                ok: false,
-                error: '自定义提供商必须有 ID 和以 http(s):// 开头的 API 地址',
-              }),
-            )
-            return
-          }
-          body = {
-            custom: {
-              id: customId,
-              label: String(props.customLabel ?? '').trim() || customId,
-              baseUrl: customBaseUrl,
-            },
-          }
-        } else {
-          if (picked === null) return
-          body = { catalogId: String(picked.id) }
-          const override = String(props.baseUrl ?? '').trim()
-          const providerDefault = String(picked.baseUrl ?? '').trim()
-          if (override !== '' && override !== providerDefault) body.baseUrl = override
+        if (mode === 'custom' && !customReady) {
+          save.run(() =>
+            Promise.resolve({
+              ok: false,
+              error: '自定义提供商必须有 ID 和以 http(s):// 开头的 API 地址',
+            }),
+          )
+          return
         }
+        const target = draftTarget()
+        if (target === null) return
+        const body = { ...target }
         if (apiKey !== '') body.apiKey = apiKey
+        /*
+         * 勾选结果随保存一起落盘（这就是"加的时候能拉"的意义）。
+         * **按拉取列表的顺序**输出（不是勾选的先后顺序）：与已保存厂商卡片里的
+         * 「保存选择」同一做法（那里也是 `list.filter(name => chosen.has(name))`）——
+         * 同一批模型不管用户从哪一行开始点，提交出来的数组都一样，宿主那边的落盘结果
+         * 也就不会因为"点的顺序不同"而变。
+         */
+        const pickedModels = pulled.filter((name) => chosenSet.has(name))
+        if (pickedModels.length > 0) body.models = pickedModels
         save
           .run(() => apiPost('api/providers', body))
           .then((outcome) => {
@@ -2068,6 +2124,232 @@ window.__ModuleLoader__.load({
             return outcome
           })
       }
+
+      /** 草稿探测的 body（冻结形状见任务规格；`action` 由调用方给 `test` / `models`）。 */
+      const probeBody = (action) => {
+        const target = draftTarget()
+        if (target === null) return null
+        return { action, ...target, apiKey }
+      }
+
+      /**
+       * 「测试连接」对**草稿**生效：`POST api/providers/probe {action:'test', …}` ——
+       * 宿主**绝不写配置**（它只解析一次草稿）。成功 / 失败都就地给可读结果（`Msg`），
+       * **不用 alert、也不关 add-card**。
+       */
+      const onProbeTest = () => {
+        const body = probeBody('test')
+        if (body === null || !probeReady) return
+        probe.run(async () => {
+          const outcome = await apiPost('api/providers/probe', body)
+          if (outcome.ok !== true) return postResult(outcome, '')
+          return postResult(outcome, '连接正常')
+        })
+      }
+
+      /**
+       * 「拉取模型」同样打草稿：把返回的列表**就地**渲染成可勾选的列表（默认一条都不勾，
+       * 需要勾的自己点 / 用「全选」）；勾选结果进草稿，随「保存」一起提交。
+       */
+      const onProbeModels = () => {
+        const body = probeBody('models')
+        if (body === null || !probeReady) return
+        probe
+          .run(async () => {
+            const outcome = await apiPost('api/providers/probe', body)
+            if (outcome.ok !== true) return postResult(outcome, '')
+            const data = isObject(outcome.data) ? outcome.data : {}
+            const list = isArray(data.models) ? data.models.map(String) : []
+            return { ok: true, text: '已拉取 ' + String(list.length) + ' 个模型', models: list }
+          })
+          .then((outcome) => {
+            if (!alive.current) return outcome
+            if (isObject(outcome) && outcome.ok === true && isArray(outcome.models)) {
+              props.onPulled(outcome.models)
+            }
+            return outcome
+          })
+      }
+
+      /** 勾选 / 全选 / 全不选都只改草稿里的 `chosen`（顺序 = 拉取列表的顺序）。 */
+      const toggleModel = (name) =>
+        props.onChosen(
+          chosenSet.has(name) ? chosen.filter((item) => item !== name) : chosen.concat([name]),
+        )
+      const selectAllModels = () => props.onChosen(pulled.slice())
+      const clearModels = () => props.onChosen([])
+
+      /**
+       * 探测行：两枚 `LinkButton`（沿用既有 `._3nPmjq_linkButton` 形态与文案，**不新造样式**）
+       * + 就地结果（`Msg`）+ 拉到的模型列表。
+       *
+       * 放在两个面板**之外**只渲染**一份**：两个面板都在 DOM 里（靠 `hidden` 切换），
+       * 各放一份会让隐藏那一份留下同锚点的不可见按钮 —— 与「取消 / 保存」同一处理
+       * （见下面 `actions` 上的注释）。
+       */
+      const probeBlock = h(
+        'div',
+        {
+          'data-pxm-add-probe': '1',
+          style: { display: 'flex', flexDirection: 'column', gap: S.addModesGap, minWidth: 0 },
+        },
+        h(
+          'div',
+          { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' } },
+          h(
+            LinkButton,
+            {
+              attrs: { 'data-pxm-add-probe-test': '1' },
+              disabled: !probeReady,
+              onClick: onProbeTest,
+              title: probeReady ? '用当前草稿连一次，验证地址与密钥（不写配置）' : ADD_COPY.probeNeedsKey,
+            },
+            probe.busy ? '测试中…' : ADD_COPY.test,
+          ),
+          h(
+            LinkButton,
+            {
+              attrs: { 'data-pxm-add-probe-models': '1' },
+              disabled: !probeReady,
+              onClick: onProbeModels,
+              title: probeReady ? '用当前草稿拉一次模型目录（不写配置）' : ADD_COPY.probeNeedsKey,
+            },
+            probe.busy ? '拉取中…' : ADD_COPY.fetchModels,
+          ),
+          // 就地结果：成功/失败都在这一行里（`Msg` 的 role 会跟着切 status / alert）。
+          isObject(probe.result)
+            ? h(
+                'span',
+                { 'data-pxm-add-probe-result': '1' },
+                h(Msg, { result: probe.result }),
+              )
+            : null,
+        ),
+        pulled.length === 0
+          ? null
+          : h(
+              'div',
+              {
+                'data-pxm-add-model-list': '1',
+                style: { display: 'flex', flexDirection: 'column', gap: S.catalogGap, minWidth: 0 },
+              },
+              h(
+                'div',
+                { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' } },
+                h(
+                  'span',
+                  {
+                    style: {
+                      color: T.labelSecondary,
+                      fontSize: S.catalogTitleFontSize,
+                      fontWeight: 500,
+                      lineHeight: S.catalogTitleLineHeight,
+                    },
+                  },
+                  ADD_COPY.modelListTitle,
+                ),
+                h(
+                  'span',
+                  {
+                    'data-pxm-add-model-count': '1',
+                    style: {
+                      color: T.labelTertiary,
+                      fontSize: S.catalogMetaFontSize,
+                      lineHeight: S.catalogMetaLineHeight,
+                    },
+                  },
+                  '已选 ' + String(chosen.length) + ' / 共 ' + String(pulled.length),
+                ),
+                h(
+                  LinkButton,
+                  {
+                    attrs: { 'data-pxm-add-model-select-all': '1' },
+                    disabled: probe.busy || save.busy,
+                    onClick: selectAllModels,
+                    title: '勾选拉到的全部模型',
+                  },
+                  ADD_COPY.selectAllModels,
+                ),
+                h(
+                  LinkButton,
+                  {
+                    attrs: { 'data-pxm-add-model-clear': '1' },
+                    disabled: probe.busy || save.busy || chosen.length === 0,
+                    onClick: clearModels,
+                    title: '取消全部勾选',
+                  },
+                  ADD_COPY.clearModels,
+                ),
+              ),
+              /*
+               * 行样式**沿用既有候选列表那一套**（`S.modelListGap` / `S.modelScrollMaxHeight`
+               * / `S.modelRow*`，官方 `.candidateList` / `.candidateLabel`），锚点用
+               * `data-pxm-add-model-*` 而**不是** `data-pxm-model-row`：后者是"已保存厂商卡片里
+               * 那个选择面板"的锚点，jsdom / 浏览器 lane 都在按它数行数，混用会互相污染。
+               */
+              h(
+                'div',
+                {
+                  className: 'pxm-model-list',
+                  style: {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: S.modelListGap,
+                    maxHeight: S.modelScrollMaxHeight,
+                    overflowY: 'auto',
+                    padding: 0,
+                    margin: 0,
+                    minWidth: 0,
+                  },
+                },
+                pulled.map((name) =>
+                  h(
+                    'label',
+                    {
+                      key: name,
+                      'data-pxm-add-model-row': '1',
+                      className: 'pxm-model-row',
+                      style: {
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: S.modelRowGap,
+                        padding: S.modelRowPad,
+                        borderRadius: S.radiusMd,
+                        minWidth: 0,
+                        cursor: probe.busy ? 'not-allowed' : 'pointer',
+                      },
+                    },
+                    h('input', {
+                      type: 'checkbox',
+                      checked: chosenSet.has(name),
+                      disabled: probe.busy || save.busy,
+                      onChange: () => toggleModel(name),
+                    }),
+                    h(
+                      'span',
+                      {
+                        className: 'pxm-model-id',
+                        'data-pxm-add-model-name': '1',
+                        title: name,
+                        style: {
+                          flex: 'auto',
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontFamily: skin.code.fontFamily,
+                          fontSize: S.modelRowFontSize,
+                          color: T.label,
+                        },
+                      },
+                      name,
+                    ),
+                    isImageModel(name) ? h(RowTag, null, '图像') : null,
+                  ),
+                ),
+              ),
+            ),
+      )
 
       /** 编辑器底部两枚（官方 `._3nPmjq_editorActions{justify-content:flex-end;gap:8px}`，:36）。 */
       const actions = h(
@@ -2388,6 +2670,8 @@ window.__ModuleLoader__.load({
         hints,
         catalogPanel,
         customPanel,
+        // 草稿探测：「测试连接 / 拉取模型」+ 就地结果 + 拉到的模型列表（两个面板共用一份）。
+        probeBlock,
         /*
          * 「取消 / 保存」**只渲染一份**，挂在两个面板之外。
          *
@@ -5031,27 +5315,37 @@ window.__ModuleLoader__.load({
        * 一份草稿同时服务两个 tab：`catalogId` / `baseUrl` 给「第三方模型提供商」，
        * `custom*` 三格给「自定义模型 API」。取消 = 收起 + 清空草稿（零请求）。
        */
-      const [addDraft, setAddDraft] = React.useState({
+      /*
+       * add-card 的**草稿**（官方 `draft`：选中哪一家 + 两个覆盖项）。
+       * 一份草稿同时服务两个 tab：`catalogId` / `baseUrl` 给「第三方模型提供商」，
+       * `custom*` 三格给「自定义模型 API」。取消 = 收起 + 清空草稿（零请求）。
+       *
+       * 2026-10-12（task-10）：草稿里多了拉取到的模型列表 `pulled` 与勾选 `chosen` ——
+       * 「拉取模型」把列表**拉到草稿里**（不写配置、也不立刻落盘），点「保存」才随
+       * `models` 一起提交；「取消」把它们和密钥一样丢掉（`closeAdd` 重置整份草稿）。
+       */
+      /*
+       * 空草稿**每次都造一个新的**（含两个新数组）：`closeAdd` 与 `useState` 都走它，
+       * 这样"取消后残留的列表 / 勾选"不可能是上一次那份数组对象被复用出来的。
+       * `useState(emptyAddDraft)` 用的是 React 的**惰性初始化**形态（传函数只在首渲染调用一次）。
+       */
+      const emptyAddDraft = () => ({
         catalogId: '',
         baseUrl: '',
         apiKey: '',
         customId: '',
         customLabel: '',
         customBaseUrl: '',
+        pulled: [],
+        chosen: [],
       })
+      const [addDraft, setAddDraft] = React.useState(emptyAddDraft)
       const patchDraft = (patch) => setAddDraft((prev) => ({ ...prev, ...patch }))
       /** 收起 add-card 并清空草稿；`setAddMode` 回到默认 tab（下一次展开是干净的）。 */
       const closeAdd = React.useCallback(() => {
         setAddOpen(false)
         setAddMode('catalog')
-        setAddDraft({
-          catalogId: '',
-          baseUrl: '',
-          apiKey: '',
-          customId: '',
-          customLabel: '',
-          customBaseUrl: '',
-        })
+        setAddDraft(emptyAddDraft())
       }, [])
 
       /** 卸载后不再 setState（`reload` 会被卡片在 await 之后调用）。 */
@@ -5267,6 +5561,11 @@ window.__ModuleLoader__.load({
                   onCustomLabel: (value) => patchDraft({ customLabel: value }),
                   customBaseUrl: addDraft.customBaseUrl,
                   onCustomBaseUrl: (value) => patchDraft({ customBaseUrl: value }),
+                  // 「拉取模型」把列表与勾选都放进草稿（取消即丢；保存才随 models 落盘）。
+                  pulled: addDraft.pulled,
+                  chosen: addDraft.chosen,
+                  onPulled: (models) => patchDraft({ pulled: models, chosen: [] }),
+                  onChosen: (chosen) => patchDraft({ chosen }),
                   onCancel: closeAdd,
                   reload,
                 })
