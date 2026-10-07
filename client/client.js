@@ -2059,6 +2059,24 @@ window.__ModuleLoader__.load({
        */
       const probeReady = keyReady && targetReady && !probe.busy && !save.busy
 
+      /**
+       * **"当前要连的那一家"的稳定标识**（task-11）。
+       *
+       * 它的用途只有一个：判断"某次探测的结果 / 拉到的那批模型"是不是**还属于现在这个目标**。
+       * 切厂商 / 切 tab 之后，上一家的结果就不该继续显示、更不该落进新目标的草稿里。
+       *
+       * 注意它与下面 `resultTarget` 的配合方式：结果只在
+       * `resultTarget === targetKey` 时才渲染 —— 于是"请求在飞行中、用户切走了、响应才回来"
+       * 这种时序也被盖住（那次请求记下的是**发起时**的目标）。
+       */
+      const targetKey = mode === 'custom' ? 'custom:' + customId : 'catalog:' + selectedId
+      /** "最近一次渲染时的目标"：异步回调里要拿它跟"发起时的目标"比。 */
+      const targetKeyRef = React.useRef(targetKey)
+      // 每次渲染同步（这是"最新值 ref"的用法，不是渲染副作用：不触发额外渲染、不读 DOM）。
+      targetKeyRef.current = targetKey
+      /** 当前显示的探测结果**属于哪个目标**（空串 = 还没有任何结果）。 */
+      const [resultTarget, setResultTarget] = React.useState('')
+
       const errorText =
         save.result !== null && save.result.ok !== true
           ? String(save.result.error ?? '添加失败')
@@ -2120,7 +2138,16 @@ window.__ModuleLoader__.load({
           .run(() => apiPost('api/providers', body))
           .then((outcome) => {
             if (!alive.current) return outcome
-            if (isObject(outcome) && outcome.ok === true) props.reload()
+            if (isObject(outcome) && outcome.ok === true) {
+              /*
+               * 保存成功 = 这一家的输入已经**用掉了**（task-11 的 bug：密钥会残留在输入框里，
+               * 用户接着切到下一家时，框里还是上一家的密钥 —— 再点保存就把 A 的密钥存给 B）。
+               * 这里就地清掉"跟目标绑定"的那几项（密钥 / 地址覆盖 / 拉到的列表与勾选）；
+               * **不关卡片**（用户可能接着加下一家）、也不动 `catalogId` 与 custom 三格。
+               */
+              props.onSaveSuccess?.()
+              props.reload()
+            }
             return outcome
           })
       }
@@ -2140,11 +2167,20 @@ window.__ModuleLoader__.load({
       const onProbeTest = () => {
         const body = probeBody('test')
         if (body === null || !probeReady) return
-        probe.run(async () => {
-          const outcome = await apiPost('api/providers/probe', body)
-          if (outcome.ok !== true) return postResult(outcome, '')
-          return postResult(outcome, '连接正常')
-        })
+        // 记下**发起时**的目标：响应回来时若目标已经变了，这条结果就不属于现在（不显示）。
+        const keyAtStart = targetKey
+        probe
+          .run(async () => {
+            const outcome = await apiPost('api/providers/probe', body)
+            if (outcome.ok !== true) return postResult(outcome, '')
+            return postResult(outcome, '连接正常')
+          })
+          .then((outcome) => {
+            if (!alive.current) return outcome
+            if (targetKeyRef.current !== keyAtStart) return outcome
+            setResultTarget(keyAtStart)
+            return outcome
+          })
       }
 
       /**
@@ -2154,6 +2190,7 @@ window.__ModuleLoader__.load({
       const onProbeModels = () => {
         const body = probeBody('models')
         if (body === null || !probeReady) return
+        const keyAtStart = targetKey
         probe
           .run(async () => {
             const outcome = await apiPost('api/providers/probe', body)
@@ -2164,9 +2201,11 @@ window.__ModuleLoader__.load({
           })
           .then((outcome) => {
             if (!alive.current) return outcome
+            if (targetKeyRef.current !== keyAtStart) return outcome
             if (isObject(outcome) && outcome.ok === true && isArray(outcome.models)) {
               props.onPulled(outcome.models)
             }
+            setResultTarget(keyAtStart)
             return outcome
           })
       }
@@ -2216,8 +2255,13 @@ window.__ModuleLoader__.load({
             },
             probe.busy ? '拉取中…' : ADD_COPY.fetchModels,
           ),
-          // 就地结果：成功/失败都在这一行里（`Msg` 的 role 会跟着切 status / alert）。
-          isObject(probe.result)
+          /*
+           * 就地结果：成功/失败都在这一行里（`Msg` 的 role 会跟着切 status / alert）。
+           *
+           * task-11：还必须**属于当前目标**（`resultTarget === targetKey`）—— 切了厂商 / 切了
+           * tab 之后，上一家的「连接正常」不该继续挂在新目标下面（那会让人以为已经测过了）。
+           */
+          isObject(probe.result) && resultTarget === targetKey
             ? h(
                 'span',
                 { 'data-pxm-add-probe-result': '1' },
@@ -5341,6 +5385,24 @@ window.__ModuleLoader__.load({
       })
       const [addDraft, setAddDraft] = React.useState(emptyAddDraft)
       const patchDraft = (patch) => setAddDraft((prev) => ({ ...prev, ...patch }))
+      /**
+       * **"要连哪一家"变了 → 属于上一家的输入必须丢**（task-11 的 bug 修复）。
+       *
+       * 为什么必须丢：两个 tab 与所有厂商**共用同一个** `apiKey` 字段（`draftTarget()`
+       * 决定要连谁）。不清的话，用户在 A 里填的密钥会跟着到 B 的输入框里 —— 用户以为在给
+       * B 填，点保存就把 **A 的密钥存给了 B**（数据完整性事故，不只是碍眼）。
+       *
+       * 清的是**跟目标绑定**的四项：`apiKey` / `baseUrl`（地址覆盖也是某一家的）/
+       * `pulled` / `chosen`（拉到的模型列表与勾选同样属于那一家）。
+       * `customId` / `customLabel` / `customBaseUrl` **保留**：那是用户在另一个 tab 里
+       * 敲的身份信息，切回来还在才对。
+       *
+       * ⚠️ 只在**目标标识真的变化**时调用（四个入口：切厂商、切 tab、自动改选、保存成功），
+       * **绝不放在渲染里** —— 那会把用户打字打一半的输入清掉。
+       */
+      const dropTargetInputs = React.useCallback(() => {
+        setAddDraft((prev) => ({ ...prev, apiKey: '', baseUrl: '', pulled: [], chosen: [] }))
+      }, [])
       /** 收起 add-card 并清空草稿；`setAddMode` 回到默认 tab（下一次展开是干净的）。 */
       const closeAdd = React.useCallback(() => {
         setAddOpen(false)
@@ -5548,9 +5610,29 @@ window.__ModuleLoader__.load({
               ? h(AddProviderCard, {
                   catalog: isArray(data.catalog) ? data.catalog : [],
                   mode: addMode,
-                  onMode: (next) => setAddMode(next === 'custom' ? 'custom' : 'catalog'),
+                  onMode: (next) => {
+                    const wanted = next === 'custom' ? 'custom' : 'catalog'
+                    // 同一个 tab 再点一次不算"目标变化"：不许把用户打一半的输入清掉。
+                    if (wanted === addMode) return
+                    setAddMode(wanted)
+                    // 切 tab 也是换"要连的那一家"（两个 tab 共用 apiKey）→ 属于上一家的输入全丢。
+                    dropTargetInputs()
+                  },
                   catalogId: addDraft.catalogId,
-                  onPick: (id) => patchDraft({ catalogId: id }),
+                  onPick: (id) =>
+                    setAddDraft((prev) =>
+                      // 只有**真的换了另一家**才清；同一个 id 再报一次（例如父级重渲染）保持原样。
+                      String(prev.catalogId) === String(id)
+                        ? prev
+                        : {
+                            ...prev,
+                            catalogId: String(id),
+                            apiKey: '',
+                            baseUrl: '',
+                            pulled: [],
+                            chosen: [],
+                          },
+                    ),
                   baseUrl: addDraft.baseUrl,
                   onBaseUrl: (value) => patchDraft({ baseUrl: value }),
                   apiKey: addDraft.apiKey,
@@ -5566,6 +5648,8 @@ window.__ModuleLoader__.load({
                   chosen: addDraft.chosen,
                   onPulled: (models) => patchDraft({ pulled: models, chosen: [] }),
                   onChosen: (chosen) => patchDraft({ chosen }),
+                  // 保存成功 = 这一家的输入已经用掉；就地清掉密钥 / 地址 / 列表（见 dropTargetInputs）。
+                  onSaveSuccess: dropTargetInputs,
                   onCancel: closeAdd,
                   reload,
                 })

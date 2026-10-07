@@ -1892,6 +1892,191 @@ describe('jsdom lane：「添加模型提供商」add-card 与「删除」两步
   })
 })
 
+// ── task-11：换"要连的那一家"之后，上一家的输入不许残留（密钥会存错）──────────
+//
+// 用户报的 bug：在 A 里填了密钥 → 把「提供商」切到 B → **A 的密钥还在输入框里**。
+// 两个 tab 与所有厂商共用同一个 `apiKey` 字段（`draftTarget()` 决定要连谁），
+// 所以切厂商 / 切 tab / 自动改选 / 保存成功，四处都必须把**属于上一家**的输入丢掉：
+// `apiKey` + `baseUrl` + `pulled` + `chosen`。
+// 规则的反面同样重要：**只在目标标识真的变化时清**（不能每次重渲染都清，那会把
+// 用户打字打一半的输入清掉）。下面 B1 里"同一个厂商再选一次不清"就是这条。
+//
+// 厂商 A / B 都取**未添加**的目录项（夹具里 added 的只有 google / ofox）：
+// A = `anthropic`（顺序里第一个未添加 → 默认选中），B = `azure`。
+
+const KEY_A = 'sk-key-for-anthropic-AAA111'
+const KEY_B = 'sk-key-for-azure-BBB222'
+
+describe('jsdom lane：换目标后上一家的输入必须丢（task-11）', () => {
+  it('B1 选 A + 填密钥 → 切到 B：密钥框空、拉到的列表与勾选消失、探测结果不再显示', async () => {
+    const seen = []
+    const lane = await createLane({ respond: probeResponder(seen) })
+    await lane.render()
+    await openAddCard(lane)
+
+    // A = anthropic（默认选中）：填密钥 + 拉一次模型 + 勾一条 + 测一次连接。
+    assert.equal(providerSelect(lane).value, 'anthropic', '默认选中 A（anthropic）')
+    await lane.type(addKeyInput(lane), KEY_A)
+    await lane.click(probeModels(lane))
+    assert.ok(pulledList(lane), 'A 家拉到的列表必须渲染出来')
+    await toggleModelRow(lane, PROBE_MODELS[0])
+    await lane.click(probeTest(lane))
+    assert.ok(probeResult(lane), 'A 家的探测结果必须显示出来')
+    assert.equal(
+      pulledRows(lane).filter((row) => row.querySelector('input[type="checkbox"]').checked).length,
+      1,
+      'A 家勾了 1 条',
+    )
+
+    // 同一个厂商**再选一次**：目标标识没变 → 什么都不许清（"打字打一半"也不能被清）。
+    await lane.select(providerSelect(lane), 'anthropic')
+    assert.equal(addKeyInput(lane).value, KEY_A, '目标是同一家时不得清掉密钥')
+    assert.ok(pulledList(lane), '目标是同一家时不得清掉拉到的列表')
+
+    // 切到 B = azure：属于 A 的输入必须全丢。
+    await lane.select(providerSelect(lane), 'azure')
+    assert.equal(providerSelect(lane).value, 'azure', '下拉必须停在 B')
+    assert.equal(addKeyInput(lane).value, '', '切厂商后**密钥框必须为空**（这正是用户报的 bug）')
+    assert.equal(pulledList(lane), null, '切厂商后拉到的列表必须消失（它属于 A）')
+    assert.equal(probeResult(lane), null, '切厂商后 A 家的探测结果不该继续显示')
+    assert.equal(
+      probeTest(lane).disabled,
+      true,
+      '密钥被清空后「测试连接」必须回到不可点（否则会拿 A 的密钥去连 B）',
+    )
+    assert.equal(
+      probeModels(lane).disabled,
+      true,
+      '密钥被清空后「拉取模型」必须回到不可点',
+    )
+    // 切厂商本身**不发请求**（既有纪律）。
+    assert.deepEqual(probePosts(lane).length, 2, '切厂商不得新增探测请求（此前恰好 2 次：1 拉 1 测）')
+  })
+
+  it('B2 切 tab：密钥必须清掉；自定义 tab 里填的 ID / 显示名 / 地址切回来仍在', async () => {
+    const lane = await createLane({ respond: probeResponder([]) })
+    await lane.render()
+    await openAddCard(lane)
+
+    // 目录 tab：选 A + 填 A 的密钥。
+    await lane.type(addKeyInput(lane), KEY_A)
+    assert.equal(addKeyInput(lane).value, KEY_A)
+
+    // 切到自定义 tab → 密钥不能跟着走。
+    await switchAddMode(lane, 'custom')
+    assert.equal(
+      addKeyInput(lane).value,
+      '',
+      '切 tab 后密钥框必须为空（两个 tab 共用同一个 apiKey 字段，跟着走就会把 A 的密钥存给自定义厂商）',
+    )
+
+    // 自定义 tab 里敲身份信息（这三格**必须**保留）。
+    const CUSTOM = { id: 'my-relay', label: '我的中转', baseUrl: 'https://relay.example.test/v1' }
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-id="1"]'), CUSTOM.id)
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-label="1"]'), CUSTOM.label)
+    await lane.type(lane.container.querySelector('[data-pxm-add-custom-baseurl="1"]'), CUSTOM.baseUrl)
+    // 自定义厂商也要有自己的密钥 —— 切回目录 tab 时它同样必须被清掉。
+    await lane.type(addKeyInput(lane), KEY_B)
+
+    await switchAddMode(lane, 'catalog')
+    assert.equal(addKeyInput(lane).value, '', '从自定义切回目录，密钥同样必须清空')
+
+    await switchAddMode(lane, 'custom')
+    assert.equal(
+      lane.container.querySelector('[data-pxm-add-custom-id="1"]').value,
+      CUSTOM.id,
+      '切 tab 不该清掉用户敲的提供商 ID',
+    )
+    assert.equal(
+      lane.container.querySelector('[data-pxm-add-custom-label="1"]').value,
+      CUSTOM.label,
+      '切 tab 不该清掉用户敲的显示名',
+    )
+    assert.equal(
+      lane.container.querySelector('[data-pxm-add-custom-baseurl="1"]').value,
+      CUSTOM.baseUrl,
+      '切 tab 不该清掉用户敲的 API 地址',
+    )
+    assert.equal(addKeyInput(lane).value, '', '切回来时密钥仍然必须是空的')
+    // 全程零请求（切 tab / 打字都不发）。
+    assert.deepEqual(lane.postCalls(), [], '切 tab 与打字都不该发任何请求')
+  })
+
+  it('B3 回归（本 bug 的核心）：A 的密钥绝不随目标切到 B —— 保存时 body 里的 apiKey 恰是 B 的', async () => {
+    const posted = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(String(init?.body ?? '{}'))
+          return jsonResponse({ ok: true, provider: providerView({ id: 'azure', label: 'Azure OpenAI' }) })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    await openAddCard(lane)
+
+    // 在 A（anthropic）里填密钥。
+    await lane.type(addKeyInput(lane), KEY_A)
+    assert.equal(addKeyInput(lane).value, KEY_A)
+
+    // 切到 B（azure）→ 填 B 自己的密钥 → 保存。
+    await lane.select(providerSelect(lane), 'azure')
+    assert.equal(addKeyInput(lane).value, '', '切到 B 那一刻 A 的密钥必须已经不在框里')
+    await lane.type(addKeyInput(lane), KEY_B)
+    await lane.click(addSave(lane))
+
+    assert.equal(posted.length, 1, `保存必须恰好 1 次 POST，实际 ${posted.length}`)
+    const raw = posted[0]
+    const body = JSON.parse(raw)
+    assert.equal(body.catalogId, 'azure', '新增的必须是 B（azure）')
+    assert.equal(body.apiKey, KEY_B, 'body 里的 apiKey 必须是 **B 的**，实测 ' + JSON.stringify(body.apiKey))
+    // 显式反向断言：A 的密钥绝不能出现在请求体里（原始文本也要查 —— 防"藏在别的字段"）。
+    assert.notEqual(body.apiKey, KEY_A, 'A 的密钥绝不能被当成 B 的密钥提交')
+    assert.equal(
+      raw.includes(KEY_A),
+      false,
+      '原始请求体里不允许出现 A 的密钥，实测 ' + raw,
+    )
+    assert.deepEqual(
+      body,
+      { catalogId: 'azure', apiKey: KEY_B },
+      'body 必须恰为 {catalogId, apiKey}（没有多余字段）',
+    )
+  })
+
+  it('B4 保存成功后：输入框里不留上一个密钥（就地重置草稿，卡片仍在）', async () => {
+    const posted = []
+    const lane = await createLane({
+      respond: (url, init) => {
+        const method = String(init?.method ?? 'GET').toUpperCase()
+        if (method === 'POST' && /\/api\/providers$/.test(String(url))) {
+          posted.push(JSON.parse(String(init?.body ?? '{}')))
+          return jsonResponse({ ok: true, provider: providerView({ id: 'anthropic', label: 'Anthropic' }) })
+        }
+        return jsonResponse(providersPayload())
+      },
+    })
+    await lane.render()
+    await openAddCard(lane)
+    await lane.type(addKeyInput(lane), KEY_A)
+    await lane.click(addSave(lane))
+    assert.equal(posted.length, 1)
+    assert.equal(posted[0].apiKey, KEY_A, '这一次提交的当然是 A 的密钥')
+
+    // 保存成功 → 这一家的输入已经用掉：密钥框必须空，且**不关卡片**（用户可能接着加下一家）。
+    assert.ok(addCard(lane), '保存成功后 add-card 保持展开（不关卡片是刻意的）')
+    assert.equal(
+      addKeyInput(lane).value,
+      '',
+      '保存成功后输入框里不许残留上一个密钥（否则接着切下一家就会把它存错）',
+    )
+    assert.equal(probeTest(lane).disabled, true, '密钥清空后探测按钮回到不可点')
+    assert.equal(pulledList(lane), null, '保存成功后拉到的列表也必须清掉')
+  })
+})
+
 // ── 模型选择面板：拉取 = 只读，选择 = 显式保存 ────────────────────────────────
 
 /**
