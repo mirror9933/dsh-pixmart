@@ -1,7 +1,6 @@
 {
   "name": "dsh-pixmart",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
   "description": "DSH 电商生图插件：主图 / 详情图 / 广告图生成，风格复刻，作品库与生图实时预览",
   "type": "module",
   "license": "MIT",
@@ -22,6 +21,7 @@
     "cordis.patch.yml",
     "LICENSE",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE"
   ],
   "scripts": {
@@ -32,7 +32,8 @@
     "test": "node --test test/*.test.mjs",
     "test:browser": "node --test test/browser/*.test.mjs",
     "verify": "pnpm typecheck && pnpm build && pnpm test && pnpm test:browser",
-    "prepack": "node tools/strip-test-hooks.mjs",
+    "prepare": "tsc -p tsconfig.json && node tools/strip-test-hooks.mjs",
+    "prepack": "tsc -p tsconfig.json && node tools/strip-test-hooks.mjs",
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "dsh": {

@@ -3,19 +3,19 @@
 给 **DeepSeek Harness** 加一套**电商生图**能力：主图 / 详情图 / 广告图、风格复刻、白底图。
 你在对话里说要什么，Agent 调工具把图**真的生成出来**，落盘到插件数据目录，在侧边栏「PixMart → 作品库」里看。
 
-> **状态**：功能 P0–P3 已完成、打包已就绪（`LICENSE` / `NOTICE` 齐、`exports["./client"]` 指向 `dist/client.js`）；
-> **未发布到 registry**（`package.json` 里 `private: true`），只能用**本地路径 / git 地址**安装。从零安装的全链路验收（方案 A8）尚未跑过。
-
 ## 安装
 
 ```sh
-# 本地目录安装（建议先装 scratch profile，别直接装进在用的 profile）；也可以换成 <git-url>
-dsh plugin --profile px add E:\Programs\agent\dsh-pixmart
-dsh --profile px --dump-config      # 输出里应出现 dsh-pixmart 层
+dsh plugin --profile px add E:\Programs\agent\dsh-pixmart   # 或包名 / GitHub 地址，见下
+dsh --profile px --dump-config                              # 输出里应出现 dsh-pixmart 层
 ```
 
+**在线安装**（`dsh plugin add <spec>`）—— 三种填法：
+- **包名** `dsh-pixmart`（需先 `npm publish`）；**GitHub 地址** `https://github.com/mirror9933/dsh-pixmart`；**本地目录**（**必须绝对路径**）如 `E:\Programs\agent\dsh-pixmart`。
+- git 安装走 `prepare`、打包/发布走 `prepack`，都会**自动构建** `lib/` + `dist/`，装完即可用（本地改 `client.js` 时仍需手动 `pnpm build:client`）。
+- ⚠️ **GitHub 地址**这条会被 pnpm 11 的构建脚本闸门拦下（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`）；处置与无闸门的替代装法见「发布」。
+
 **改了什么 → 怎么生效**：host 半（`src/` → `lib/`）**重启宿主**；client 半（`client/client.js` → `dist/client.js`）先 `pnpm build:client` 再**刷新页面**；`package.json` / `exports` / profile bundles **重启宿主**。
-`dist/` 不入库，而 `exports["./client"]` 指向它 ⇒ 从 git 装完**先跑一次 `pnpm build:client`**。
 （`dsh` 的退出码恒为 1，**别用退出码判断成功**，看输出里的 `Done in …`。）
 
 ## 首次使用（这步不能省）
@@ -63,7 +63,8 @@ Agent 的默认顺序（为了省钱）：`pixmart_prompt`（免费）→ `pixma
 pnpm install
 pnpm build          # host tsc → lib/
 pnpm build:client   # 剥离 client bundle 的 __test__ → dist/client.js（test 的 pretest 会顺带跑）
-pnpm prepack        # 发布前跑（同 build:client），npm pack / publish 时自动执行
+pnpm prepare        # 安装时自动跑（git 依赖 / 本地 install）→ lib/ + dist/
+pnpm prepack        # pack / publish 前自动跑 → lib/ + dist/（两者同一条完整构建）
 pnpm verify         # typecheck + build + 宿主 lane + 浏览器 lane，全绿才算过（计数以它输出为准）
 ```
 
@@ -98,6 +99,14 @@ pnpm verify         # typecheck + build + 宿主 lane + 浏览器 lane，全绿�
 - **不做 3D / 视频**，不做服务端缩略图；数据只在本机（没有账号 / 云同步）。
 - **白底可能不够纯**：厂商模型没能可靠交付"绝对纯白"，**插件不做图像后处理** —— 平台有硬性审核时需自己或让 Agent 后处理。
 - 只在 **Windows** 上实跑过；真实批量的端到端链路尚未验证（mock 层已过）。
+
+## 发布
+
+`npm publish` 即可（`private` 已去掉、tarball 里已含 `lib/` + `dist/`）—— 只差先 `npm login`。
+
+**GitHub 地址装法**会被 pnpm 11 拦下 `prepare`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`）：按报错在 profile 的
+`pnpm-workspace.yaml` 加 `allowBuilds: { "dsh-pixmart@git+<仓库地址>#<commit>": true }`（**键要带 spec + commit**，
+裸包名无效、每次新 commit 都要更新）；或改用 `npm pack` 出的 `.tgz` 挂 GitHub Release，`dsh plugin add <该 tgz 的 https 地址>`（无闸门）。
 
 ## 许可
 
