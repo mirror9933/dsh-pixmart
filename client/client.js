@@ -6031,6 +6031,33 @@ window.__ModuleLoader__.load({
         h(ExportDirCard, { exportDir: data.exportDir, reload }),
 
         h('p', { style: skin.muted }, '插件 ' + PLUGIN + '@' + VERSION + ' · 设置页插槽 settings.section'),
+
+        /*
+         * 页脚：作者 GitHub **主页**链接（task-27）。
+         *
+         * 位置：整块内容的**最末** —— 在「作品库导出路径」卡片与上面那行版本号之后，
+         * 所以它是 `.pxm-settings` 根容器里**最后一个带文本的元素**（测试按这条判"在底部"）。
+         * 外链一律 `target="_blank"` + `rel="noreferrer noopener"`：新窗口打开，
+         * 且不把 referrer 与 `window.opener` 交给对方页面。
+         * 样式沿用既有 muted 那一档（同 `skin.muted` 的 `T.labelSecondary` / `S.mutedFontSize`），
+         * 只加一条下划线表明它是链接 —— **不新增 token、不写死 hex、不新建样式表**。
+         */
+        h(
+          'p',
+          { style: skin.muted },
+          'GitHub：',
+          h(
+            'a',
+            {
+              'data-pxm-github': '1',
+              href: 'https://github.com/mirror9933',
+              target: '_blank',
+              rel: 'noreferrer noopener',
+              style: { color: T.labelSecondary, textDecoration: 'underline' },
+            },
+            '@mirror9933',
+          ),
+        ),
       )
     }
 

@@ -3443,6 +3443,101 @@ describe('jsdom lane：作品库导出路径卡片', () => {
   })
 })
 
+// ── 页脚：作者 GitHub 主页链接（task-27）────────────────────────────────────
+
+describe('jsdom lane：设置页页脚的 GitHub 主页链接（task-27）', () => {
+  const HREF = 'https://github.com/mirror9933'
+
+  it('G1 渲染出链接：href / target / rel 逐字正确；是主页而不是仓库地址', async () => {
+    const lane = await createLane()
+    await lane.render()
+
+    const links = [...lane.container.querySelectorAll('[data-pxm-github]')]
+    assert.equal(links.length, 1, '页脚必须**恰好**有一个 GitHub 链接（防重复渲染）')
+    const link = links[0]
+    assert.equal(link.tagName, 'A', '必须是 `<a>` 元素')
+    assert.equal(link.getAttribute('href'), HREF, 'href 必须逐字等于主页地址：' + JSON.stringify(link.getAttribute('href')))
+    assert.equal(link.getAttribute('target'), '_blank', '必须新窗口打开（target="_blank"）')
+    const rel = String(link.getAttribute('rel') ?? '')
+    assert.ok(/\bnoreferrer\b/.test(rel), 'rel 必须含 noreferrer，实测 ' + JSON.stringify(rel))
+    assert.ok(/\bnoopener\b/.test(rel), 'rel 必须含 noopener，实测 ' + JSON.stringify(rel))
+    assert.ok((link.textContent ?? '').includes('mirror9933'), '链接文本必须含作者名：' + JSON.stringify(link.textContent))
+
+    /*
+     * **主页**而不是仓库地址：路径里只能有"用户名"一段。
+     * 这条是可证伪的 —— 换成 `https://github.com/mirror9933/dsh-pixmart` 立刻变红。
+     */
+    const path = new URL(HREF).pathname.replace(/^\/+|\/+$/g, '')
+    assert.equal(
+      path.split('/').length,
+      1,
+      'href 必须是 GitHub **主页**（路径里只有用户名一段），实测路径 ' + JSON.stringify(path),
+    )
+    assert.equal(new URL(HREF).host, 'github.com', '必须指向 github.com')
+  })
+
+  it('G2 “在底部”可证伪：它是根容器里最后一个带文本的元素，且在「作品库导出路径」卡之后', async () => {
+    const lane = await createLane()
+    await lane.render()
+    const Node = lane.window.Node
+
+    const root = lane.container.querySelector('.pxm-settings')
+    assert.ok(root, '必须有设置根容器（.pxm-settings）')
+    const link = root.querySelector('[data-pxm-github]')
+    assert.ok(link, '页脚链接必须在这个根容器里')
+
+    /** 元素 → 便于失败信息阅读的短标签。 */
+    const tagOf = (node) =>
+      node === null || node === undefined
+        ? String(node)
+        : '<' + String(node.tagName).toLowerCase() + '>' +
+          JSON.stringify(String(node.textContent ?? '').trim().slice(0, 40))
+
+    // ① 文档顺序里**最后一个带文本的元素**就是它。
+    const withText = [...root.querySelectorAll('*')].filter(
+      (node) => (node.textContent ?? '').trim() !== '',
+    )
+    const last = withText[withText.length - 1]
+    /*
+     * ⚠️ 用 `assert.ok(bool, msg)` 而不是 `assert.equal(last, link, msg)`：
+     * 断言失败时 Node 会对 actual/expected 做 diff/`inspect`，而 jsdom 元素会把**整棵子树**
+     * 展开 —— 实测"页脚不在底部"的变异体上这一条断言要跑 **4 分半**。比布尔 + 自己拼标签
+     * 的失败信息，既快又照样可读。
+     */
+    assert.ok(
+      last === link,
+      '页脚链接必须是根容器里最后一个带文本的元素，实测最后一个是 ' + tagOf(last),
+    )
+
+    // ② 等价复述：它**后面**没有任何带文本的元素（防止"最后一个"的算法写错而假绿）。
+    const after = [...root.querySelectorAll('*')].filter(
+      (node) =>
+        node !== link &&
+        node !== root &&
+        (link.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+        (node.textContent ?? '').trim() !== '',
+    )
+    assert.equal(
+      after.length,
+      0,
+      '页脚链接之后不许再有带文本的元素：' + JSON.stringify(after.map(tagOf)),
+    )
+
+    // ③ 它必须出现在「作品库导出路径」卡片**之后**。
+    const card = exportDirCard(lane)
+    assert.ok(
+      (card.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      '页脚必须在「作品库导出路径」卡片之后（这是"整块内容的最末"的下界）',
+    )
+    // ④ 反向：它也不该出现在卡片之前（同一件事的另一半，防止 compareDocumentPosition 用错方向）。
+    assert.equal(
+      (link.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      false,
+      '页脚不许出现在「作品库导出路径」卡片之前',
+    )
+  })
+})
+
 async function settleAll() {
   for (let i = 0; i < 12; i += 1) await new Promise((resolve) => setImmediate(resolve))
 }
