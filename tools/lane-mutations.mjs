@@ -979,7 +979,7 @@ const MUTATIONS = [
           '            ...(place.up',
           "              ? { bottom: String(place.anchor) + 'px' }",
           "              : { top: String(place.anchor) + 'px' }),",
-          "            left: String(place.left) + 'px',",
+
         ].join('\n'),
         replace: ["            top: 'calc(100% + ' + S.menuOffset + ')',", '            left: 0,'].join('\n'),
       },
