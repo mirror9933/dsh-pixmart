@@ -2812,13 +2812,17 @@ window.__ModuleLoader__.load({
     /**
      * 「添加模型提供商」add-card 里那个**提供商下拉**的选项顺序。
      *
-     * 官方那一页的选项就是宿主 catalog 的顺序：`addable.map(({row}) => …)`
-     * （`.probe/models-client.js:2298-2301`，`addable` 已按"还没添加的"过滤）。
-     * 这里保留既有的那条稳定规则 —— **`custom` 那一组固定排最后**（与官方那页把
-     * 自定义接入排在内置目录之后一致），其余按 label 的 `zh-Hans-CN` 序：
+     * 官方那一页的选项也是宿主 catalog 的顺序（`.probe/models-client.js:2298-2301`）。
+     * 排序规则两条：**`custom` 那一组固定排最后**，其余按 label 的 `zh-Hans-CN` 序 ——
      * 顺序不该因为"加过没加过"而在用户眼皮底下跳动。
      *
-     * `added === true` 的**不进选项**（调用方过滤），但仍参与排序。
+     * ⚠️ 两处与"刚写下时"不同，改代码前先读这里：
+     *   1. **已添加的也会进选项**（`added === true` 渲染成 `disabled` + 「（已添加）」后缀，
+     *      见 `ADD_COPY.addedSuffix`）——早先的版本是"调用方过滤掉"，那会让用户以为目录里
+     *      少了厂商（2026-10-12 用户报过这个困惑）；
+     *   2. 真目录里**已经没有 `group === 'custom'` 的条目**了（「自定义」走独立的
+     *      「自定义模型 API」tab，见 contract-notes §35.7），所以"custom 排最后"这条规则
+     *      **对当前目录不生效**；分支保留是为了任何带 custom 分组的 catalog 仍旧稳定。
      */
     function sortCatalog(entries) {
       return entries
