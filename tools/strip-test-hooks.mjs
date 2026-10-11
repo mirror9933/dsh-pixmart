@@ -13,13 +13,16 @@
  * 五套 node:test + 浏览器 lane **全都**从 bundle 的 `__test__` 里取组件。删源码等于一次性
  * 打断所有测试，也就无法验证"剥离"本身。因此：**源码保留，打包时产出剥离版**。
  *
- * ## 剥离后的 exports 指向（重要）
+ * ## 剥离后的 exports 指向（重要 · 已改为 dist）
  *
- * `package.json` 的 `exports["./client"]` **仍然指向 `./client/client.js`**，没有切到
- * `dist/client.js`。原因：开发期 profile 是指向本仓库的 symlink，`client.js` 还在频繁改；
- * 一旦切到 `dist/`，刷新页面看到的是**过期产物**，比现状更容易误判。
- * 切换 exports 是 P4 打包的**最后一步**，等停止迭代后再做
- * （见 docs/dsh-pixmart-技术方案.md §11.5 / §12.2）。
+ * `package.json` 的 `exports["./client"]` **指向 `./dist/client.js`**（也就是本文件的产物）。
+ * 这段注释以前写的是"仍指向 `./client/client.js`、切 `dist/` 留作最后一步" —— 那是**过期**的：
+ * 打包步骤已于 2026-10-07 走完（见 docs/dsh-pixmart-技术方案.md §11.5 / §12.2）。
+ *
+ * **代价（接手的人必须知道）**：改了 `client/client.js` 之后，**必须先跑本文件**
+ * （`pnpm build:client`）再刷新页面，否则浏览器加载的是 `dist/` 里的**旧字节** ——
+ * 而且**页面不会报任何错**，只有跑测试时 `test/strip-test-hooks.test.mjs` 的陈旧性守卫才会红。
+ * 正常流程不会漏：`pnpm test` 的 `pretest`、以及 `prepack` / `prepare` 都会先跑本文件。
  *
  * ## 它保证"只改了该改的"
  *
