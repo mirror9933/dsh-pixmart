@@ -39,7 +39,8 @@
     "LICENSE",
     "README.md",
     "CHANGELOG.md",
-    "NOTICE"
+    "NOTICE",
+    "screenshots.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
